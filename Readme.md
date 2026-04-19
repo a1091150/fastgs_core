@@ -1,5 +1,5 @@
 ```shell
-pip install mlx==0.30.0 nanobind cmake
+pip install mlx==0.30.0 nanobind cmake opencv-python
 make pip-install
 ```
 
