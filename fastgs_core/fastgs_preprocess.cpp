@@ -25,6 +25,8 @@ struct PreprocessKernelParams {
   float mult;
   float tan_fovx;
   float tan_fovy;
+  float focal_x;
+  float focal_y;
   uint32_t image_width;
   uint32_t image_height;
   uint32_t tile_bounds_x;
@@ -115,6 +117,8 @@ void FastGSPreprocess::eval_gpu(const std::vector<mx::array>& inputs,
       .mult = params_.mult,
       .tan_fovx = params_.tan_fovx,
       .tan_fovy = params_.tan_fovy,
+      .focal_x = static_cast<float>(params_.image_width) / (2.0f * params_.tan_fovx),
+      .focal_y = static_cast<float>(params_.image_height) / (2.0f * params_.tan_fovy),
       .image_width = static_cast<uint32_t>(params_.image_width),
       .image_height = static_cast<uint32_t>(params_.image_height),
       .tile_bounds_x = static_cast<uint32_t>(std::get<0>(params_.tile_bounds)),

@@ -119,26 +119,26 @@ def main() -> None:
     if args.mode == "random":
         rng = np.random.default_rng()
         xy = rng.uniform(
-            low=[64.0, 64.0],
-            high=[image_width - 64.0, image_height - 64.0],
+            low=[-1.2, -1.2],
+            high=[1.2, 1.2],
             size=(n, 2),
         ).astype(np.float32)
-        z = np.full((n, 1), 1.0, dtype=np.float32)
+        z = rng.uniform(-0.6, 0.6, size=(n, 1)).astype(np.float32)
         means3d_np = np.concatenate([xy, z], axis=1)
         colors_np = rng.uniform(0.0, 1.0, size=(n, 3)).astype(np.float32)
     else:
         grid_cols = 64
         grid_rows = 32
-        xs = np.linspace(64.0, image_width - 64.0, grid_cols, dtype=np.float32)
-        ys = np.linspace(64.0, image_height - 64.0, grid_rows, dtype=np.float32)
+        xs = np.linspace(-1.0, 1.0, grid_cols, dtype=np.float32)
+        ys = np.linspace(-1.0, 1.0, grid_rows, dtype=np.float32)
         xv, yv = np.meshgrid(xs, ys)
         xy = np.stack([xv.reshape(-1), yv.reshape(-1)], axis=1)[:n]
-        z = np.full((n, 1), 1.0, dtype=np.float32)
+        z = np.zeros((n, 1), dtype=np.float32)
         means3d_np = np.concatenate([xy, z], axis=1)
 
         colors_np = np.zeros((n, 3), dtype=np.float32)
-        colors_np[:, 0] = xy[:, 0] / float(image_width)
-        colors_np[:, 1] = xy[:, 1] / float(image_height)
+        colors_np[:, 0] = (xy[:, 0] + 1.0) * 0.5
+        colors_np[:, 1] = (xy[:, 1] + 1.0) * 0.5
         colors_np[:, 2] = 1.0 - colors_np[:, 0]
 
     scales_np = np.full((n, 3), 0.1, dtype=np.float32)
@@ -177,8 +177,12 @@ def main() -> None:
         False,
     )
 
-    mx.eval(out["out_color"])
-    rgb = to_hwc_rgb(out["out_color"], image_height, image_width)
+    if out["out_color"].size == 0:
+        bg = np.array(inputs["background"], dtype=np.float32)
+        rgb = np.broadcast_to(bg.reshape(1, 1, 3), (image_height, image_width, 3)).copy()
+    else:
+        mx.eval(out["out_color"])
+        rgb = to_hwc_rgb(out["out_color"], image_height, image_width)
     rgb = np.clip(rgb, 0.0, 1.0)
     bgr_u8 = (rgb[:, :, ::-1] * 255.0).astype(np.uint8)
 
