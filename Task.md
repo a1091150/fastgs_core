@@ -124,7 +124,8 @@
 
 ## Status
 - [x] Task definition and migration chain analysis completed.
-- [ ] End-to-end forward path completed.
+- [x] End-to-end forward path callable (smoke-level) completed.
+- [ ] CUDA parity for forward path completed.
 
 ---
 
@@ -151,9 +152,12 @@
 - [x] `make pyext-build` passes.
 - [x] `python scripts/preprocess_smoke.py` passes.
 - [x] Preprocess binding call returns expected tensor shapes/dtypes.
+- [ ] Full parity with `forward.cu::preprocessCUDA` confirmed.
 
 ## Notes
 - Forward preprocess is available; backward remains out of scope for this stage.
+- Earlier implementation included temporary approximations (not CUDA-equivalent). Current direction is CUDA parity-first.
+- Do not mark Task 3.1 complete for parity until numeric/statistical comparison with CUDA reference is added.
 
 ---
 
@@ -243,8 +247,8 @@
 - [x] Add end-to-end forward smoke script.
 
 ## Validation
-- [ ] Python smoke call works end-to-end.
-- [ ] Forward returns expected keys/shapes.
+- [x] Python smoke call works end-to-end (user local run).
+- [x] Forward returns expected keys/shapes (smoke-level).
 - [x] `make pyext-build` passes with `rasterize_gaussians_forward` linked.
-- [ ] Runtime smoke blocked on current environment Metal device init crash (`NSRangeException`).
+- [ ] CUDA parity validation for end-to-end forward outputs.
 - [x] Add render smoke script with fixed 2048 gaussians and image output (`scripts/render_2048_smoke.py`).
