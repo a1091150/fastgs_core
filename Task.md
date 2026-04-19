@@ -192,14 +192,14 @@
 - `fastgs_core/metal/fastgs_binning.metal`
 
 ## Steps
-- [ ] Define params/input/output contracts.
-- [ ] Implement primitive wrapper + GPU dispatch.
-- [ ] Implement Metal forward kernel.
-- [ ] Add smoke validation script/section.
+- [x] Define params/input/output contracts.
+- [x] Implement primitive wrapper + GPU dispatch.
+- [x] Implement Metal forward kernel.
+- [x] Add smoke validation script/section.
 
 ## Validation
-- [ ] Build passes.
-- [ ] Output shapes/types match expected contracts.
+- [x] Build passes.
+- [x] Output shapes/types match expected contracts.
 
 ---
 

@@ -10,6 +10,7 @@
 
 #include "../include/dummy.h"
 #include "../include/fastgs_preprocess.h"
+#include "../include/fastgs_binning.h"
 #include "../include/fastgs_tile_prep.h"
 
 namespace nb = nanobind;
@@ -18,6 +19,39 @@ using namespace nb::literals;
 
 namespace {
 
+
+
+nb::dict binning_forward(
+    const mx::array& xys,
+    const mx::array& depths,
+    const mx::array& point_offsets,
+    const mx::array& conic_opacity,
+    const mx::array& tiles_touched,
+    float mult,
+    int tile_bounds_x,
+    int tile_bounds_y,
+    int tile_bounds_z,
+    int num_rendered) {
+  fastgs_core::BinningInput input = {
+      .xys = xys,
+      .depths = depths,
+      .point_offsets = point_offsets,
+      .conic_opacity = conic_opacity,
+      .tiles_touched = tiles_touched,
+      .s = mx::Device::gpu,
+      .params = {
+          .mult = mult,
+          .tile_bounds = std::make_tuple(tile_bounds_x, tile_bounds_y, tile_bounds_z),
+          .num_rendered = num_rendered,
+      },
+  };
+
+  auto outputs = fastgs_core::fastgs_binning(input);
+  nb::dict result;
+  result["point_list_keys_unsorted"] = outputs[fastgs_core::BinningOutputIndex::kPointListKeysUnsorted];
+  result["point_list_unsorted"] = outputs[fastgs_core::BinningOutputIndex::kPointListUnsorted];
+  return result;
+}
 
 nb::dict tile_prep_forward(
     const mx::array& point_list_keys,
@@ -148,6 +182,20 @@ NB_MODULE(_fastgs_core, m) {
       "dummy_array_size",
       [](const mx::array& a) { return static_cast<int>(a.size()); },
       "a"_a);
+
+  m.def(
+      "binning_forward",
+      &binning_forward,
+      "xys"_a,
+      "depths"_a,
+      "point_offsets"_a,
+      "conic_opacity"_a,
+      "tiles_touched"_a,
+      "mult"_a,
+      "tile_bounds_x"_a,
+      "tile_bounds_y"_a,
+      "tile_bounds_z"_a,
+      "num_rendered"_a);
 
   m.def(
       "tile_prep_forward",
