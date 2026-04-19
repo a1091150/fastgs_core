@@ -3,11 +3,14 @@ BUILD_DIR ?= build
 XCODE_BUILD_DIR ?= build_xcode
 CONFIG ?= Release
 CONDA_BASE := $(shell conda info --base 2>/dev/null)
+CLASS ?=
+FORCE ?= 0
 
-.PHONY: help cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel clean
+.PHONY: help gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel clean
 
 help:
 	@printf "Targets:\n"
+	@printf "  make gen-primitive CLASS=Foo [FORCE=1]  Generate primitive .h/.cpp/.metal files.\n"
 	@printf "  make cmake-configure   Configure Ninja build for Python extension.\n"
 	@printf "  make pyext-build       Build _fastgs_core extension.\n"
 	@printf "  make test-build        Build C++ dummy test target.\n"
@@ -18,6 +21,17 @@ help:
 	@printf "  make pip-develop       pip install -e . --no-build-isolation\n"
 	@printf "  make pip-wheel         Build wheel/sdist via python -m build.\n"
 	@printf "  make clean             Remove root build folders and dist artifacts.\n"
+
+gen-primitive:
+	@if [ -z "$(CLASS)" ]; then \
+		echo "Usage: make gen-primitive CLASS=FastGSPreprocess [FORCE=1]"; \
+		exit 1; \
+	fi
+	@if [ "$(FORCE)" = "1" ]; then \
+		python3 scripts/mlx_cxx_primitive_generate.py "$(CLASS)" --force; \
+	else \
+		python3 scripts/mlx_cxx_primitive_generate.py "$(CLASS)"; \
+	fi
 
 cmake-configure:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && cmake -S . -B $(BUILD_DIR) -G Ninja -DPython_EXECUTABLE="$$(which python)" -DFASTGS_BUILD_PYTHON=ON -DFASTGS_BUILD_TEST=ON -DFASTGS_BUILD_METAL=ON'

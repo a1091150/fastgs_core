@@ -27,15 +27,17 @@ if(FASTGS_BUILD_PYTHON)
   find_package(nanobind CONFIG REQUIRED)
 endif()
 
-set(CPP_SOURCES
-  ${CMAKE_CURRENT_LIST_DIR}/fastgs_core/dummy.cpp
+# Auto-collect primitive implementation files generated under fastgs_core/.
+file(GLOB FASTGS_CPP_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_LIST_DIR}/fastgs_core/*.cpp"
 )
 
-set(METAL_SOURCES
-  ${CMAKE_CURRENT_LIST_DIR}/fastgs_core/metal/dummy.metal
+# Auto-collect all Metal kernels generated under fastgs_core/metal/.
+file(GLOB FASTGS_METAL_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_LIST_DIR}/fastgs_core/metal/*.metal"
 )
 
-add_library(fastgs_core_lib ${CPP_SOURCES})
+add_library(fastgs_core_lib ${FASTGS_CPP_SOURCES})
 target_include_directories(fastgs_core_lib PUBLIC
   ${CMAKE_CURRENT_LIST_DIR}/fastgs_core/include
   ${MLX_INCLUDE_DIR}
@@ -47,7 +49,7 @@ if(APPLE AND FASTGS_BUILD_METAL)
     mlx_build_metallib(
       TARGET fastgs_core_metallib
       TITLE fastgs_core
-      SOURCES ${METAL_SOURCES}
+      SOURCES ${FASTGS_METAL_SOURCES}
       INCLUDE_DIRS
         ${CMAKE_CURRENT_LIST_DIR}/fastgs_core
         ${MLX_INCLUDE_DIR}

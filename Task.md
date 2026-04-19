@@ -52,4 +52,47 @@
 
 ## Notes
 - This baseline is intentionally dummy-only for build/link/runtime validation.
-- Next step is to replace dummy API with the first FastGS forward primitive skeleton.
+
+---
+
+# Task 2
+
+## Scope
+- Add primitive auto-generator script based on scratch reference.
+- Make CMake auto-include newly generated `.cpp` and `.metal` files.
+- Add Makefile command for primitive generation.
+- Add helper utility files (`helper.h` / `helper.cpp`) with `fastgs_core` namespace.
+
+## Completed
+- [x] Add primitive generator script:
+  - [x] `scripts/mlx_cxx_primitive_generate.py`
+- [x] Align generator with this repo layout:
+  - [x] Header output: `fastgs_core/include/<name>.h`
+  - [x] CPP output: `fastgs_core/<name>.cpp`
+  - [x] Metal output: `fastgs_core/metal/<name>.metal`
+  - [x] Namespace changed to `fastgs_core`
+- [x] Fix generator template formatting/runtime bugs:
+  - [x] Escape braces for `str.format()` in template namespaces
+  - [x] Fix `to_snake()` regex replacement
+- [x] Add Makefile primitive generation target:
+  - [x] `make gen-primitive CLASS=Foo [FORCE=1]`
+- [x] Update root CMake to auto-compile generated files:
+  - [x] `file(GLOB FASTGS_CPP_SOURCES CONFIGURE_DEPENDS "fastgs_core/*.cpp")`
+  - [x] `file(GLOB FASTGS_METAL_SOURCES CONFIGURE_DEPENDS "fastgs_core/metal/*.metal")`
+- [x] Add helper files (from scratch reference, namespace adjusted):
+  - [x] `fastgs_core/include/helper.h`
+  - [x] `fastgs_core/helper.cpp`
+
+## Validation Completed
+- [x] `python3 scripts/mlx_cxx_primitive_generate.py --help`
+- [x] Generate test primitive successfully:
+  - [x] `python3 scripts/mlx_cxx_primitive_generate.py TempPrimitive --force`
+- [x] Root CMake reconfigure after auto-source updates:
+  - [x] `make cmake-configure`
+
+## Notes
+- Generated test primitive files currently exist:
+  - `fastgs_core/include/temp_primitive.h`
+  - `fastgs_core/temp_primitive.cpp`
+  - `fastgs_core/metal/temp_primitive.metal`
+- Next step is to generate first real FastGS forward primitive and wire binding API.
