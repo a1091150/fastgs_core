@@ -10,12 +10,34 @@
 
 #include "../include/dummy.h"
 #include "../include/fastgs_preprocess.h"
+#include "../include/fastgs_tile_prep.h"
 
 namespace nb = nanobind;
 namespace mx = mlx::core;
 using namespace nb::literals;
 
 namespace {
+
+
+nb::dict tile_prep_forward(
+    const mx::array& point_list_keys,
+    int num_rendered,
+    int num_tiles) {
+  fastgs_core::TilePrepInput input = {
+      .point_list_keys = point_list_keys,
+      .s = mx::Device::gpu,
+      .params = {
+          .num_rendered = num_rendered,
+          .num_tiles = num_tiles,
+      },
+  };
+
+  auto outputs = fastgs_core::fastgs_tile_prep(input);
+  nb::dict result;
+  result["ranges"] = outputs[fastgs_core::TilePrepOutputIndex::kRanges];
+  result["bucket_count"] = outputs[fastgs_core::TilePrepOutputIndex::kBucketCount];
+  return result;
+}
 
 nb::dict preprocess_forward(
     const std::unordered_map<std::string, mx::array>& inputs,
@@ -126,6 +148,13 @@ NB_MODULE(_fastgs_core, m) {
       "dummy_array_size",
       [](const mx::array& a) { return static_cast<int>(a.size()); },
       "a"_a);
+
+  m.def(
+      "tile_prep_forward",
+      &tile_prep_forward,
+      "point_list_keys"_a,
+      "num_rendered"_a,
+      "num_tiles"_a);
 
   m.def(
       "preprocess_forward",
