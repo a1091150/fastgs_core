@@ -11,6 +11,7 @@ if __name__ == "__main__":
         "-DFASTGS_BUILD_PYTHON=ON",
         "-DFASTGS_BUILD_TEST=OFF",
         "-DFASTGS_BUILD_METAL=ON",
+        "-DFASTGS_USE_MLX_MODULE_CMAKE_DIR=OFF",
     ]
     for arg in required_args:
         if arg not in cmake_args:
@@ -26,7 +27,7 @@ if __name__ == "__main__":
         ],
         cmdclass={"build_ext": extension.CMakeBuild},
         packages=[PACKAGE_NAME],
-        package_dir={"": "python_package"},
+        package_dir={"": "."},
         package_data={
             PACKAGE_NAME: ["*.so", "*.dylib", "*.metallib"],
         },

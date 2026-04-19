@@ -1,3 +1,2 @@
-from ._fastgs_core import dummy_add
-
-__all__ = ["dummy_add"]
+import mlx.core as mx
+from ._fastgs_core import *

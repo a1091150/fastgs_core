@@ -6,10 +6,11 @@ CONDA_BASE := $(shell conda info --base 2>/dev/null)
 CLASS ?=
 FORCE ?= 0
 
-.PHONY: help gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel clean
+.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel clean
 
 help:
 	@printf "Targets:\n"
+	@printf "  make env-check        Print python/cmake paths and mlx/nanobind versions.\n"
 	@printf "  make gen-primitive CLASS=Foo [FORCE=1]  Generate primitive .h/.cpp/.metal files.\n"
 	@printf "  make cmake-configure   Configure Ninja build for Python extension.\n"
 	@printf "  make pyext-build       Build _fastgs_core extension.\n"
@@ -21,6 +22,13 @@ help:
 	@printf "  make pip-develop       pip install -e . --no-build-isolation\n"
 	@printf "  make pip-wheel         Build wheel/sdist via python -m build.\n"
 	@printf "  make clean             Remove root build folders and dist artifacts.\n"
+
+env-check:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && \
+	echo "CONDA_ENV=$(CONDA_ENV)" && \
+	echo "python=$$(which python)" && \
+	echo "cmake=$$(which cmake)" && \
+	python -c "import importlib.metadata as md, sys; print(\"python_version=\"+sys.version.split()[0]); print(\"mlx=\"+md.version(\"mlx\")); print(\"nanobind=\"+md.version(\"nanobind\"))"'
 
 gen-primitive:
 	@if [ -z "$(CLASS)" ]; then \

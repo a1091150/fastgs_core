@@ -161,15 +161,15 @@
 - (later) `fastgs_core/metal/fastgs_preprocess_backward.metal`
 
 ## Task 3.1 Steps
-- [ ] Define preprocess params/input/output contracts in header.
-- [ ] Implement MLX Primitive wrapper and `fastgs_preprocess(...)` API in cpp.
-- [ ] Implement Metal kernel `fastgs_preprocess_forward_kernel`.
-- [ ] Wire kernel dispatch arguments and output buffers.
+- [x] Define preprocess params/input/output contracts in header.
+- [x] Implement MLX Primitive wrapper and `fastgs_preprocess(...)` API in cpp.
+- [x] Implement Metal kernel `fastgs_preprocess_forward_kernel`.
+- [x] Wire kernel dispatch arguments and output buffers.
 - [ ] Expose callable binding route from `_fastgs_core`.
 - [ ] Add minimal smoke test script in `scripts/` or `training/test/`.
 
 ## Task 3.1 Validation
-- [ ] `make pyext-build` passes.
+- [x] `make pyext-build` passes.
 - [ ] Preprocess binding call returns expected tensor shapes/dtypes.
 - [ ] No Metal runtime error for basic fixture.
 
