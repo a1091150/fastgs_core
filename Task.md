@@ -96,3 +96,83 @@
   - `fastgs_core/temp_primitive.cpp`
   - `fastgs_core/metal/temp_primitive.metal`
 - Next step is to generate first real FastGS forward primitive and wire binding API.
+
+---
+
+# Task 3
+
+## Scope
+- Migrate `diff-gaussian-rasterization_fastgs` from CUDA/PyTorch extension to Metal + MLX Primitive.
+- Keep Python training call path conceptually aligned with original FastGS flow.
+- Build staged primitives and wire them through `_fastgs_core` binding.
+
+## Source Call Path (FastGS Reference)
+- `train.py` -> `render_fastgs(...)`
+- `gaussian_renderer/__init__.py` -> `GaussianRasterizer(...)` -> `rasterize_gaussians(...)`
+- `diff_gaussian_rasterization_fastgs/__init__.py` -> `_RasterizeGaussians.apply(...)`
+- `_C.rasterize_gaussians(...)` / `_C.rasterize_gaussians_backward(...)`
+- `ext.cpp` pybind exports -> `rasterize_points.cu` CUDA entry points
+
+## Target Architecture (fastgs_core2)
+- Namespace: `fastgs_core`
+- Python module: `_fastgs_core`
+- Planned primitive stages:
+  - `fastgs_preprocess`
+  - `fastgs_tile_prep`
+  - `fastgs_binning`
+  - `fastgs_rasterize`
+  - `fastgs_preprocess_backward`
+  - `fastgs_rasterize_backward`
+- Planned file naming:
+  - Header: `fastgs_core/include/fastgs_<stage>.h`
+  - CPP: `fastgs_core/fastgs_<stage>.cpp`
+  - Metal: `fastgs_core/metal/fastgs_<stage>.metal`
+
+## Binding/API Plan
+- Provide PyTorch-like entry naming on Python side for migration clarity:
+  - `_fastgs_core.rasterize_gaussians(...)`
+  - `_fastgs_core.rasterize_gaussians_backward(...)`
+  - `_fastgs_core.mark_visible(...)` (later)
+  - `_fastgs_core.adam_update(...)` (later)
+
+## Validation Plan
+- Forward-first validation with deterministic fixture and image output.
+- Backward validation by finite-difference check on reduced tensor sizes.
+- Smoke path: Python import -> binding call -> no crash -> expected output shape/types.
+
+## Status
+- [x] Task definition and migration chain analysis completed.
+- [ ] Implementation started.
+
+---
+
+# Task 3.1 (Preprocess Migration)
+
+## Scope
+- Migrate preprocess stage first (forward path first, backward later).
+- Use existing `fastgs_mlx/fastgs_core` preprocess implementation as reference.
+
+## Planned Files
+- `fastgs_core/include/fastgs_preprocess.h`
+- `fastgs_core/fastgs_preprocess.cpp`
+- `fastgs_core/metal/fastgs_preprocess.metal`
+- (later) `fastgs_core/include/fastgs_preprocess_backward.h`
+- (later) `fastgs_core/fastgs_preprocess_backward.cpp`
+- (later) `fastgs_core/metal/fastgs_preprocess_backward.metal`
+
+## Task 3.1 Steps
+- [ ] Define preprocess params/input/output contracts in header.
+- [ ] Implement MLX Primitive wrapper and `fastgs_preprocess(...)` API in cpp.
+- [ ] Implement Metal kernel `fastgs_preprocess_forward_kernel`.
+- [ ] Wire kernel dispatch arguments and output buffers.
+- [ ] Expose callable binding route from `_fastgs_core`.
+- [ ] Add minimal smoke test script in `scripts/` or `training/test/`.
+
+## Task 3.1 Validation
+- [ ] `make pyext-build` passes.
+- [ ] Preprocess binding call returns expected tensor shapes/dtypes.
+- [ ] No Metal runtime error for basic fixture.
+
+## Notes
+- Keep forward correctness as first priority.
+- Backward path for preprocess is tracked after forward stability.
