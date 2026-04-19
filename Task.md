@@ -126,6 +126,7 @@
 - [x] Task definition and migration chain analysis completed.
 - [x] End-to-end forward path callable (smoke-level) completed.
 - [ ] CUDA parity for forward path completed.
+- [x] Forward parity check temporarily deferred for this iteration (user-approved).
 
 ---
 
@@ -153,6 +154,7 @@
 - [x] `python scripts/preprocess_smoke.py` passes.
 - [x] Preprocess binding call returns expected tensor shapes/dtypes.
 - [ ] Full parity with `forward.cu::preprocessCUDA` confirmed.
+- [x] Forward parity validation deferred for now (temporary pass condition: render output acceptable on local run).
 
 ## Notes
 - Forward preprocess is available; backward remains out of scope for this stage.
