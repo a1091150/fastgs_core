@@ -247,3 +247,4 @@
 - [ ] Forward returns expected keys/shapes.
 - [x] `make pyext-build` passes with `rasterize_gaussians_forward` linked.
 - [ ] Runtime smoke blocked on current environment Metal device init crash (`NSRangeException`).
+- [x] Add render smoke script with fixed 2048 gaussians and image output (`scripts/render_2048_smoke.py`).

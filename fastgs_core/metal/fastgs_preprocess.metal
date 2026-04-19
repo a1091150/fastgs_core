@@ -75,10 +75,19 @@ kernel void fastgs_preprocess_forward_kernel(
   write_packed_float2(xys, tid, float2(m.x, m.y));
   depths[tid] = m.z;
 
-  write_packed_float3(cov3d, tid * 2u, float3(1.0f, 0.0f, 0.0f));
-  cov3d[6 * tid + 3] = 1.0f;
-  cov3d[6 * tid + 4] = 0.0f;
-  cov3d[6 * tid + 5] = 1.0f;
+  if (p.use_cov3d_precomp != 0u) {
+    cov3d[6 * tid + 0] = cov3d_precomp[6 * tid + 0];
+    cov3d[6 * tid + 1] = cov3d_precomp[6 * tid + 1];
+    cov3d[6 * tid + 2] = cov3d_precomp[6 * tid + 2];
+    cov3d[6 * tid + 3] = cov3d_precomp[6 * tid + 3];
+    cov3d[6 * tid + 4] = cov3d_precomp[6 * tid + 4];
+    cov3d[6 * tid + 5] = cov3d_precomp[6 * tid + 5];
+  } else {
+    write_packed_float3(cov3d, tid * 2u, float3(1.0f, 0.0f, 0.0f));
+    cov3d[6 * tid + 3] = 1.0f;
+    cov3d[6 * tid + 4] = 0.0f;
+    cov3d[6 * tid + 5] = 1.0f;
+  }
 
   float3 rgb = float3(0.0f);
   if (p.use_colors_precomp != 0u) {
@@ -107,7 +116,6 @@ kernel void fastgs_preprocess_forward_kernel(
   (void)sh;
   (void)scales;
   (void)quats;
-  (void)cov3d_precomp;
   (void)viewmat;
   (void)projmat;
   (void)cam_pos;

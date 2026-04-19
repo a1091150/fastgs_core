@@ -3,6 +3,7 @@
 #include <nanobind/stl/unordered_map.h>
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 
 #include <mlx/array.h>
@@ -42,42 +43,54 @@ nb::dict rasterize_gaussians_forward(
     float mult,
     bool prefiltered,
     bool get_flag) {
-  auto required = {
-      inputs.find("background"),
-      inputs.find("means3d"),
-      inputs.find("colors"),
-      inputs.find("opacities"),
-      inputs.find("scales"),
-      inputs.find("rotations"),
-      inputs.find("metric_map"),
-      inputs.find("viewmatrix"),
-      inputs.find("projmatrix"),
-      inputs.find("dc"),
-      inputs.find("sh"),
-      inputs.find("campos"),
-  };
-  for (auto it : required) {
+  auto require_key = [&](const char* key) -> const mx::array& {
+    auto it = inputs.find(key);
     if (it == inputs.end()) {
-      throw std::runtime_error("rasterize_gaussians_forward missing required input tensor");
+      throw std::runtime_error(std::string("rasterize_gaussians_forward missing required input tensor: ") + key);
     }
+    return it->second;
+  };
+  auto get_or_empty = [&](const char* key) -> mx::array {
+    auto it = inputs.find(key);
+    if (it == inputs.end()) {
+      return mx::zeros({0}, mx::float32);
+    }
+    return it->second;
+  };
+
+  const auto& means3d = require_key("means3d");
+  const auto& background = require_key("background");
+  const auto& opacities = require_key("opacities");
+  const auto& metric_map = require_key("metric_map");
+  const auto& viewmatrix = require_key("viewmatrix");
+  const auto& projmatrix = require_key("projmatrix");
+  const auto& campos = require_key("campos");
+
+  mx::array colors_precomp = get_or_empty("colors_precomp");
+  if (colors_precomp.size() == 0) {
+    colors_precomp = get_or_empty("colors");
+  }
+  mx::array dc = get_or_empty("dc");
+  mx::array sh = get_or_empty("sh");
+  const bool has_colors_precomp = colors_precomp.size() != 0;
+  const bool has_sh_path = (dc.size() != 0) && (sh.size() != 0);
+  if (has_colors_precomp == has_sh_path) {
+    throw std::runtime_error(
+        "rasterize_gaussians_forward expects exactly one color path: "
+        "either colors_precomp (or colors) OR dc+sh");
   }
 
-  const auto& means3d = inputs.at("means3d");
-  const auto& background = inputs.at("background");
-  const auto& colors = inputs.at("colors");
-  const auto& opacities = inputs.at("opacities");
-  const auto& scales = inputs.at("scales");
-  const auto& rotations = inputs.at("rotations");
-  mx::array cov3d_precomp = mx::zeros({0}, mx::float32);
-  if (auto it = inputs.find("cov3d_precomp"); it != inputs.end()) {
-    cov3d_precomp = it->second;
+  mx::array cov3d_precomp = get_or_empty("cov3d_precomp");
+  mx::array scales = get_or_empty("scales");
+  mx::array rotations = get_or_empty("rotations");
+  const bool has_cov3d_precomp = cov3d_precomp.size() != 0;
+  const bool has_scale_rot = (scales.size() != 0) && (rotations.size() != 0);
+  if (has_cov3d_precomp == has_scale_rot) {
+    throw std::runtime_error(
+        "rasterize_gaussians_forward expects exactly one geometry path: "
+        "either cov3d_precomp OR scales+rotations");
   }
-  const auto& metric_map = inputs.at("metric_map");
-  const auto& viewmatrix = inputs.at("viewmatrix");
-  const auto& projmatrix = inputs.at("projmatrix");
-  const auto& dc = inputs.at("dc");
-  const auto& sh = inputs.at("sh");
-  const auto& campos = inputs.at("campos");
+
   mx::array viewspace_points = mx::zeros({0}, means3d.dtype());
   if (auto it = inputs.find("viewspace_points"); it != inputs.end()) {
     viewspace_points = it->second;
@@ -104,15 +117,15 @@ nb::dict rasterize_gaussians_forward(
       .tile_bounds = tile_bounds,
       .mult = mult,
       .prefiltered = prefiltered,
-      .use_cov3d_precomp = cov3d_precomp.size() != 0,
-      .use_colors_precomp = colors.size() != 0,
+      .use_cov3d_precomp = has_cov3d_precomp,
+      .use_colors_precomp = has_colors_precomp,
   };
 
   fastgs_core::PreprocessInput preprocess_input = {
       .means3d = means3d,
       .dc = dc,
       .sh = sh,
-      .colors_precomp = colors,
+      .colors_precomp = colors_precomp,
       .opacities = opacities,
       .scales = scales,
       .quats = rotations,
@@ -391,38 +404,49 @@ nb::dict preprocess_forward(
     float scale_modifier,
     float mult,
     bool prefiltered) {
-  auto required = {
-      inputs.find("means3d"),
-      inputs.find("dc"),
-      inputs.find("sh"),
-      inputs.find("colors_precomp"),
-      inputs.find("opacities"),
-      inputs.find("scales"),
-      inputs.find("quats"),
-      inputs.find("cov3d_precomp"),
-      inputs.find("viewmat"),
-      inputs.find("projmat"),
-      inputs.find("cam_pos"),
-      inputs.find("viewspace_points"),
-  };
-  for (auto it : required) {
+  auto require_key = [&](const char* key) -> const mx::array& {
+    auto it = inputs.find(key);
     if (it == inputs.end()) {
-      throw std::runtime_error("preprocess_forward missing required input tensor");
+      throw std::runtime_error(std::string("preprocess_forward missing required input tensor: ") + key);
     }
+    return it->second;
+  };
+  auto get_or_empty = [&](const char* key) -> mx::array {
+    auto it = inputs.find(key);
+    if (it == inputs.end()) {
+      return mx::zeros({0}, mx::float32);
+    }
+    return it->second;
+  };
+
+  const auto& means3d = require_key("means3d");
+  const auto& opacities = require_key("opacities");
+  const auto& viewmat = require_key("viewmat");
+  const auto& projmat = require_key("projmat");
+  const auto& cam_pos = require_key("cam_pos");
+  const auto& viewspace_points = require_key("viewspace_points");
+
+  mx::array colors_precomp = get_or_empty("colors_precomp");
+  mx::array dc = get_or_empty("dc");
+  mx::array sh = get_or_empty("sh");
+  const bool has_colors_precomp = colors_precomp.size() != 0;
+  const bool has_sh_path = (dc.size() != 0) && (sh.size() != 0);
+  if (has_colors_precomp == has_sh_path) {
+    throw std::runtime_error(
+        "preprocess_forward expects exactly one color path: "
+        "either colors_precomp OR dc+sh");
   }
 
-  const auto& means3d = inputs.at("means3d");
-  const auto& dc = inputs.at("dc");
-  const auto& sh = inputs.at("sh");
-  const auto& colors_precomp = inputs.at("colors_precomp");
-  const auto& opacities = inputs.at("opacities");
-  const auto& scales = inputs.at("scales");
-  const auto& quats = inputs.at("quats");
-  const auto& cov3d_precomp = inputs.at("cov3d_precomp");
-  const auto& viewmat = inputs.at("viewmat");
-  const auto& projmat = inputs.at("projmat");
-  const auto& cam_pos = inputs.at("cam_pos");
-  const auto& viewspace_points = inputs.at("viewspace_points");
+  mx::array cov3d_precomp = get_or_empty("cov3d_precomp");
+  mx::array scales = get_or_empty("scales");
+  mx::array quats = get_or_empty("quats");
+  const bool has_cov3d_precomp = cov3d_precomp.size() != 0;
+  const bool has_scale_rot = (scales.size() != 0) && (quats.size() != 0);
+  if (has_cov3d_precomp == has_scale_rot) {
+    throw std::runtime_error(
+        "preprocess_forward expects exactly one geometry path: "
+        "either cov3d_precomp OR scales+quats");
+  }
 
   const int max_sh_coeffs = (sh.ndim() >= 2) ? static_cast<int>(sh.shape(1)) : 0;
 
@@ -440,8 +464,8 @@ nb::dict preprocess_forward(
           1),
       .mult = mult,
       .prefiltered = prefiltered,
-      .use_cov3d_precomp = cov3d_precomp.size() != 0,
-      .use_colors_precomp = colors_precomp.size() != 0,
+      .use_cov3d_precomp = has_cov3d_precomp,
+      .use_colors_precomp = has_colors_precomp,
   };
 
   fastgs_core::PreprocessInput preprocess_input = {
