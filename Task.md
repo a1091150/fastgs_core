@@ -95,7 +95,6 @@
   - `fastgs_core/include/temp_primitive.h`
   - `fastgs_core/temp_primitive.cpp`
   - `fastgs_core/metal/temp_primitive.metal`
-- Next step is to generate first real FastGS forward primitive and wire binding API.
 
 ---
 
@@ -116,33 +115,16 @@
 ## Target Architecture (fastgs_core2)
 - Namespace: `fastgs_core`
 - Python module: `_fastgs_core`
-- Planned primitive stages:
-  - `fastgs_preprocess`
-  - `fastgs_tile_prep`
-  - `fastgs_binning`
-  - `fastgs_rasterize`
-  - `fastgs_preprocess_backward`
-  - `fastgs_rasterize_backward`
-- Planned file naming:
-  - Header: `fastgs_core/include/fastgs_<stage>.h`
-  - CPP: `fastgs_core/fastgs_<stage>.cpp`
-  - Metal: `fastgs_core/metal/fastgs_<stage>.metal`
-
-## Binding/API Plan
-- Provide PyTorch-like entry naming on Python side for migration clarity:
-  - `_fastgs_core.rasterize_gaussians(...)`
-  - `_fastgs_core.rasterize_gaussians_backward(...)`
-  - `_fastgs_core.mark_visible(...)` (later)
-  - `_fastgs_core.adam_update(...)` (later)
-
-## Validation Plan
-- Forward-first validation with deterministic fixture and image output.
-- Backward validation by finite-difference check on reduced tensor sizes.
-- Smoke path: Python import -> binding call -> no crash -> expected output shape/types.
+- Primitive-first migration:
+  - Task 3.1: `fastgs_preprocess`
+  - Task 3.2: `fastgs_tile_prep`
+  - Task 3.3: `fastgs_binning`
+  - Task 3.4: `fastgs_rasterize`
+  - Task 3.5: external API wiring in `binding.cpp` (`rasterize_gaussians` etc.)
 
 ## Status
 - [x] Task definition and migration chain analysis completed.
-- [ ] Implementation started.
+- [ ] End-to-end forward path completed.
 
 ---
 
@@ -156,23 +138,110 @@
 - `fastgs_core/include/fastgs_preprocess.h`
 - `fastgs_core/fastgs_preprocess.cpp`
 - `fastgs_core/metal/fastgs_preprocess.metal`
-- (later) `fastgs_core/include/fastgs_preprocess_backward.h`
-- (later) `fastgs_core/fastgs_preprocess_backward.cpp`
-- (later) `fastgs_core/metal/fastgs_preprocess_backward.metal`
 
 ## Task 3.1 Steps
 - [x] Define preprocess params/input/output contracts in header.
 - [x] Implement MLX Primitive wrapper and `fastgs_preprocess(...)` API in cpp.
 - [x] Implement Metal kernel `fastgs_preprocess_forward_kernel`.
 - [x] Wire kernel dispatch arguments and output buffers.
-- [ ] Expose callable binding route from `_fastgs_core`.
-- [ ] Add minimal smoke test script in `scripts/` or `training/test/`.
+- [x] Expose callable binding route from `_fastgs_core` (dictionary input style).
+- [x] Add minimal smoke test script in `scripts/preprocess_smoke.py`.
 
 ## Task 3.1 Validation
 - [x] `make pyext-build` passes.
-- [ ] Preprocess binding call returns expected tensor shapes/dtypes.
-- [ ] No Metal runtime error for basic fixture.
+- [x] `python scripts/preprocess_smoke.py` passes.
+- [x] Preprocess binding call returns expected tensor shapes/dtypes.
 
 ## Notes
-- Keep forward correctness as first priority.
-- Backward path for preprocess is tracked after forward stability.
+- Forward preprocess is available; backward remains out of scope for this stage.
+
+---
+
+# Task 3.2 (Tile Prep Primitive)
+
+## Scope
+- Implement `fastgs_tile_prep` as one dedicated MLX Primitive.
+- Input from sorted key stream; output per-tile ranges / bucket metadata.
+
+## Planned Files
+- `fastgs_core/include/fastgs_tile_prep.h`
+- `fastgs_core/fastgs_tile_prep.cpp`
+- `fastgs_core/metal/fastgs_tile_prep.metal`
+
+## Steps
+- [ ] Define params/input/output contracts.
+- [ ] Implement primitive wrapper + GPU dispatch.
+- [ ] Implement Metal forward kernel.
+- [ ] Add smoke validation script/section.
+
+## Validation
+- [ ] Build passes.
+- [ ] Output shapes/types match expected contracts.
+
+---
+
+# Task 3.3 (Binning Primitive)
+
+## Scope
+- Implement `fastgs_binning` as one dedicated MLX Primitive.
+- Generate point list keys / unsorted lists from preprocess geometry outputs.
+
+## Planned Files
+- `fastgs_core/include/fastgs_binning.h`
+- `fastgs_core/fastgs_binning.cpp`
+- `fastgs_core/metal/fastgs_binning.metal`
+
+## Steps
+- [ ] Define params/input/output contracts.
+- [ ] Implement primitive wrapper + GPU dispatch.
+- [ ] Implement Metal forward kernel.
+- [ ] Add smoke validation script/section.
+
+## Validation
+- [ ] Build passes.
+- [ ] Output shapes/types match expected contracts.
+
+---
+
+# Task 3.4 (Rasterize Primitive)
+
+## Scope
+- Implement `fastgs_rasterize` as one dedicated MLX Primitive.
+- Produce final image (`out_color`) and required intermediate accumulators.
+
+## Planned Files
+- `fastgs_core/include/fastgs_rasterize.h`
+- `fastgs_core/fastgs_rasterize.cpp`
+- `fastgs_core/metal/fastgs_rasterize.metal`
+
+## Steps
+- [ ] Define params/input/output contracts.
+- [ ] Implement primitive wrapper + GPU dispatch.
+- [ ] Implement Metal forward kernel.
+- [ ] Add smoke validation script/section.
+
+## Validation
+- [ ] Build passes.
+- [ ] `out_color` shape/dtype correct and non-empty for test fixture.
+
+---
+
+# Task 3.5 (External API Wiring)
+
+## Scope
+- Wire Task 3.1 ~ 3.4 primitives into outward-facing APIs in `binding.cpp`.
+- Keep migration-friendly API style aligned with original FastGS flow.
+
+## Planned APIs
+- `_fastgs_core.rasterize_gaussians(...)` (forward)
+- `_fastgs_core.preprocess_forward(...)` (already present)
+- (later) backward APIs after forward completion
+
+## Steps
+- [ ] Add end-to-end forward chain in binding (`preprocess -> binning -> tile_prep -> rasterize`).
+- [ ] Return forward outputs in stable dict schema.
+- [ ] Add end-to-end forward smoke script.
+
+## Validation
+- [ ] Python smoke call works end-to-end.
+- [ ] Forward returns expected keys/shapes.
