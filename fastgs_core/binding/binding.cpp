@@ -12,6 +12,7 @@
 #include "../include/fastgs_preprocess.h"
 #include "../include/fastgs_binning.h"
 #include "../include/fastgs_tile_prep.h"
+#include "../include/fastgs_rasterize.h"
 
 namespace nb = nanobind;
 namespace mx = mlx::core;
@@ -20,6 +21,66 @@ using namespace nb::literals;
 namespace {
 
 
+
+
+nb::dict rasterize_forward(
+    const mx::array& ranges,
+    const mx::array& point_list,
+    const mx::array& per_tile_bucket_offset,
+    const mx::array& means2d,
+    const mx::array& colors,
+    const mx::array& conic_opacity,
+    const mx::array& background,
+    const mx::array& radii,
+    const mx::array& metric_map,
+    const mx::array& metric_count,
+    const mx::array& viewspace_points,
+    int image_width,
+    int image_height,
+    int block_x,
+    int block_y,
+    int num_channels,
+    int num_tiles,
+    int bucket_sum,
+    bool get_flag) {
+  fastgs_core::RasterizeInput input = {
+      .ranges = ranges,
+      .point_list = point_list,
+      .per_tile_bucket_offset = per_tile_bucket_offset,
+      .means2d = means2d,
+      .colors = colors,
+      .conic_opacity = conic_opacity,
+      .background = background,
+      .radii = radii,
+      .metric_map = metric_map,
+      .metric_count = metric_count,
+      .viewspace_points = viewspace_points,
+      .s = mx::Device::gpu,
+      .params = {
+          .image_width = image_width,
+          .image_height = image_height,
+          .block_x = block_x,
+          .block_y = block_y,
+          .num_channels = num_channels,
+          .num_tiles = num_tiles,
+          .bucket_sum = bucket_sum,
+          .get_flag = get_flag,
+      },
+  };
+
+  auto outputs = fastgs_core::fastgs_rasterize(input);
+  nb::dict result;
+  result["bucket_to_tile"] = outputs[fastgs_core::RasterizeOutputIndex::kBucketToTile];
+  result["sampled_t"] = outputs[fastgs_core::RasterizeOutputIndex::kSampledT];
+  result["sampled_ar"] = outputs[fastgs_core::RasterizeOutputIndex::kSampledAr];
+  result["final_t"] = outputs[fastgs_core::RasterizeOutputIndex::kFinalT];
+  result["n_contrib"] = outputs[fastgs_core::RasterizeOutputIndex::kNContrib];
+  result["max_contrib"] = outputs[fastgs_core::RasterizeOutputIndex::kMaxContrib];
+  result["pixel_colors"] = outputs[fastgs_core::RasterizeOutputIndex::kPixelColors];
+  result["out_color"] = outputs[fastgs_core::RasterizeOutputIndex::kOutColor];
+  result["metric_count"] = outputs[fastgs_core::RasterizeOutputIndex::kMetricCount];
+  return result;
+}
 
 nb::dict binning_forward(
     const mx::array& xys,
@@ -182,6 +243,29 @@ NB_MODULE(_fastgs_core, m) {
       "dummy_array_size",
       [](const mx::array& a) { return static_cast<int>(a.size()); },
       "a"_a);
+
+  m.def(
+      "rasterize_forward",
+      &rasterize_forward,
+      "ranges"_a,
+      "point_list"_a,
+      "per_tile_bucket_offset"_a,
+      "means2d"_a,
+      "colors"_a,
+      "conic_opacity"_a,
+      "background"_a,
+      "radii"_a,
+      "metric_map"_a,
+      "metric_count"_a,
+      "viewspace_points"_a,
+      "image_width"_a,
+      "image_height"_a,
+      "block_x"_a,
+      "block_y"_a,
+      "num_channels"_a,
+      "num_tiles"_a,
+      "bucket_sum"_a,
+      "get_flag"_a = false);
 
   m.def(
       "binning_forward",

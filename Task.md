@@ -215,14 +215,14 @@
 - `fastgs_core/metal/fastgs_rasterize.metal`
 
 ## Steps
-- [ ] Define params/input/output contracts.
-- [ ] Implement primitive wrapper + GPU dispatch.
-- [ ] Implement Metal forward kernel.
-- [ ] Add smoke validation script/section.
+- [x] Define params/input/output contracts.
+- [x] Implement primitive wrapper + GPU dispatch.
+- [x] Implement Metal forward kernel.
+- [x] Add smoke validation script/section.
 
 ## Validation
-- [ ] Build passes.
-- [ ] `out_color` shape/dtype correct and non-empty for test fixture.
+- [x] Build passes.
+- [x] `out_color` shape/dtype correct and non-empty for test fixture.
 
 ---
 
