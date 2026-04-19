@@ -27,7 +27,7 @@ if __name__ == "__main__":
         ],
         cmdclass={"build_ext": extension.CMakeBuild},
         packages=[PACKAGE_NAME],
-        package_dir={"": "."},
+        package_dir={"": "python_package"},
         package_data={
             PACKAGE_NAME: ["*.so", "*.dylib", "*.metallib"],
         },
