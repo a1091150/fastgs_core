@@ -2,6 +2,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unordered_map.h>
 
+#include <cstdint>
 #include <unordered_map>
 
 #include <mlx/array.h>
@@ -20,6 +21,250 @@ using namespace nb::literals;
 
 namespace {
 
+uint32_t read_last_u32(const mx::array& a) {
+  mx::eval(a);
+  if (a.size() == 0) {
+    return 0;
+  }
+  return a.data<uint32_t>()[a.size() - 1];
+}
+
+nb::dict rasterize_gaussians_forward(
+    const std::unordered_map<std::string, mx::array>& inputs,
+    int image_width,
+    int image_height,
+    int block_x,
+    int block_y,
+    float tan_fovx,
+    float tan_fovy,
+    int degree,
+    float scale_modifier,
+    float mult,
+    bool prefiltered,
+    bool get_flag) {
+  auto required = {
+      inputs.find("background"),
+      inputs.find("means3d"),
+      inputs.find("colors"),
+      inputs.find("opacities"),
+      inputs.find("scales"),
+      inputs.find("rotations"),
+      inputs.find("metric_map"),
+      inputs.find("viewmatrix"),
+      inputs.find("projmatrix"),
+      inputs.find("dc"),
+      inputs.find("sh"),
+      inputs.find("campos"),
+  };
+  for (auto it : required) {
+    if (it == inputs.end()) {
+      throw std::runtime_error("rasterize_gaussians_forward missing required input tensor");
+    }
+  }
+
+  const auto& means3d = inputs.at("means3d");
+  const auto& background = inputs.at("background");
+  const auto& colors = inputs.at("colors");
+  const auto& opacities = inputs.at("opacities");
+  const auto& scales = inputs.at("scales");
+  const auto& rotations = inputs.at("rotations");
+  mx::array cov3d_precomp = mx::zeros({0}, mx::float32);
+  if (auto it = inputs.find("cov3d_precomp"); it != inputs.end()) {
+    cov3d_precomp = it->second;
+  }
+  const auto& metric_map = inputs.at("metric_map");
+  const auto& viewmatrix = inputs.at("viewmatrix");
+  const auto& projmatrix = inputs.at("projmatrix");
+  const auto& dc = inputs.at("dc");
+  const auto& sh = inputs.at("sh");
+  const auto& campos = inputs.at("campos");
+  mx::array viewspace_points = mx::zeros({0}, means3d.dtype());
+  if (auto it = inputs.find("viewspace_points"); it != inputs.end()) {
+    viewspace_points = it->second;
+  }
+
+  const int num_points = means3d.shape(0);
+  if (viewspace_points.size() == 0) {
+    viewspace_points = mx::zeros({num_points, 4}, means3d.dtype(), mx::Device::gpu);
+  }
+  const int max_sh_coeffs = (sh.ndim() >= 2) ? static_cast<int>(sh.shape(1)) : 0;
+  auto tile_bounds = std::make_tuple(
+      (image_width + block_x - 1) / block_x,
+      (image_height + block_y - 1) / block_y,
+      1);
+
+  fastgs_core::PreprocessParams preprocess_params = {
+      .degree = degree,
+      .max_sh_coeffs = max_sh_coeffs,
+      .scale_modifier = scale_modifier,
+      .tan_fovx = tan_fovx,
+      .tan_fovy = tan_fovy,
+      .image_height = image_height,
+      .image_width = image_width,
+      .tile_bounds = tile_bounds,
+      .mult = mult,
+      .prefiltered = prefiltered,
+      .use_cov3d_precomp = cov3d_precomp.size() != 0,
+      .use_colors_precomp = colors.size() != 0,
+  };
+
+  fastgs_core::PreprocessInput preprocess_input = {
+      .means3d = means3d,
+      .dc = dc,
+      .sh = sh,
+      .colors_precomp = colors,
+      .opacities = opacities,
+      .scales = scales,
+      .quats = rotations,
+      .cov3d_precomp = cov3d_precomp,
+      .viewmat = viewmatrix,
+      .projmat = projmatrix,
+      .cam_pos = campos,
+      .viewspace_points = viewspace_points,
+      .s = mx::Device::gpu,
+      .params = preprocess_params,
+  };
+
+  auto preprocess_outputs = fastgs_core::fastgs_preprocess(preprocess_input);
+  auto xys = preprocess_outputs[fastgs_core::PreprocessOutputIndex::kXys];
+  auto depths = preprocess_outputs[fastgs_core::PreprocessOutputIndex::kDepths];
+  auto rgbs = preprocess_outputs[fastgs_core::PreprocessOutputIndex::kRgb];
+  auto conic_opacity =
+      preprocess_outputs[fastgs_core::PreprocessOutputIndex::kConicOpacity];
+  auto tiles_touched =
+      preprocess_outputs[fastgs_core::PreprocessOutputIndex::kTilesTouched];
+  auto preprocess_viewspace_points =
+      preprocess_outputs[fastgs_core::PreprocessOutputIndex::kViewspacePoints];
+  auto point_offsets = mx::stop_gradient(mx::cumsum(tiles_touched, false, true));
+  uint32_t num_rendered = read_last_u32(point_offsets);
+
+  mx::array point_list_keys = mx::zeros({0}, mx::uint64);
+  mx::array point_list = mx::zeros({0}, mx::uint32);
+  mx::array ranges = mx::zeros({0, 2}, mx::uint32);
+  mx::array bucket_count = mx::zeros({0}, mx::uint32);
+  mx::array bucket_offsets = mx::zeros({0}, mx::uint32);
+  mx::array bucket_to_tile = mx::zeros({0}, mx::uint32);
+  mx::array sampled_t = mx::zeros({0}, mx::float32);
+  mx::array sampled_ar = mx::zeros({0}, mx::float32);
+  mx::array final_t = mx::zeros({0}, mx::float32);
+  mx::array n_contrib = mx::zeros({0}, mx::uint32);
+  mx::array max_contrib = mx::zeros({0}, mx::uint32);
+  mx::array pixel_colors = mx::zeros({0}, mx::float32);
+  mx::array out_color = mx::zeros({0}, mx::float32);
+  mx::array metric_count =
+      get_flag ? mx::zeros({num_points}, mx::int32) : mx::zeros({0}, mx::int32);
+
+  const int num_tiles = std::get<0>(tile_bounds) * std::get<1>(tile_bounds);
+  uint32_t bucket_sum = 0;
+
+  if (num_rendered > 0) {
+    fastgs_core::BinningInput binning_input = {
+        .xys = mx::stop_gradient(xys),
+        .depths = mx::stop_gradient(depths),
+        .point_offsets = point_offsets,
+        .conic_opacity = mx::stop_gradient(conic_opacity),
+        .tiles_touched = mx::stop_gradient(tiles_touched),
+        .s = mx::Device::gpu,
+        .params = {
+            .mult = mult,
+            .tile_bounds = tile_bounds,
+            .num_rendered = static_cast<int>(num_rendered),
+        },
+    };
+    auto binning_outputs = fastgs_core::fastgs_binning(binning_input);
+    auto point_list_keys_unsorted = mx::stop_gradient(
+        binning_outputs[fastgs_core::BinningOutputIndex::kPointListKeysUnsorted]);
+    auto point_list_unsorted = mx::stop_gradient(
+        binning_outputs[fastgs_core::BinningOutputIndex::kPointListUnsorted]);
+
+    auto sorted_indices = mx::argsort(point_list_keys_unsorted);
+    point_list_keys = mx::stop_gradient(mx::take(point_list_keys_unsorted, sorted_indices));
+    point_list = mx::stop_gradient(mx::take(point_list_unsorted, sorted_indices));
+
+    fastgs_core::TilePrepInput tile_input = {
+        .point_list_keys = point_list_keys,
+        .s = mx::Device::gpu,
+        .params = {
+            .num_rendered = static_cast<int>(num_rendered),
+            .num_tiles = num_tiles,
+        },
+    };
+    auto tile_outputs = fastgs_core::fastgs_tile_prep(tile_input);
+    ranges = mx::stop_gradient(tile_outputs[fastgs_core::TilePrepOutputIndex::kRanges]);
+    bucket_count =
+        mx::stop_gradient(tile_outputs[fastgs_core::TilePrepOutputIndex::kBucketCount]);
+    bucket_offsets = mx::stop_gradient(mx::cumsum(bucket_count, false, true));
+    bucket_sum = read_last_u32(bucket_offsets);
+
+    if (bucket_sum > 0) {
+      fastgs_core::RasterizeInput rasterize_input = {
+          .ranges = ranges,
+          .point_list = point_list,
+          .per_tile_bucket_offset = bucket_offsets,
+          .means2d = mx::stop_gradient(xys),
+          .colors = rgbs,
+          .conic_opacity = conic_opacity,
+          .background = background,
+          .radii = mx::stop_gradient(
+              preprocess_outputs[fastgs_core::PreprocessOutputIndex::kRadii]),
+          .metric_map = mx::stop_gradient(metric_map),
+          .metric_count = metric_count,
+          .viewspace_points = preprocess_viewspace_points,
+          .s = mx::Device::gpu,
+          .params = {
+              .image_width = image_width,
+              .image_height = image_height,
+              .block_x = block_x,
+              .block_y = block_y,
+              .num_channels = 3,
+              .num_tiles = num_tiles,
+              .bucket_sum = static_cast<int>(bucket_sum),
+              .get_flag = get_flag,
+          },
+      };
+
+      auto rasterize_outputs = fastgs_core::fastgs_rasterize(rasterize_input);
+      bucket_to_tile = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kBucketToTile];
+      sampled_t = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kSampledT];
+      sampled_ar = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kSampledAr];
+      final_t = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kFinalT];
+      n_contrib = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kNContrib];
+      max_contrib = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kMaxContrib];
+      pixel_colors = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kPixelColors];
+      out_color = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kOutColor];
+      metric_count = rasterize_outputs[fastgs_core::RasterizeOutputIndex::kMetricCount];
+    }
+  }
+
+  nb::dict result;
+  result["rendered"] = nb::int_(num_rendered);
+  result["num_buckets"] = nb::int_(bucket_sum);
+  result["out_color"] = out_color;
+  result["radii"] = preprocess_outputs[fastgs_core::PreprocessOutputIndex::kRadii];
+  result["point_offsets"] = point_offsets;
+  result["ranges"] = ranges;
+  result["bucket_count"] = bucket_count;
+  result["bucket_offsets"] = bucket_offsets;
+  result["point_list_keys"] = point_list_keys;
+  result["point_list"] = point_list;
+  result["metric_count"] = metric_count;
+  result["viewspace_points"] = preprocess_viewspace_points;
+  result["geom_means2d"] = xys;
+  result["geom_depths"] = depths;
+  result["geom_cov3d"] = preprocess_outputs[fastgs_core::PreprocessOutputIndex::kCov3d];
+  result["geom_rgb"] = rgbs;
+  result["geom_conic_opacity"] = conic_opacity;
+  result["geom_tiles_touched"] = tiles_touched;
+  result["geom_clamped"] = preprocess_outputs[fastgs_core::PreprocessOutputIndex::kClamped];
+  result["sample_bucket_to_tile"] = bucket_to_tile;
+  result["sample_t"] = sampled_t;
+  result["sample_ar"] = sampled_ar;
+  result["img_final_t"] = final_t;
+  result["img_n_contrib"] = n_contrib;
+  result["img_max_contrib"] = max_contrib;
+  result["img_pixel_colors"] = pixel_colors;
+  return result;
+}
 
 
 
@@ -302,4 +547,36 @@ NB_MODULE(_fastgs_core, m) {
       "scale_modifier"_a = 1.0f,
       "mult"_a = 1.0f,
       "prefiltered"_a = false);
+
+  m.def(
+      "rasterize_gaussians_forward",
+      &rasterize_gaussians_forward,
+      "inputs"_a,
+      "image_width"_a,
+      "image_height"_a,
+      "block_x"_a = 16,
+      "block_y"_a = 16,
+      "tan_fovx"_a = 1.0f,
+      "tan_fovy"_a = 1.0f,
+      "degree"_a = 0,
+      "scale_modifier"_a = 1.0f,
+      "mult"_a = 1.0f,
+      "prefiltered"_a = false,
+      "get_flag"_a = false);
+
+  m.def(
+      "rasterize_gaussians",
+      &rasterize_gaussians_forward,
+      "inputs"_a,
+      "image_width"_a,
+      "image_height"_a,
+      "block_x"_a = 16,
+      "block_y"_a = 16,
+      "tan_fovx"_a = 1.0f,
+      "tan_fovy"_a = 1.0f,
+      "degree"_a = 0,
+      "scale_modifier"_a = 1.0f,
+      "mult"_a = 1.0f,
+      "prefiltered"_a = false,
+      "get_flag"_a = false);
 }

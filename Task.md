@@ -238,10 +238,12 @@
 - (later) backward APIs after forward completion
 
 ## Steps
-- [ ] Add end-to-end forward chain in binding (`preprocess -> binning -> tile_prep -> rasterize`).
-- [ ] Return forward outputs in stable dict schema.
-- [ ] Add end-to-end forward smoke script.
+- [x] Add end-to-end forward chain in binding (`preprocess -> binning -> tile_prep -> rasterize`).
+- [x] Return forward outputs in stable dict schema.
+- [x] Add end-to-end forward smoke script.
 
 ## Validation
 - [ ] Python smoke call works end-to-end.
 - [ ] Forward returns expected keys/shapes.
+- [x] `make pyext-build` passes with `rasterize_gaussians_forward` linked.
+- [ ] Runtime smoke blocked on current environment Metal device init crash (`NSRangeException`).
