@@ -41,6 +41,16 @@ inline void write_packed_float4(device float* arr, uint idx, float4 val) {
   arr[4 * idx + 3] = val.w;
 }
 
+inline uint clamp_u32(int v, uint lo, uint hi) {
+  if (v < static_cast<int>(lo)) {
+    return lo;
+  }
+  if (v > static_cast<int>(hi)) {
+    return hi;
+  }
+  return static_cast<uint>(v);
+}
+
 kernel void fastgs_preprocess_forward_kernel(
     constant int& n [[buffer(0)]],
     constant PreprocessKernelParams& p [[buffer(1)]],
@@ -71,7 +81,21 @@ kernel void fastgs_preprocess_forward_kernel(
   }
 
   float3 m = read_packed_float3(means3d, tid);
-  radii[tid] = 1;
+
+  float sx = 1.0f;
+  float sy = 1.0f;
+  if (p.use_cov3d_precomp != 0u) {
+    // Treat cov3d precomp [xx, xy, xz, yy, yz, zz] as a rough screen-space proxy here.
+    sx = sqrt(max(cov3d_precomp[6 * tid + 0], 1.0e-6f));
+    sy = sqrt(max(cov3d_precomp[6 * tid + 3], 1.0e-6f));
+  } else {
+    // Current migration stage uses a simple footprint proxy from per-axis scales.
+    sx = max(scales[3 * tid + 0] * p.scale_modifier * p.mult * 120.0f, 1.0f);
+    sy = max(scales[3 * tid + 1] * p.scale_modifier * p.mult * 120.0f, 1.0f);
+  }
+  int radius = max(1, static_cast<int>(ceil(3.0f * max(sx, sy))));
+  radii[tid] = radius;
+
   write_packed_float2(xys, tid, float2(m.x, m.y));
   depths[tid] = m.z;
 
@@ -97,12 +121,18 @@ kernel void fastgs_preprocess_forward_kernel(
   }
   write_packed_float3(rgbs, tid, max(rgb, float3(0.0f)));
 
-  conic_opacity[4 * tid + 0] = 1.0f;
+  conic_opacity[4 * tid + 0] = 1.0f / max(sx * sx, 1.0e-6f);
   conic_opacity[4 * tid + 1] = 0.0f;
-  conic_opacity[4 * tid + 2] = 1.0f;
+  conic_opacity[4 * tid + 2] = 1.0f / max(sy * sy, 1.0e-6f);
   conic_opacity[4 * tid + 3] = opacities[tid];
 
-  tiles_touched[tid] = 1u;
+  const int block_x = 16;
+  const int block_y = 16;
+  uint tx_min = clamp_u32(static_cast<int>(floor((m.x - float(radius)) / float(block_x))), 0u, p.tile_bounds_x > 0 ? p.tile_bounds_x - 1 : 0u);
+  uint tx_max = clamp_u32(static_cast<int>(floor((m.x + float(radius)) / float(block_x))), 0u, p.tile_bounds_x > 0 ? p.tile_bounds_x - 1 : 0u);
+  uint ty_min = clamp_u32(static_cast<int>(floor((m.y - float(radius)) / float(block_y))), 0u, p.tile_bounds_y > 0 ? p.tile_bounds_y - 1 : 0u);
+  uint ty_max = clamp_u32(static_cast<int>(floor((m.y + float(radius)) / float(block_y))), 0u, p.tile_bounds_y > 0 ? p.tile_bounds_y - 1 : 0u);
+  tiles_touched[tid] = (tx_max - tx_min + 1u) * (ty_max - ty_min + 1u);
   clamped[3 * tid + 0] = false;
   clamped[3 * tid + 1] = false;
   clamped[3 * tid + 2] = false;
