@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import os
 import sys
 from datetime import datetime
@@ -95,6 +96,15 @@ def build_look_at_camera(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode",
+        choices=["default", "random"],
+        default="default",
+        help="default: fixed params, random: random means/colors with fixed scale",
+    )
+    args = parser.parse_args()
+
     ext = import_extension()
 
     n = 2048
@@ -106,21 +116,32 @@ def main() -> None:
     tan_fovy = math.tan(0.5 * fovy)
     viewmatrix_np, projmatrix_np, eye_np = build_look_at_camera(fovx, fovy)
 
-    grid_cols = 64
-    grid_rows = 32
-    xs = np.linspace(64.0, image_width - 64.0, grid_cols, dtype=np.float32)
-    ys = np.linspace(64.0, image_height - 64.0, grid_rows, dtype=np.float32)
-    xv, yv = np.meshgrid(xs, ys)
-    xy = np.stack([xv.reshape(-1), yv.reshape(-1)], axis=1)[:n]
-    z = np.full((n, 1), 1.0, dtype=np.float32)
-    means3d_np = np.concatenate([xy, z], axis=1)
+    if args.mode == "random":
+        rng = np.random.default_rng()
+        xy = rng.uniform(
+            low=[64.0, 64.0],
+            high=[image_width - 64.0, image_height - 64.0],
+            size=(n, 2),
+        ).astype(np.float32)
+        z = np.full((n, 1), 1.0, dtype=np.float32)
+        means3d_np = np.concatenate([xy, z], axis=1)
+        colors_np = rng.uniform(0.0, 1.0, size=(n, 3)).astype(np.float32)
+    else:
+        grid_cols = 64
+        grid_rows = 32
+        xs = np.linspace(64.0, image_width - 64.0, grid_cols, dtype=np.float32)
+        ys = np.linspace(64.0, image_height - 64.0, grid_rows, dtype=np.float32)
+        xv, yv = np.meshgrid(xs, ys)
+        xy = np.stack([xv.reshape(-1), yv.reshape(-1)], axis=1)[:n]
+        z = np.full((n, 1), 1.0, dtype=np.float32)
+        means3d_np = np.concatenate([xy, z], axis=1)
 
-    colors_np = np.zeros((n, 3), dtype=np.float32)
-    colors_np[:, 0] = xy[:, 0] / float(image_width)
-    colors_np[:, 1] = xy[:, 1] / float(image_height)
-    colors_np[:, 2] = 1.0 - colors_np[:, 0]
+        colors_np = np.zeros((n, 3), dtype=np.float32)
+        colors_np[:, 0] = xy[:, 0] / float(image_width)
+        colors_np[:, 1] = xy[:, 1] / float(image_height)
+        colors_np[:, 2] = 1.0 - colors_np[:, 0]
 
-    scales_np = np.full((n, 3), 0.08, dtype=np.float32)
+    scales_np = np.full((n, 3), 0.1, dtype=np.float32)
     rotations_np = np.zeros((n, 4), dtype=np.float32)
     rotations_np[:, 0] = 1.0
     opacities_np = np.full((n,), 0.85, dtype=np.float32)
@@ -162,14 +183,15 @@ def main() -> None:
     bgr_u8 = (rgb[:, :, ::-1] * 255.0).astype(np.uint8)
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    out_dir = os.path.join(repo_root, "training", "forward_test")
+    out_dir = os.path.join(repo_root, "training", "output" ,"forward_test")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{datetime.now().strftime('%Y%m%d%M')}.png")
+    out_path = os.path.join(out_dir, f"{datetime.now().strftime('%Y%m%d%M')}_{args.mode}.png")
     ok = cv2.imwrite(out_path, bgr_u8)
     if not ok:
         raise RuntimeError(f"Failed to write image: {out_path}")
 
     print("render_2048_smoke ok")
+    print("mode:", args.mode)
     print("rendered:", out["rendered"])
     print("num_buckets:", out["num_buckets"])
     print("saved:", out_path)
