@@ -424,21 +424,28 @@
 - Provide robust, repeatable test strategy for backward path correctness and parity confidence.
 
 ### Planned Scripts
-- `scripts/backward_smoke.py`
-- `scripts/backward_grad_contract_smoke.py`
-- `scripts/backward_numeric_check.py`
-- `scripts/backward_parity_compare.py`
+- [x] `scripts/backward_smoke.py`
+- [x] `scripts/backward_grad_contract_smoke.py`
+- [x] `scripts/backward_numeric_check.py`
+- [x] `scripts/backward_parity_compare.py`
 
 ### Test Matrix
 - Contract tests:
-  - [ ] Verify mandatory gradient presence and shape constraints.
-  - [ ] Verify `means2D/xys` gradient contract (`[P,4]`, split channels used by densification logic).
+  - [x] Verify mandatory gradient presence and shape constraints.
+  - [x] Verify `means2D/xys` gradient contract (`[P,4]`, split channels used by densification logic) for current staged implementation contract.
 - Numerical tests:
-  - [ ] Finite-difference checks on sampled parameters (`means3D`, `opacity`, `scale`, `rotation`, optional color path).
+  - [x] Finite-difference checks on currently implemented sampled parameter path (`means2D`) pass tolerance gates.
+  - [ ] Finite-difference checks on remaining sampled parameters (`means3D`, `opacity`, `scale`, `rotation`, optional color path).
 - Stability tests:
-  - [ ] Repeat-run gradient consistency under fixed seeds.
+  - [x] Repeat-run gradient consistency under fixed seeds.
 - Reference parity tests:
   - [ ] Compare Metal gradients to CUDA reference snapshots for selected fixtures.
+
+### Current Status Note
+- Test harness scripts for Task 4.5 are in place and syntactically validated.
+- Contract and repeatability checks are covered by local smoke/validation scripts.
+- Numerical check script has local pass on staged path (`backward_numeric_check.py`, `means2D` finite-difference).
+- Parity compare script produces current snapshot (`/tmp/fastgs_backward_current.npz`); CUDA `--ref` snapshot is still required for error-based parity decision.
 
 ### Acceptance Criteria (Task 4 Exit)
 - [ ] No `vjp not implemented` on training-critical backward path.
