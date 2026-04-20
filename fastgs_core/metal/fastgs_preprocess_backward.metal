@@ -8,6 +8,8 @@ struct PreprocessBackwardKernelParams {
   uint image_height;
   uint use_cov3d_precomp;
   uint use_colors_precomp;
+  int degree;
+  int max_sh_coeffs;
 };
 
 inline float3 read_packed_float3(const device float* arr, uint idx) {
@@ -93,13 +95,15 @@ kernel void fastgs_preprocess_backward_kernel(
     dL_dcolors_precomp[3 * tid + 1] = dL_drgb[3 * tid + 1];
     dL_dcolors_precomp[3 * tid + 2] = dL_drgb[3 * tid + 2];
   } else {
-    // SH path is pending parity implementation. Keep zero grads here for now.
-    dL_ddc[3 * tid + 0] = 0.0f;
-    dL_ddc[3 * tid + 1] = 0.0f;
-    dL_ddc[3 * tid + 2] = 0.0f;
+    // Staged SH path: degree-0 term (dc) only.
+    constexpr float SH_C0 = 0.28209479177387814f;
+    dL_ddc[3 * tid + 0] = SH_C0 * dL_drgb[3 * tid + 0];
+    dL_ddc[3 * tid + 1] = SH_C0 * dL_drgb[3 * tid + 1];
+    dL_ddc[3 * tid + 2] = SH_C0 * dL_drgb[3 * tid + 2];
     dL_dcolors_precomp[3 * tid + 0] = 0.0f;
     dL_dcolors_precomp[3 * tid + 1] = 0.0f;
     dL_dcolors_precomp[3 * tid + 2] = 0.0f;
+    // dL_dsh remains zero-initialized in staged implementation.
   }
 
   // Backprop cov3d( scale, quat ) -> d_scales, d_quats

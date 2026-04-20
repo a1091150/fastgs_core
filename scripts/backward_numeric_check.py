@@ -115,6 +115,36 @@ def _preprocess_cov_loss(ext, scales, quats):
     return mx.sum(out["cov3d"])
 
 
+def _preprocess_sh_loss(ext, dc, sh):
+    n = dc.shape[0]
+    w, h = 16, 16
+    inputs = {
+        "means3d": mx.array([[0.1, 0.1, 1.2 + 0.01 * i] for i in range(n)], dtype=mx.float32),
+        "opacities": mx.array([0.6 for _ in range(n)], dtype=mx.float32),
+        "cov3d_precomp": mx.array([[1.0, 0.0, 0.0, 1.0, 0.0, 1.0] for _ in range(n)], dtype=mx.float32),
+        "dc": dc,
+        "sh": sh,
+        "viewmat": mx.eye(4, dtype=mx.float32),
+        "projmat": mx.eye(4, dtype=mx.float32),
+        "cam_pos": mx.zeros((3,), dtype=mx.float32),
+        "viewspace_points": mx.zeros((n, 4), dtype=mx.float32),
+    }
+    out = ext.preprocess_forward(
+        inputs,
+        image_width=w,
+        image_height=h,
+        block_x=16,
+        block_y=16,
+        tan_fovx=1.0,
+        tan_fovy=1.0,
+        degree=0,  # staged check focuses on degree-0 dc path
+        scale_modifier=1.0,
+        mult=1.0,
+        prefiltered=False,
+    )
+    return mx.sum(out["rgb"])
+
+
 def _central_diff_2d(loss_fn, x, eps):
     num = []
     for j in range(x.shape[1]):
@@ -128,10 +158,10 @@ def _central_diff_2d(loss_fn, x, eps):
 
 def _central_diff_scalar(loss_fn, x, idx, eps):
     if isinstance(idx, tuple):
-        rows, cols = x.shape
-        d = [[0.0 for _ in range(cols)] for _ in range(rows)]
-        d[idx[0]][idx[1]] = eps
-        d = mx.array(d, dtype=mx.float32)
+        import numpy as np
+        d_np = np.zeros(tuple(x.shape), dtype=np.float32)
+        d_np[idx] = eps
+        d = mx.array(d_np, dtype=mx.float32)
     else:
         d = [0.0 for _ in range(x.shape[0])]
         d[idx] = eps
@@ -216,6 +246,22 @@ def main() -> None:
     ana_c = [float(gcol[0, 0].item())]
     num_c = [_central_diff_scalar(lambda c: _e2e_color_loss(ext, c), colors, (0, 0), args.eps)]
     ok = _report("colors_precomp[0,0]", ana_c, num_c, args.tol_staged) and ok
+
+    # 6) Preprocess SH path (degree-0 staged): dc and sh
+    n = 8
+    dc = mx.array([[0.5, 0.4, 0.3] for _ in range(n)], dtype=mx.float32)
+    sh = mx.zeros((n, 1, 3), dtype=mx.float32)
+    gdc = mx.grad(lambda d: _preprocess_sh_loss(ext, d, sh))(dc)
+    mx.eval(gdc)
+    ana_dc = [float(gdc[0, 0].item())]
+    num_dc = [_central_diff_scalar(lambda d: _preprocess_sh_loss(ext, d, sh), dc, (0, 0), args.eps)]
+    ok = _report("dc[0,0]", ana_dc, num_dc, args.tol_staged) and ok
+
+    gsh = mx.grad(lambda s: _preprocess_sh_loss(ext, dc, s))(sh)
+    mx.eval(gsh)
+    ana_sh = [float(gsh[0, 0, 0].item())]
+    num_sh = [_central_diff_scalar(lambda s: _preprocess_sh_loss(ext, dc, s), sh, (0, 0), args.eps)]
+    ok = _report("sh[0,0,0]", ana_sh, num_sh, args.tol_staged) and ok
 
     if not ok:
         raise SystemExit(1)

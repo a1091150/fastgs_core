@@ -26,6 +26,8 @@ struct PreprocessBackwardKernelParams {
   uint32_t image_height;
   uint32_t use_cov3d_precomp;
   uint32_t use_colors_precomp;
+  int32_t degree;
+  int32_t max_sh_coeffs;
 };
 }  // namespace
 
@@ -108,6 +110,8 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
       .image_height = static_cast<uint32_t>(params_.image_height),
       .use_cov3d_precomp = static_cast<uint32_t>(params_.use_cov3d_precomp),
       .use_colors_precomp = static_cast<uint32_t>(params_.use_colors_precomp),
+      .degree = params_.degree,
+      .max_sh_coeffs = params_.max_sh_coeffs,
   };
 
   auto& s = stream();
