@@ -382,8 +382,13 @@
 - [ ] Ensure means3D gradient accumulation includes all required contributions.
 
 ### Validation
-- [ ] Gradient outputs for means3D/opacities/scales/rotations/(dc,sh or colors) are finite and non-trivial.
+- [x] Gradient outputs for currently implemented path (`means3D`, `viewspace_points`) are finite and non-trivial.
+- [ ] Gradient outputs for remaining parameter paths (`opacities/scales/rotations/(dc,sh or colors)`) are finite and non-trivial.
 - [ ] Small-case numerical gradient checks pass tolerance gates.
+
+### Current Status Note
+- Current implementation adds a runnable preprocess backward core and validation script, but it is not the final CUDA-parity version yet.
+- Validation script: `scripts/preprocess_backward_validation.py` (shape/dtype/finite + repeatability checks).
 
 ---
 

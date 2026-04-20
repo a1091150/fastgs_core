@@ -1,13 +1,30 @@
 #include "include/fastgs_preprocess.h"
+#include "include/helper.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
+
+#include "mlx/backend/common/utils.h"
+#include "mlx/backend/cpu/encoder.h"
+#include "mlx/utils.h"
+
+#ifdef _METAL_
+#include "mlx/backend/metal/device.h"
+#include "mlx/backend/metal/utils.h"
+#endif
 
 namespace fastgs_core {
 
 namespace {
 constexpr int kPreprocessNumInputs = 12;
 constexpr int kPreprocessNumOutputs = 9;
+
+struct PreprocessBackwardKernelParams {
+  uint32_t n;
+  uint32_t image_width;
+  uint32_t image_height;
+};
 }  // namespace
 
 std::vector<mx::array> fastgs_preprocess_backward(
@@ -53,12 +70,57 @@ void FastGSPreprocessBackward::eval_cpu(const std::vector<mx::array>&,
   }
 }
 
-void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>&,
+void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
                                         std::vector<mx::array>& outputs) {
   for (auto& out : outputs) {
     out.set_data(mx::allocator::malloc(out.nbytes()));
     std::memset(out.data<void>(), 0, out.nbytes());
   }
+
+#ifdef _METAL_
+  const auto& means3d = inputs[0];
+  const auto& viewmat = inputs[8];
+  const auto& projmat = inputs[9];
+  const auto& d_xys = inputs[kPreprocessNumInputs + kXys];
+  const auto& d_depths = inputs[kPreprocessNumInputs + kDepths];
+  const auto& d_viewspace = inputs[kPreprocessNumInputs + kViewspacePoints];
+
+  auto& d_means3d = outputs[0];
+  auto& d_viewspace_in = outputs[11];
+
+  const uint32_t n = static_cast<uint32_t>(means3d.shape(0));
+  PreprocessBackwardKernelParams params = {
+      .n = n,
+      .image_width = static_cast<uint32_t>(params_.image_width),
+      .image_height = static_cast<uint32_t>(params_.image_height),
+  };
+
+  auto& s = stream();
+  auto& d = mx::metal::device(s.device);
+  auto lib = d.get_library("fastgs_core", fastgs_core::current_binary_dir());
+  auto kernel = d.get_kernel("fastgs_preprocess_backward_kernel", lib);
+
+  auto& compute_encoder = d.get_command_encoder(s.index);
+  compute_encoder.set_compute_pipeline_state(kernel);
+  compute_encoder.set_bytes(params, 0);
+  compute_encoder.set_input_array(means3d, 1);
+  compute_encoder.set_input_array(viewmat, 2);
+  compute_encoder.set_input_array(projmat, 3);
+  compute_encoder.set_input_array(d_xys, 4);
+  compute_encoder.set_input_array(d_depths, 5);
+  compute_encoder.set_input_array(d_viewspace, 6);
+  compute_encoder.set_output_array(d_means3d, 7);
+  compute_encoder.set_output_array(d_viewspace_in, 8);
+
+  const size_t max_threads = kernel->maxTotalThreadsPerThreadgroup();
+  size_t tgp_size = std::min(static_cast<size_t>(n), max_threads);
+  if (tgp_size == 0) {
+    return;
+  }
+  MTL::Size group_size = MTL::Size(tgp_size, 1, 1);
+  MTL::Size grid_size = MTL::Size(n, 1, 1);
+  compute_encoder.dispatch_threads(grid_size, group_size);
+#endif
 }
 
 std::vector<mx::array> FastGSPreprocessBackward::jvp(
