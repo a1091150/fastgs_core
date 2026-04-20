@@ -439,13 +439,16 @@
 - Stability tests:
   - [x] Repeat-run gradient consistency under fixed seeds.
 - Reference parity tests:
-  - [ ] Compare Metal gradients to CUDA reference snapshots for selected fixtures.
+  - [ ] Compare Metal gradients to CUDA reference snapshots for selected fixtures. (Deferred: current Apple environment has no CUDA runtime/reference generation path)
 
 ### Current Status Note
 - Test harness scripts for Task 4.5 are in place and syntactically validated.
 - Contract and repeatability checks are covered by local smoke/validation scripts.
 - Numerical check script has local pass on staged path (`backward_numeric_check.py`, `means2D` finite-difference).
+- `backward_numeric_check.py` now includes staged finite-difference coverage for `means2D` and `means3D` (`opacity` is optional via `--check-opacity`).
+- `backward_parity_compare.py` now supports schema hint + JSON report output (`--report`, default `/tmp/fastgs_backward_parity_report.json`).
 - Parity compare script produces current snapshot (`/tmp/fastgs_backward_current.npz`); CUDA `--ref` snapshot is still required for error-based parity decision.
+- Parity decision is currently deferred due to local environment limitation (Apple-only runtime, no CUDA execution path).
 
 ### Acceptance Criteria (Task 4 Exit)
 - [ ] No `vjp not implemented` on training-critical backward path.
@@ -453,6 +456,7 @@
 - [ ] End-to-end backward executes and returns complete required gradients.
 - [ ] Densification-consumed gradient contract works (`viewspace_points.grad` split logic compatible).
 - [ ] Backward parity report documented with tolerance and residual gaps.
+  - Status: Deferred until CUDA reference generation environment is available.
 
 ## Notes
 - This task explicitly disallows transitional implementations for final merged path.
