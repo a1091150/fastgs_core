@@ -65,6 +65,36 @@ def _e2e_loss(ext, means3d, opacities):
     return mx.sum(out["out_color"])
 
 
+def _preprocess_cov_loss(ext, scales, quats):
+    n = scales.shape[0]
+    w, h = 16, 16
+    inputs = {
+        "means3d": mx.array([[0.1, 0.1, 1.2 + 0.01 * i] for i in range(n)], dtype=mx.float32),
+        "opacities": mx.array([0.6 for _ in range(n)], dtype=mx.float32),
+        "scales": scales,
+        "quats": quats,
+        "colors_precomp": mx.array([[1.0, 0.6, 0.2] for _ in range(n)], dtype=mx.float32),
+        "viewmat": mx.eye(4, dtype=mx.float32),
+        "projmat": mx.eye(4, dtype=mx.float32),
+        "cam_pos": mx.zeros((3,), dtype=mx.float32),
+        "viewspace_points": mx.zeros((n, 4), dtype=mx.float32),
+    }
+    out = ext.preprocess_forward(
+        inputs,
+        image_width=w,
+        image_height=h,
+        block_x=16,
+        block_y=16,
+        tan_fovx=1.0,
+        tan_fovy=1.0,
+        degree=0,
+        scale_modifier=1.0,
+        mult=1.0,
+        prefiltered=False,
+    )
+    return mx.sum(out["cov3d"])
+
+
 def _central_diff_2d(loss_fn, x, eps):
     num = []
     for j in range(x.shape[1]):
@@ -140,6 +170,23 @@ def main() -> None:
         ok = _report("opacity[0]", ana_o, num_o, args.tol_staged) and ok
     else:
         print("[INFO] skip opacity finite-difference (use --check-opacity to enable)")
+
+    # 4) Preprocess path: scale / rotation
+    n = 8
+    scales = mx.array([[1.0, 1.1, 1.2] for _ in range(n)], dtype=mx.float32)
+    quats = mx.array([[1.0, 0.0, 0.0, 0.0] for _ in range(n)], dtype=mx.float32)
+
+    gscale = mx.grad(lambda s: _preprocess_cov_loss(ext, s, quats))(scales)
+    mx.eval(gscale)
+    ana_s = [float(gscale[0, 0].item())]
+    num_s = [_central_diff_scalar(lambda s: _preprocess_cov_loss(ext, s, quats), scales, (0, 0), args.eps)]
+    ok = _report("scale[0,0]", ana_s, num_s, args.tol_staged) and ok
+
+    grot = mx.grad(lambda q: _preprocess_cov_loss(ext, scales, q))(quats)
+    mx.eval(grot)
+    ana_r = [float(grot[0, 0].item())]
+    num_r = [_central_diff_scalar(lambda q: _preprocess_cov_loss(ext, scales, q), quats, (0, 0), args.eps)]
+    ok = _report("rotation[0,0]", ana_r, num_r, args.tol_staged) and ok
 
     if not ok:
         raise SystemExit(1)

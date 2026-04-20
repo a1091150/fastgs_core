@@ -434,8 +434,8 @@
   - [x] Verify mandatory gradient presence and shape constraints.
   - [x] Verify `means2D/xys` gradient contract (`[P,4]`, split channels used by densification logic) for current staged implementation contract.
 - Numerical tests:
-  - [x] Finite-difference checks on currently implemented sampled parameter path (`means2D`) pass tolerance gates.
-  - [ ] Finite-difference checks on remaining sampled parameters (`means3D`, `opacity`, `scale`, `rotation`, optional color path).
+  - [x] Finite-difference checks on currently implemented sampled parameter paths (`means2D`, `means3D`, `opacity`, `scale`, `rotation`) pass tolerance gates.
+  - [ ] Finite-difference checks on remaining sampled parameters (optional `color/sh` path).
 - Stability tests:
   - [x] Repeat-run gradient consistency under fixed seeds.
 - Reference parity tests:
@@ -461,3 +461,33 @@
 ## Notes
 - This task explicitly disallows transitional implementations for final merged path.
 - Temporary debug instrumentation is allowed only if removable and does not alter math semantics.
+
+---
+
+## Task 4.6 (Remaining Backward Parameter Paths)
+
+### Scope
+- Complete the remaining backward parameter paths that are not fully aligned yet in the staged migration.
+- Follow CUDA backward math/flow as reference when updating Metal kernels and primitive plumbing.
+- Gate completion by numeric checks, not only by runnable status.
+
+### Subtasks
+- Task 4.6.1 (`opacity` backward path)
+  - [x] Implement/fix opacity gradient path in Metal backward kernels and primitive outputs.
+  - [x] Make `python scripts/backward_numeric_check.py --check-opacity` pass.
+- Task 4.6.2 (`scale/rotation` backward path)
+  - [x] Implement/fix `scale` and `rotation` gradient propagation.
+  - [x] Add targeted numeric check coverage and pass tolerance gates.
+- Task 4.6.3 (`color/sh` backward path)
+  - [ ] Implement/fix remaining color-related parameter gradients (`dc/sh` or equivalent color path).
+  - [ ] Add targeted numeric check coverage and pass tolerance gates.
+
+### Validation
+- [x] Newly covered parameter paths (`opacity`, `scale`, `rotation`) produce finite, non-trivial gradients on fixture tests.
+- [x] Corresponding finite-difference checks pass configured tolerances for covered paths.
+- [ ] Remaining parameter path (`color/sh`) finite + finite-difference checks pending.
+- [ ] No regression in existing backward smoke/contract/repeatability scripts.
+
+### Exit Criteria
+- [ ] Task 4.5 numerical coverage item for remaining parameters is fully complete (remaining: `color/sh` path).
+- [ ] Task 4 acceptance item “End-to-end backward executes and returns complete required gradients” is satisfied for staged target scope.
