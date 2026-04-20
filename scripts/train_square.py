@@ -304,9 +304,12 @@ def main():
     out_dir = os.path.join(repo_root, "training", "output", "train_square", date_dir)
     os.makedirs(out_dir, exist_ok=True)
     out_npz = os.path.join(out_dir, "train_state.npz")
+    out_best = os.path.join(out_dir, "bast_step.png")
 
     ema_loss = 0.0
     losses = []
+    best_loss = float("inf")
+    best_step = -1
 
     for step in range(1, args.steps + 1):
         bg = mx.random.uniform(shape=(3,), low=0.0, high=1.0, dtype=mx.float32) if args.random_background else base_bg
@@ -328,17 +331,44 @@ def main():
         model.colors = mx.clip(model.colors, 0.0, 1.0)
         model.opacities = mx.clip(model.opacities, 0.0, 1.0)
         model.scales = mx.clip(model.scales, 1.0e-4, 2.0)
+        mx.eval(loss)
+        curr_loss = float(loss.item())
+
+        if curr_loss < best_loss:
+            best_loss = curr_loss
+            best_step = step
+            pred_chw_best = render_chw(
+                ext=ext,
+                means3d=model.means3d,
+                colors_precomp=model.colors,
+                opacities=model.opacities,
+                scales=model.scales,
+                rotations=model.rotations,
+                viewmatrix=viewmatrix,
+                projmatrix=projmatrix,
+                campos=campos,
+                image_width=args.width,
+                image_height=args.height,
+                tan_fovx=tan_fovx,
+                tan_fovy=tan_fovy,
+            )
+            pred_hwc_best = np.clip(to_hwc_numpy(pred_chw_best), 0.0, 1.0)
+            target_hwc_best = np.clip(target_np, 0.0, 1.0)
+            sep_best = np.zeros((args.height, 2, 3), dtype=np.float32)
+            vis_best = np.concatenate([target_hwc_best, sep_best, pred_hwc_best], axis=1)
+            vis_best_bgr = (vis_best[:, :, ::-1] * 255.0).astype(np.uint8)
+            if not cv2.imwrite(out_best, vis_best_bgr):
+                raise RuntimeError(f"Failed to write image: {out_best}")
 
         if step == 1:
-            ema_loss = float(loss.item())
+            ema_loss = curr_loss
         else:
-            ema_loss = 0.4 * float(loss.item()) + 0.6 * ema_loss
+            ema_loss = 0.4 * curr_loss + 0.6 * ema_loss
 
         if step % args.log_every == 0 or step == args.steps:
-            mx.eval(loss)
-            losses.append((step, float(loss.item()), ema_loss))
+            losses.append((step, curr_loss, ema_loss))
             print(
-                f"[train] step={step:04d} loss={float(loss.item()):.6f} ema={ema_loss:.6f}"
+                f"[train] step={step:04d} loss={curr_loss:.6f} ema={ema_loss:.6f}"
             )
 
         if step % args.save_every == 0 or step == args.steps:
@@ -394,10 +424,14 @@ def main():
         target=target_hwc,
         pred=pred_hwc,
         losses=np.array(losses, dtype=np.float32),
+        best_step=np.array([best_step], dtype=np.int32),
+        best_loss=np.array([best_loss], dtype=np.float32),
     )
 
     print("[OK] train_square done")
     print("saved state:", out_npz)
+    print("best step:", best_step, "best loss:", best_loss)
+    print("saved best:", out_best)
 
 if __name__ == "__main__":
     main()
