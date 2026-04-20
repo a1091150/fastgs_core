@@ -271,6 +271,14 @@
   - No placeholder `vjp()` that throws at runtime for migrated backward path.
   - No partial backward that only returns subset gradients for final integration stage.
 
+## Migration Strategy (Current Execution Plan)
+- Final target remains full CUDA-to-Metal parity for backward path.
+- Current implementation strategy is staged:
+  - First ensure backward call chain is runnable end-to-end (`vjp` plumbed, kernels dispatch, gradients returned with correct contracts).
+  - Add smoke/contract/repeatability checks early to stabilize interfaces.
+  - Then incrementally close numerical/behavioral gaps to CUDA reference until parity criteria are met.
+- Any non-parity intermediate implementation must be explicitly marked in the corresponding task section and is not treated as final completion.
+
 ## FastGS Reference Backward Call Path (Authoritative)
 - `train.py`
   - `render_fastgs(...)` returns `render`, `viewspace_points`, `radii`.
