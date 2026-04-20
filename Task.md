@@ -666,3 +666,34 @@
 ### Validation
 - [ ] Run `python scripts/train_square.py` in user conda env.
 - [ ] Confirm loss decreases and output image visually matches target squares.
+
+---
+
+## Task 7 (Scanner Training: `train_scanner_fixed.py`)
+
+### Scope
+- Add `scripts/train_scanner_fixed.py` for training with iPhone scanner captures.
+- Keep helper functions in this single script for fast iteration.
+- Initial target dataset:
+  - `/Users/yangdunfu/Downloads/2026_03_01_16_36_14`
+
+### References
+- `/Users/yangdunfu/Documents/cxxPractice/fastgs_mlx/fastgs_core/train_fastgs.py`
+
+### Implementation Plan
+- [x] Add scanner dataset discovery (`frame_*.jpg` + `frame_*.json` + `points.ply`).
+- [x] Add scanner camera parsing from JSON:
+  - [x] `intrinsics` (`fx`, `fy`, `cx`, `cy`)
+  - [x] `cameraPoseARFrame` -> camera transform
+- [x] Add scanner axis conversion + scene normalization for camera/points.
+- [x] Add PLY point/color loader and optional point downsampling.
+- [x] Add trainable Gaussian initialization from scanner points/colors.
+- [x] Add multi-view training loop using `ext.rasterize_gaussians(...)`.
+- [x] Add periodic side-by-side output (`target | black-sep | pred`) and `best_step.png`.
+- [x] Save train state (`train_state.npz`) under `training/output/train_scanner_fixed/<date>/`.
+
+### Validation
+- [x] Syntax check: `python3 -m py_compile scripts/train_scanner_fixed.py`
+- [ ] User runtime validation in conda env:
+  - [ ] `python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14`
+  - [ ] Confirm loss decreases and output snapshots improve.
