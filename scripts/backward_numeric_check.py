@@ -65,6 +65,26 @@ def _e2e_loss(ext, means3d, opacities):
     return mx.sum(out["out_color"])
 
 
+def _e2e_color_loss(ext, colors_precomp):
+    n, w, h = 8, 32, 32
+    base = {
+        "background": mx.array([0.0, 0.0, 0.0], dtype=mx.float32),
+        "means3d": mx.array([[0.1, 0.1, 1.2 + 0.01 * i] for i in range(n)], dtype=mx.float32),
+        "colors_precomp": colors_precomp,
+        "opacities": mx.array([0.6 for _ in range(n)], dtype=mx.float32),
+        "cov3d_precomp": mx.array([[1.0, 0.0, 0.0, 1.0, 0.0, 1.0] for _ in range(n)], dtype=mx.float32),
+        "metric_map": mx.zeros((w * h,), dtype=mx.int32),
+        "viewmatrix": mx.eye(4, dtype=mx.float32),
+        "projmatrix": mx.eye(4, dtype=mx.float32),
+        "dc": mx.zeros((n, 3), dtype=mx.float32),
+        "sh": mx.zeros((n, 0, 3), dtype=mx.float32),
+        "campos": mx.zeros((3,), dtype=mx.float32),
+        "viewspace_points": mx.zeros((n, 4), dtype=mx.float32),
+    }
+    out = ext.rasterize_gaussians(base, w, h, 16, 16, 1.0, 1.0, 0, 1.0, 1.0, False, False)
+    return mx.sum(out["out_color"])
+
+
 def _preprocess_cov_loss(ext, scales, quats):
     n = scales.shape[0]
     w, h = 16, 16
@@ -187,6 +207,15 @@ def main() -> None:
     ana_r = [float(grot[0, 0].item())]
     num_r = [_central_diff_scalar(lambda q: _preprocess_cov_loss(ext, scales, q), quats, (0, 0), args.eps)]
     ok = _report("rotation[0,0]", ana_r, num_r, args.tol_staged) and ok
+
+    # 5) E2E path: colors_precomp
+    n = 8
+    colors = mx.array([[1.0, 0.6, 0.2] for _ in range(n)], dtype=mx.float32)
+    gcol = mx.grad(lambda c: _e2e_color_loss(ext, c))(colors)
+    mx.eval(gcol)
+    ana_c = [float(gcol[0, 0].item())]
+    num_c = [_central_diff_scalar(lambda c: _e2e_color_loss(ext, c), colors, (0, 0), args.eps)]
+    ok = _report("colors_precomp[0,0]", ana_c, num_c, args.tol_staged) and ok
 
     if not ok:
         raise SystemExit(1)

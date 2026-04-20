@@ -434,8 +434,8 @@
   - [x] Verify mandatory gradient presence and shape constraints.
   - [x] Verify `means2D/xys` gradient contract (`[P,4]`, split channels used by densification logic) for current staged implementation contract.
 - Numerical tests:
-  - [x] Finite-difference checks on currently implemented sampled parameter paths (`means2D`, `means3D`, `opacity`, `scale`, `rotation`) pass tolerance gates.
-  - [ ] Finite-difference checks on remaining sampled parameters (optional `color/sh` path).
+  - [x] Finite-difference checks on currently implemented sampled parameter paths (`means2D`, `means3D`, `opacity`, `scale`, `rotation`, `colors_precomp`) pass tolerance gates.
+  - [ ] Finite-difference checks on remaining sampled parameters (`dc/sh` path).
 - Stability tests:
   - [x] Repeat-run gradient consistency under fixed seeds.
 - Reference parity tests:
@@ -479,15 +479,16 @@
   - [x] Implement/fix `scale` and `rotation` gradient propagation.
   - [x] Add targeted numeric check coverage and pass tolerance gates.
 - Task 4.6.3 (`color/sh` backward path)
-  - [ ] Implement/fix remaining color-related parameter gradients (`dc/sh` or equivalent color path).
-  - [ ] Add targeted numeric check coverage and pass tolerance gates.
+  - [x] Implement/fix color-related gradient for current staged color path (`colors_precomp`).
+  - [x] Add targeted numeric check coverage and pass tolerance gates for `colors_precomp`.
+  - [ ] Implement/fix `dc/sh` backward path (deferred parity item).
 
 ### Validation
-- [x] Newly covered parameter paths (`opacity`, `scale`, `rotation`) produce finite, non-trivial gradients on fixture tests.
+- [x] Newly covered parameter paths (`opacity`, `scale`, `rotation`, `colors_precomp`) produce finite, non-trivial gradients on fixture tests.
 - [x] Corresponding finite-difference checks pass configured tolerances for covered paths.
-- [ ] Remaining parameter path (`color/sh`) finite + finite-difference checks pending.
+- [ ] Remaining parameter path (`dc/sh`) finite + finite-difference checks pending.
 - [ ] No regression in existing backward smoke/contract/repeatability scripts.
 
 ### Exit Criteria
-- [ ] Task 4.5 numerical coverage item for remaining parameters is fully complete (remaining: `color/sh` path).
+- [ ] Task 4.5 numerical coverage item for remaining parameters is fully complete (remaining: `dc/sh` path).
 - [ ] Task 4 acceptance item “End-to-end backward executes and returns complete required gradients” is satisfied for staged target scope.

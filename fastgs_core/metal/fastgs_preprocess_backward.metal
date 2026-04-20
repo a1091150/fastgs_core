@@ -7,6 +7,7 @@ struct PreprocessBackwardKernelParams {
   uint image_width;
   uint image_height;
   uint use_cov3d_precomp;
+  uint use_colors_precomp;
 };
 
 inline float3 read_packed_float3(const device float* arr, uint idx) {
@@ -37,15 +38,19 @@ kernel void fastgs_preprocess_backward_kernel(
     const device float* viewmat [[buffer(4)]],
     const device float* projmat [[buffer(5)]],
     const device float* dL_dcov3d [[buffer(6)]],
-    const device float* dL_dxys [[buffer(7)]],
-    const device float* dL_ddepths [[buffer(8)]],
-    const device float* dL_dconic_opacity [[buffer(9)]],
-    const device float* dL_dviewspace_out [[buffer(10)]],
-    device float* dL_dmeans3d [[buffer(11)]],
-    device float* dL_dopacities [[buffer(12)]],
-    device float* dL_dscales [[buffer(13)]],
-    device float* dL_dquats [[buffer(14)]],
-    device float* dL_dviewspace_in [[buffer(15)]],
+    const device float* dL_drgb [[buffer(7)]],
+    const device float* dL_dxys [[buffer(8)]],
+    const device float* dL_ddepths [[buffer(9)]],
+    const device float* dL_dconic_opacity [[buffer(10)]],
+    const device float* dL_dviewspace_out [[buffer(11)]],
+    device float* dL_dmeans3d [[buffer(12)]],
+    device float* dL_ddc [[buffer(13)]],
+    device float* dL_dsh [[buffer(14)]],
+    device float* dL_dcolors_precomp [[buffer(15)]],
+    device float* dL_dopacities [[buffer(16)]],
+    device float* dL_dscales [[buffer(17)]],
+    device float* dL_dquats [[buffer(18)]],
+    device float* dL_dviewspace_in [[buffer(19)]],
     uint tid [[thread_position_in_grid]]) {
   if (tid >= params.n) {
     return;
@@ -82,6 +87,20 @@ kernel void fastgs_preprocess_backward_kernel(
   dL_dmeans3d[3 * tid + 1] = dmy;
   dL_dmeans3d[3 * tid + 2] = dmz;
   dL_dopacities[tid] = dL_dconic_opacity[4 * tid + 3];
+
+  if (params.use_colors_precomp != 0u) {
+    dL_dcolors_precomp[3 * tid + 0] = dL_drgb[3 * tid + 0];
+    dL_dcolors_precomp[3 * tid + 1] = dL_drgb[3 * tid + 1];
+    dL_dcolors_precomp[3 * tid + 2] = dL_drgb[3 * tid + 2];
+  } else {
+    // SH path is pending parity implementation. Keep zero grads here for now.
+    dL_ddc[3 * tid + 0] = 0.0f;
+    dL_ddc[3 * tid + 1] = 0.0f;
+    dL_ddc[3 * tid + 2] = 0.0f;
+    dL_dcolors_precomp[3 * tid + 0] = 0.0f;
+    dL_dcolors_precomp[3 * tid + 1] = 0.0f;
+    dL_dcolors_precomp[3 * tid + 2] = 0.0f;
+  }
 
   // Backprop cov3d( scale, quat ) -> d_scales, d_quats
   if (params.use_cov3d_precomp == 0u) {
