@@ -337,6 +337,7 @@ def render_chw(
     rotations: mx.array,
     camera: TrainCamera,
     background: mx.array,
+    sh_degree: int,
 ) -> mx.array:
     n = means3d.shape[0]
     inputs = {
@@ -362,7 +363,7 @@ def render_chw(
         16,
         camera.tan_fovx,
         camera.tan_fovy,
-        0,
+        sh_degree,
         1.0,
         1.0,
         False,
@@ -411,7 +412,7 @@ def init_model(points: np.ndarray, colors: np.ndarray) -> ScannerTrainModel:
     )
 
 
-def save_as_spz(filename: Path, model: ScannerTrainModel) -> bool:
+def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> bool:
     if spz is None:
         print("[WARN] spz is not available; skip final.spz export")
         return False
@@ -432,8 +433,10 @@ def save_as_spz(filename: Path, model: ScannerTrainModel) -> bool:
     cloud.rotations = quats.flatten().astype(np.float32)
     cloud.alphas = opacities.flatten().astype(np.float32)
     cloud.colors = colors.flatten().astype(np.float32)
-    cloud.sh_degree = 0
-    cloud.sh = np.zeros((0,), dtype=np.float32)
+    cloud.sh_degree = int(sh_degree)
+    sh_coeffs_per_channel = max(0, (cloud.sh_degree + 1) ** 2 - 1)
+    sh_len = means.shape[0] * 3 * sh_coeffs_per_channel
+    cloud.sh = np.zeros((sh_len,), dtype=np.float32)
 
     opts = spz.PackOptions()
     ok = spz.save_spz(cloud, opts, str(filename))
@@ -454,7 +457,7 @@ def main():
     parser.add_argument("--max-frames", type=int, default=80)
     parser.add_argument("--frame-step", type=int, default=8)
     parser.add_argument("--start-index", type=int, default=0)
-    parser.add_argument("--max-points", type=int, default=299347)
+    parser.add_argument("--max-points", type=int, default=30000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--random-background", action="store_true")
     parser.add_argument("--lr-colors", type=float, default=2e-2)
@@ -466,6 +469,7 @@ def main():
     parser.add_argument("--stage-color-steps", type=int, default=200)
     parser.add_argument("--stage-means-steps", type=int, default=800)
     parser.add_argument("--mse-until", type=int, default=600)
+    parser.add_argument("--sh-degree", type=int, default=2)
     args = parser.parse_args()
 
     dataset_dir = Path(args.data)
@@ -505,6 +509,7 @@ def main():
             rotations=model.rotations,
             camera=camera,
             background=bg,
+            sh_degree=args.sh_degree,
         )
         diff = pred - target_chw
         l1 = mx.mean(mx.abs(diff))
@@ -565,6 +570,7 @@ def main():
                 rotations=model.rotations,
                 camera=cameras[eval_idx],
                 background=base_bg,
+                sh_degree=args.sh_degree,
             )
             save_side_by_side(targets[eval_idx], pred_best, out_best)
 
@@ -587,6 +593,7 @@ def main():
                 rotations=model.rotations,
                 camera=cameras[eval_idx],
                 background=base_bg,
+                sh_degree=args.sh_degree,
             )
             out_img = out_dir / f"step_{step:04d}.png"
             save_side_by_side(targets[eval_idx], pred_eval, out_img)
@@ -601,6 +608,7 @@ def main():
         rotations=model.rotations,
         camera=cameras[eval_idx],
         background=base_bg,
+        sh_degree=args.sh_degree,
     )
 
     mx.eval(model.means3d, model.colors, model.opacities, model.scales)
@@ -616,7 +624,7 @@ def main():
         eval_target=np.array(targets[eval_idx]),
         eval_pred=np.array(pred_final),
     )
-    save_as_spz(out_spz, model)
+    save_as_spz(out_spz, model, args.sh_degree)
 
     print("[OK] train_scanner_fixed done")
     print("frames:", len(cameras), "points:", points.shape[0])
