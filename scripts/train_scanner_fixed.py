@@ -457,14 +457,14 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 
     mx.eval(
         model.means3d,
-        model.get_scales,
+        model.log_scales,
         model.get_rotations,
         model.get_opacities,
         model.features_dc,
         model.features_rest,
     )
     means = np.array(model.means3d, dtype=np.float32)
-    scales = np.array(model.get_scales, dtype=np.float32)
+    scales = np.array(model.log_scales, dtype=np.float32)
     quats = np.array(model.get_rotations, dtype=np.float32)
     opacities = np.array(model.get_opacities, dtype=np.float32)
     features_dc = np.array(model.features_dc, dtype=np.float32)
@@ -489,7 +489,7 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="/Users/yangdunfu/Downloads/2026_03_01_16_36_14")
-    parser.add_argument("--steps", type=int, default=1)
+    parser.add_argument("--steps", type=int, default=2000)
     parser.add_argument("--log-every", type=int, default=93)
     parser.add_argument("--save-every", type=int, default=200)
     parser.add_argument("--width", type=int, default=480)
