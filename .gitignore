@@ -98,4 +98,6 @@ build/
 # Jetbrains
 .cache
 
-submodules/
+submodules/diff-gaussian-rasterization_fastgs/
+submodules/fused-ssim/
+submodules/simple-knn/
