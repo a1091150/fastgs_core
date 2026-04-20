@@ -632,3 +632,35 @@
 - [ ] Backward outputs satisfy CUDA-equivalent tensor semantics for training-critical paths.
 - [ ] Local regression suite passes.
 - [ ] CUDA parity report is produced (when CUDA environment is available) and residual deltas are documented.
+
+---
+
+## Task 6 (Single-Image Training: `train_square.py`)
+
+### Scope
+- Add a minimal single-image training script using current forward/backward path.
+- Script file: `scripts/train_square.py`.
+- Keep all helper functions in this single file for quick iteration.
+- Training target image:
+  - white background
+  - red square at top-left
+  - blue square at bottom-right
+
+### References
+- `scripts/render_2048_smoke.py`
+- `/Users/yangdunfu/Documents/cxxPractice/fastgs_mlx/3dgs_mlx/main2.ipynb`
+- `/Users/yangdunfu/Documents/cxxPractice/fastgs_mlx/fastgs_core/train_fastgs.py`
+
+### Implementation Plan
+- [x] Add extension import fallback (`fastgs_core._fastgs_core` then `build/_fastgs_core`).
+- [x] Add camera/projection helpers (look-at + projection matrix).
+- [x] Add synthetic square target generator.
+- [x] Add Gaussian parameter initialization (grid means + trainable colors/opacities).
+- [x] Add differentiable render wrapper with `ext.rasterize_gaussians(...)`.
+- [x] Add single-image optimization loop (L1 loss, `mx.value_and_grad`, manual parameter update).
+- [x] Save side-by-side output (`target | prediction`) and training state `.npz`.
+- [x] Align training loop style with old `FastGS/train.py` (iteration-based loop, EMA logging, optional random background, periodic save).
+
+### Validation
+- [ ] Run `python scripts/train_square.py` in user conda env.
+- [ ] Confirm loss decreases and output image visually matches target squares.
