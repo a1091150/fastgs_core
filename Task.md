@@ -342,13 +342,16 @@
 - `fastgs_core/include/fastgs_rasterize.h`
 
 ### Steps
-- [ ] Implement Metal kernels for raster backward accumulation (`dL_dmean2D`, `dL_dconic`, `dL_dopacity`, `dL_dcolor`).
-- [ ] Preserve CUDA-equivalent indexing semantics for tile/bucket traversal.
-- [ ] Verify gradient buffer initialization/atomic accumulation semantics.
+- [x] Implement Metal kernels for raster backward accumulation (`dL_dmean2D`, `dL_dconic`, `dL_dopacity`, `dL_dcolor`).
+- [x] Preserve CUDA-equivalent indexing semantics for tile/bucket traversal.
+- [x] Verify gradient buffer initialization/atomic accumulation semantics.
 
 ### Validation
 - [ ] Backward output tensors have correct shapes/dtypes and finite values.
 - [ ] Deterministic repeatability check (same seed/input -> stable gradients within tolerance).
+
+### Current Status Note
+- Current implementation is a working backward core for raster stage, but it is not the final CUDA-parity version yet.
 
 ---
 
