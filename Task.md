@@ -254,3 +254,178 @@
 - [x] `make pyext-build` passes with `rasterize_gaussians_forward` linked.
 - [ ] CUDA parity validation for end-to-end forward outputs.
 - [x] Add render smoke script with fixed 2048 gaussians and image output (`scripts/render_2048_smoke.py`).
+
+---
+
+# Task 4 (Backward Path Migration, CUDA -> Metal Full Parity)
+
+## Scope
+- Migrate FastGS backward path from CUDA/PyTorch extension to Metal + MLX Primitive end-to-end.
+- Keep call path behavior aligned with FastGS training loop (`loss.backward()` -> rasterizer backward).
+- Adopt a strict primitive pairing architecture:
+  - `fastgs_*` forward primitive in `<name>.cpp` / `<name>.metal`
+  - matching backward primitive in `<name>_backward.cpp` / `<name>_backward.metal`
+  - `vjp()` in forward primitive delegates to matching backward primitive.
+- No transitional fallback implementation is allowed.
+  - No `stop_gradient`-based temporary detours for backward-critical tensors.
+  - No placeholder `vjp()` that throws at runtime for migrated backward path.
+  - No partial backward that only returns subset gradients for final integration stage.
+
+## FastGS Reference Backward Call Path (Authoritative)
+- `train.py`
+  - `render_fastgs(...)` returns `render`, `viewspace_points`, `radii`.
+  - `loss.backward()` triggers autograd backward.
+  - `gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)` consumes `viewspace_point_tensor.grad`.
+- `gaussian_renderer/__init__.py`
+  - `screenspace_points = torch.zeros((P, 4), requires_grad=True, device="cuda")`
+  - `means2D = screenspace_points` (dummy trainable parameter for 2D/view-space gradient flow)
+- `diff_gaussian_rasterization_fastgs/__init__.py`
+  - `_RasterizeGaussians.apply(...)` forward
+  - `_RasterizeGaussians.backward(...)` calls `_C.rasterize_gaussians_backward(...)`
+  - Backward returns gradients including `grad_means2D`.
+- CUDA binding and rasterizer
+  - `rasterize_points.cu::RasterizeGaussiansBackwardCUDA(...)`
+  - `CudaRasterizer::Rasterizer::backward(...)`
+  - `BACKWARD::render(...)` then `BACKWARD::preprocess(...)`
+
+## Backward Data/Gradient Contracts to Preserve
+- `means2D/xys` gradient contract:
+  - shape must remain `[P, 4]` (FastGS uses 4 channels and splits `:2` / `2:` in densification stats).
+  - gradient must propagate to `viewspace_points` output tensor without graph break.
+- Required backward gradients for parity path:
+  - `dL_dmeans2D`, `dL_dmeans3D`, `dL_dopacity`, `dL_dcolors` (or `dL_ddc`/`dL_dsh` path),
+  - `dL_dcov3D` (or `dL_dscale` + `dL_drot` path depending on geometry mode).
+- Forward intermediates required by backward must be preserved in Metal-side saved buffers (equivalent role to CUDA `geomBuffer/binningBuffer/imgBuffer/sampleBuffer`).
+
+## Task 4.1 (Autograd/VJP Plumbing in fastgs_core2)
+
+### Scope
+- Implement MLX-side backward plumbing so end-to-end `value_and_grad` / `vjp` works for rasterization chain.
+- Keep `vjp()` thin: it should call dedicated backward primitive(s), not inline full backward math.
+- Remove backward-breaking graph cuts in external API wiring for tensors that require gradients.
+
+### Planned Files
+- `fastgs_core/fastgs_preprocess.cpp`
+- `fastgs_core/fastgs_preprocess_backward.cpp`
+- `fastgs_core/fastgs_binning.cpp`
+- `fastgs_core/fastgs_binning_backward.cpp` (if backward is required on training-critical path)
+- `fastgs_core/fastgs_tile_prep.cpp`
+- `fastgs_core/fastgs_tile_prep_backward.cpp` (if backward is required on training-critical path)
+- `fastgs_core/fastgs_rasterize.cpp`
+- `fastgs_core/fastgs_rasterize_backward.cpp`
+- `fastgs_core/binding/binding.cpp`
+- headers under `fastgs_core/include/` for backward signatures
+
+### Steps
+- [ ] Implement `vjp()` for migrated primitives needed on training critical path.
+- [ ] Ensure each `vjp()` dispatches to corresponding `*_backward` primitive.
+- [ ] Ensure `binding.cpp` does not apply `mx::stop_gradient(...)` on backward-critical tensors (`xys/means2d`, etc.).
+- [ ] Add explicit backward API/output schema for debug parity dumps (optional runtime flag).
+- [ ] Add shape/dtype assertions for backward outputs (`[P,4]` on means2D gradient is mandatory).
+
+### Validation
+- [ ] `make pyext-build` passes.
+- [ ] Minimal autograd call (`mx::value_and_grad` or Python-facing equivalent) executes without `vjp not implemented` exceptions.
+
+---
+
+## Task 4.2 (Raster Backward: Pixel -> Gaussian Params)
+
+### Scope
+- Port CUDA backward render stage (`BACKWARD::render`) to Metal equivalent kernels.
+- Reconstruct gradients from per-pixel loss to Gaussian-space intermediates.
+
+### Planned Files
+- `fastgs_core/fastgs_rasterize_backward.cpp`
+- `fastgs_core/metal/fastgs_rasterize_backward.metal`
+- `fastgs_core/fastgs_rasterize.cpp`
+- `fastgs_core/include/fastgs_rasterize.h`
+
+### Steps
+- [ ] Implement Metal kernels for raster backward accumulation (`dL_dmean2D`, `dL_dconic`, `dL_dopacity`, `dL_dcolor`).
+- [ ] Preserve CUDA-equivalent indexing semantics for tile/bucket traversal.
+- [ ] Verify gradient buffer initialization/atomic accumulation semantics.
+
+### Validation
+- [ ] Backward output tensors have correct shapes/dtypes and finite values.
+- [ ] Deterministic repeatability check (same seed/input -> stable gradients within tolerance).
+
+---
+
+## Task 4.3 (Preprocess Backward: 2D/Conic -> 3D Params)
+
+### Scope
+- Port CUDA backward preprocess stage (`BACKWARD::preprocess`) to Metal equivalent.
+- Finish propagation from screen-space gradients to 3D Gaussian parameters.
+
+### Planned Files
+- `fastgs_core/fastgs_preprocess_backward.cpp`
+- `fastgs_core/metal/fastgs_preprocess_backward.metal`
+- `fastgs_core/fastgs_preprocess.cpp`
+- `fastgs_core/include/fastgs_preprocess.h`
+
+### Steps
+- [ ] Implement gradients for covariance path and parameterized geometry path.
+- [ ] Implement SH/color-related backward propagation (`dc/sh` path) with clamping-consistent rules.
+- [ ] Ensure means3D gradient accumulation includes all required contributions.
+
+### Validation
+- [ ] Gradient outputs for means3D/opacities/scales/rotations/(dc,sh or colors) are finite and non-trivial.
+- [ ] Small-case numerical gradient checks pass tolerance gates.
+
+---
+
+## Task 4.4 (End-to-End Backward Integration)
+
+### Scope
+- Wire full backward path into public rasterization API used by training loop equivalent.
+- Make backward path consumable by densification logic requiring `viewspace_points.grad`.
+
+### Planned Files
+- `fastgs_core/binding/binding.cpp`
+- test scripts under `scripts/`
+
+### Steps
+- [ ] Add end-to-end backward callable route from `_fastgs_core.rasterize_gaussians(...)` pipeline.
+- [ ] Ensure output includes view-space tensor whose gradient is connected and retrievable.
+- [ ] Add integration checks for densification-style gradient split:
+  - `grad[:, :2]` and `grad[:, 2:]` both available and valid.
+
+### Validation
+- [ ] End-to-end backward smoke script passes.
+- [ ] `viewspace_points.grad` exists, shape `[P,4]`, finite, and non-zero ratio above minimum threshold in fixture.
+
+---
+
+## Task 4.5 (Backward Test Matrix and Parity Criteria)
+
+### Scope
+- Provide robust, repeatable test strategy for backward path correctness and parity confidence.
+
+### Planned Scripts
+- `scripts/backward_smoke.py`
+- `scripts/backward_grad_contract_smoke.py`
+- `scripts/backward_numeric_check.py`
+- `scripts/backward_parity_compare.py`
+
+### Test Matrix
+- Contract tests:
+  - [ ] Verify mandatory gradient presence and shape constraints.
+  - [ ] Verify `means2D/xys` gradient contract (`[P,4]`, split channels used by densification logic).
+- Numerical tests:
+  - [ ] Finite-difference checks on sampled parameters (`means3D`, `opacity`, `scale`, `rotation`, optional color path).
+- Stability tests:
+  - [ ] Repeat-run gradient consistency under fixed seeds.
+- Reference parity tests:
+  - [ ] Compare Metal gradients to CUDA reference snapshots for selected fixtures.
+
+### Acceptance Criteria (Task 4 Exit)
+- [ ] No `vjp not implemented` on training-critical backward path.
+- [ ] No backward-critical `stop_gradient` graph breaks in final path.
+- [ ] End-to-end backward executes and returns complete required gradients.
+- [ ] Densification-consumed gradient contract works (`viewspace_points.grad` split logic compatible).
+- [ ] Backward parity report documented with tolerance and residual gaps.
+
+## Notes
+- This task explicitly disallows transitional implementations for final merged path.
+- Temporary debug instrumentation is allowed only if removable and does not alter math semantics.
