@@ -451,12 +451,13 @@
 - Parity decision is currently deferred due to local environment limitation (Apple-only runtime, no CUDA execution path).
 
 ### Acceptance Criteria (Task 4 Exit)
-- [ ] No `vjp not implemented` on training-critical backward path.
-- [ ] No backward-critical `stop_gradient` graph breaks in final path.
-- [ ] End-to-end backward executes and returns complete required gradients.
-- [ ] Densification-consumed gradient contract works (`viewspace_points.grad` split logic compatible).
+- [x] No `vjp not implemented` on training-critical backward path.
+- [x] No backward-critical `stop_gradient` graph breaks in final path.
+- [x] End-to-end backward executes and returns complete required gradients for staged target scope.
+- [x] Densification-consumed gradient contract works (`viewspace_points.grad` split logic compatible).
 - [ ] Backward parity report documented with tolerance and residual gaps.
   - Status: Deferred until CUDA reference generation environment is available.
+  - Additional parity gap: full degree>0 `dc/sh` backward parity path is pending.
 
 ## Notes
 - This task explicitly disallows transitional implementations for final merged path.
@@ -493,3 +494,9 @@
 ### Exit Criteria
 - [ ] Task 4.5 numerical coverage item for remaining parameters is fully complete (remaining: full degree>0 `dc/sh` parity path).
 - [ ] Task 4 acceptance item “End-to-end backward executes and returns complete required gradients” is satisfied for staged target scope.
+
+### Handoff Notes (Post-Staged)
+- Staged backward migration is operational and validated on local Apple environment for covered paths.
+- Next environments/tasks to close remaining gaps:
+  - CUDA-enabled environment to generate/reference parity snapshots and finalize `backward_parity_compare.py --ref`.
+  - Full degree>0 `dc/sh` backward parity implementation and numeric checks.
