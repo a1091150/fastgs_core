@@ -8,6 +8,10 @@ struct PreprocessBackwardKernelParams {
   uint image_height;
   uint use_cov3d_precomp;
   uint use_colors_precomp;
+  float tan_fovx;
+  float tan_fovy;
+  float focal_x;
+  float focal_y;
   int degree;
   int max_sh_coeffs;
 };
@@ -32,6 +36,20 @@ inline float4 read_packed_float4(const device float* arr, uint idx, uint stride)
   return float4(arr[stride * idx], arr[stride * idx + 1], arr[stride * idx + 2], arr[stride * idx + 3]);
 }
 
+inline float3 transform_point_4x3(const float3 p, const device float* matrix) {
+  return float3(
+      matrix[0] * p.x + matrix[4] * p.y + matrix[8] * p.z + matrix[12],
+      matrix[1] * p.x + matrix[5] * p.y + matrix[9] * p.z + matrix[13],
+      matrix[2] * p.x + matrix[6] * p.y + matrix[10] * p.z + matrix[14]);
+}
+
+inline float3 transform_vec4x3_transpose(const float3 v, const device float* matrix) {
+  return float3(
+      matrix[0] * v.x + matrix[1] * v.y + matrix[2] * v.z,
+      matrix[4] * v.x + matrix[5] * v.y + matrix[6] * v.z,
+      matrix[8] * v.x + matrix[9] * v.y + matrix[10] * v.z);
+}
+
 inline float3 dnormvdv(float3 v, float3 g) {
   float len = max(length(v), 1e-6f);
   float3 n = v / len;
@@ -47,32 +65,124 @@ kernel void fastgs_preprocess_backward_kernel(
     const device float* projmat [[buffer(5)]],
     const device float* cam_pos [[buffer(6)]],
     const device float* sh [[buffer(7)]],
-    const device float* dL_dcov3d [[buffer(8)]],
-    const device float* dL_drgb [[buffer(9)]],
-    const device float* dL_dxys [[buffer(10)]],
-    const device float* dL_ddepths [[buffer(11)]],
-    const device float* dL_dconic_opacity [[buffer(12)]],
-    const device float* dL_dviewspace_out [[buffer(13)]],
-    const device bool* clamped [[buffer(14)]],
-    device float* dL_dmeans3d [[buffer(15)]],
-    device float* dL_ddc [[buffer(16)]],
-    device float* dL_dsh [[buffer(17)]],
-    device float* dL_dcolors_precomp [[buffer(18)]],
-    device float* dL_dopacities [[buffer(19)]],
-    device float* dL_dscales [[buffer(20)]],
-    device float* dL_dquats [[buffer(21)]],
-    device float* dL_dviewspace_in [[buffer(22)]],
+    const device float* cov3d_precomp [[buffer(8)]],
+    const device float* cov3d_fwd [[buffer(9)]],
+    const device float* dL_dcov3d [[buffer(10)]],
+    const device float* dL_drgb [[buffer(11)]],
+    const device float* dL_dxys [[buffer(12)]],
+    const device float* dL_ddepths [[buffer(13)]],
+    const device float* dL_dconic_opacity [[buffer(14)]],
+    const device float* dL_dviewspace_out [[buffer(15)]],
+    const device int* radii [[buffer(16)]],
+    const device bool* clamped [[buffer(17)]],
+    device float* dL_dmeans3d [[buffer(18)]],
+    device float* dL_ddc [[buffer(19)]],
+    device float* dL_dsh [[buffer(20)]],
+    device float* dL_dcolors_precomp [[buffer(21)]],
+    device float* dL_dopacities [[buffer(22)]],
+    device float* dL_dscales [[buffer(23)]],
+    device float* dL_dquats [[buffer(24)]],
+    device float* dL_dviewspace_in [[buffer(25)]],
     uint tid [[thread_position_in_grid]]) {
   if (tid >= params.n) {
+    return;
+  }
+  if (!(radii[tid] > 0)) {
     return;
   }
 
   const float3 p = read_packed_float3(means3d, tid);
   const float4 ph = mul_mat4_vec3_h(projmat, p);
+  const uint cov_base = 6u * tid;
 
   const float gx = dL_dxys[2 * tid + 0];
   const float gy = dL_dxys[2 * tid + 1];
   const float gz = dL_ddepths[tid];
+
+  // CUDA parity path: conic gradients feed cov3d + mean3d through cov2D chain.
+  const device float* cov_src = (params.use_cov3d_precomp != 0u) ? cov3d_precomp : cov3d_fwd;
+  const float3 cov_grad = float3(
+      dL_dconic_opacity[4 * tid + 0],
+      dL_dconic_opacity[4 * tid + 1],
+      dL_dconic_opacity[4 * tid + 2]);
+  float dcov_extra[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  float3 dmean_cov = float3(0.0f);
+  {
+    const float3 mean = p;
+    const device float* cov3D = cov_src + cov_base;
+    float3 t = transform_point_4x3(mean, viewmat);
+    const float limx = 1.3f * params.tan_fovx;
+    const float limy = 1.3f * params.tan_fovy;
+    const float txtz = t.x / t.z;
+    const float tytz = t.y / t.z;
+    t.x = min(limx, max(-limx, txtz)) * t.z;
+    t.y = min(limy, max(-limy, tytz)) * t.z;
+    const float x_grad_mul = (txtz < -limx || txtz > limx) ? 0.0f : 1.0f;
+    const float y_grad_mul = (tytz < -limy || tytz > limy) ? 0.0f : 1.0f;
+
+    const float3x3 J = float3x3(
+        params.focal_x / t.z, 0.0f, -(params.focal_x * t.x) / (t.z * t.z),
+        0.0f, params.focal_y / t.z, -(params.focal_y * t.y) / (t.z * t.z),
+        0.0f, 0.0f, 0.0f);
+    const float3x3 W = float3x3(
+        viewmat[0], viewmat[1], viewmat[2],
+        viewmat[4], viewmat[5], viewmat[6],
+        viewmat[8], viewmat[9], viewmat[10]);
+    const float3x3 Vrk = float3x3(
+        cov3D[0], cov3D[1], cov3D[2],
+        cov3D[1], cov3D[3], cov3D[4],
+        cov3D[2], cov3D[4], cov3D[5]);
+    const float3x3 Tm = W * J;
+    float3x3 cov2D = transpose(Tm) * transpose(Vrk) * Tm;
+    float a = cov2D[0][0] + 0.3f;
+    float b = cov2D[0][1];
+    float c = cov2D[1][1] + 0.3f;
+    float denom = a * c - b * b;
+    float denom2inv = 1.0f / ((denom * denom) + 1e-7f);
+    float dL_da = 0.0f;
+    float dL_db = 0.0f;
+    float dL_dc = 0.0f;
+    if (denom2inv != 0.0f) {
+      dL_da = denom2inv * (-c * c * cov_grad.x + 2.0f * b * c * cov_grad.y + (denom - a * c) * cov_grad.z);
+      dL_dc = denom2inv * (-a * a * cov_grad.z + 2.0f * a * b * cov_grad.y + (denom - a * c) * cov_grad.x);
+      dL_db = denom2inv * 2.0f * (b * c * cov_grad.x - (denom + 2.0f * b * b) * cov_grad.y + a * b * cov_grad.z);
+
+      dcov_extra[0] = (Tm[0][0] * Tm[0][0] * dL_da + Tm[0][0] * Tm[1][0] * dL_db + Tm[1][0] * Tm[1][0] * dL_dc);
+      dcov_extra[3] = (Tm[0][1] * Tm[0][1] * dL_da + Tm[0][1] * Tm[1][1] * dL_db + Tm[1][1] * Tm[1][1] * dL_dc);
+      dcov_extra[5] = (Tm[0][2] * Tm[0][2] * dL_da + Tm[0][2] * Tm[1][2] * dL_db + Tm[1][2] * Tm[1][2] * dL_dc);
+      dcov_extra[1] = 2.0f * Tm[0][0] * Tm[0][1] * dL_da + (Tm[0][0] * Tm[1][1] + Tm[0][1] * Tm[1][0]) * dL_db + 2.0f * Tm[1][0] * Tm[1][1] * dL_dc;
+      dcov_extra[2] = 2.0f * Tm[0][0] * Tm[0][2] * dL_da + (Tm[0][0] * Tm[1][2] + Tm[0][2] * Tm[1][0]) * dL_db + 2.0f * Tm[1][0] * Tm[1][2] * dL_dc;
+      dcov_extra[4] = 2.0f * Tm[0][2] * Tm[0][1] * dL_da + (Tm[0][1] * Tm[1][2] + Tm[0][2] * Tm[1][1]) * dL_db + 2.0f * Tm[1][1] * Tm[1][2] * dL_dc;
+    }
+
+    float dL_dT00 = 2.0f * (Tm[0][0] * Vrk[0][0] + Tm[0][1] * Vrk[0][1] + Tm[0][2] * Vrk[0][2]) * dL_da +
+                    (Tm[1][0] * Vrk[0][0] + Tm[1][1] * Vrk[0][1] + Tm[1][2] * Vrk[0][2]) * dL_db;
+    float dL_dT01 = 2.0f * (Tm[0][0] * Vrk[1][0] + Tm[0][1] * Vrk[1][1] + Tm[0][2] * Vrk[1][2]) * dL_da +
+                    (Tm[1][0] * Vrk[1][0] + Tm[1][1] * Vrk[1][1] + Tm[1][2] * Vrk[1][2]) * dL_db;
+    float dL_dT02 = 2.0f * (Tm[0][0] * Vrk[2][0] + Tm[0][1] * Vrk[2][1] + Tm[0][2] * Vrk[2][2]) * dL_da +
+                    (Tm[1][0] * Vrk[2][0] + Tm[1][1] * Vrk[2][1] + Tm[1][2] * Vrk[2][2]) * dL_db;
+    float dL_dT10 = 2.0f * (Tm[1][0] * Vrk[0][0] + Tm[1][1] * Vrk[0][1] + Tm[1][2] * Vrk[0][2]) * dL_dc +
+                    (Tm[0][0] * Vrk[0][0] + Tm[0][1] * Vrk[0][1] + Tm[0][2] * Vrk[0][2]) * dL_db;
+    float dL_dT11 = 2.0f * (Tm[1][0] * Vrk[1][0] + Tm[1][1] * Vrk[1][1] + Tm[1][2] * Vrk[1][2]) * dL_dc +
+                    (Tm[0][0] * Vrk[1][0] + Tm[0][1] * Vrk[1][1] + Tm[0][2] * Vrk[1][2]) * dL_db;
+    float dL_dT12 = 2.0f * (Tm[1][0] * Vrk[2][0] + Tm[1][1] * Vrk[2][1] + Tm[1][2] * Vrk[2][2]) * dL_dc +
+                    (Tm[0][0] * Vrk[2][0] + Tm[0][1] * Vrk[2][1] + Tm[0][2] * Vrk[2][2]) * dL_db;
+
+    float dL_dJ00 = W[0][0] * dL_dT00 + W[0][1] * dL_dT01 + W[0][2] * dL_dT02;
+    float dL_dJ02 = W[2][0] * dL_dT00 + W[2][1] * dL_dT01 + W[2][2] * dL_dT02;
+    float dL_dJ11 = W[1][0] * dL_dT10 + W[1][1] * dL_dT11 + W[1][2] * dL_dT12;
+    float dL_dJ12 = W[2][0] * dL_dT10 + W[2][1] * dL_dT11 + W[2][2] * dL_dT12;
+
+    const float tz = 1.0f / t.z;
+    const float tz2 = tz * tz;
+    const float tz3 = tz2 * tz;
+    const float dL_dtx = x_grad_mul * -params.focal_x * tz2 * dL_dJ02;
+    const float dL_dty = y_grad_mul * -params.focal_y * tz2 * dL_dJ12;
+    const float dL_dtz = -params.focal_x * tz2 * dL_dJ00 - params.focal_y * tz2 * dL_dJ11 +
+                         (2.0f * params.focal_x * t.x) * tz3 * dL_dJ02 +
+                         (2.0f * params.focal_y * t.y) * tz3 * dL_dJ12;
+    dmean_cov = transform_vec4x3_transpose(float3(dL_dtx, dL_dty, dL_dtz), viewmat);
+  }
 
   // Approximate d(ndc)/d(pixel): x_pix = ((ndc_x + 1) * W - 1)/2
   // so dL/dndc_x = dL/dx_pix * W/2, similarly for y.
@@ -94,9 +204,9 @@ kernel void fastgs_preprocess_backward_kernel(
   const float dmz =
       projmat[8] * dphx + projmat[9] * dphy + projmat[11] * dphw + viewmat[10] * gz;
 
-  dL_dmeans3d[3 * tid + 0] = dmx;
-  dL_dmeans3d[3 * tid + 1] = dmy;
-  dL_dmeans3d[3 * tid + 2] = dmz;
+  dL_dmeans3d[3 * tid + 0] = dmx + dmean_cov.x;
+  dL_dmeans3d[3 * tid + 1] = dmy + dmean_cov.y;
+  dL_dmeans3d[3 * tid + 2] = dmz + dmean_cov.z;
   dL_dopacities[tid] = dL_dconic_opacity[4 * tid + 3];
 
   if (params.use_colors_precomp != 0u) {
@@ -278,13 +388,12 @@ kernel void fastgs_preprocess_backward_kernel(
 
     float3x3 M = S * R;
 
-    const uint cbase = 6u * tid;
-    const float c0 = dL_dcov3d[cbase + 0];
-    const float c1 = dL_dcov3d[cbase + 1];
-    const float c2 = dL_dcov3d[cbase + 2];
-    const float c3 = dL_dcov3d[cbase + 3];
-    const float c4 = dL_dcov3d[cbase + 4];
-    const float c5 = dL_dcov3d[cbase + 5];
+    const float c0 = dL_dcov3d[cov_base + 0] + dcov_extra[0];
+    const float c1 = dL_dcov3d[cov_base + 1] + dcov_extra[1];
+    const float c2 = dL_dcov3d[cov_base + 2] + dcov_extra[2];
+    const float c3 = dL_dcov3d[cov_base + 3] + dcov_extra[3];
+    const float c4 = dL_dcov3d[cov_base + 4] + dcov_extra[4];
+    const float c5 = dL_dcov3d[cov_base + 5] + dcov_extra[5];
 
     float3x3 dSigma = float3x3(
         c0, 0.5f * c1, 0.5f * c2,

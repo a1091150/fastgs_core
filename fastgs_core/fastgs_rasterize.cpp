@@ -192,8 +192,8 @@ std::vector<mx::array> FastGSRasterize::vjp(
     const std::vector<mx::array>& primals,
     const std::vector<mx::array>& cotangents,
     const std::vector<int>& argnums,
-    const std::vector<mx::array>&) {
-  auto grads = fastgs_rasterize_backward(primals, cotangents, params_, stream());
+    const std::vector<mx::array>& outputs) {
+  auto grads = fastgs_rasterize_backward(primals, cotangents, outputs, params_, stream());
   std::vector<mx::array> selected;
   selected.reserve(argnums.size());
   for (int argnum : argnums) {
@@ -212,7 +212,19 @@ std::pair<std::vector<mx::array>, std::vector<int>> FastGSRasterize::vmap(
 }
 
 bool FastGSRasterize::is_equivalent(const mx::Primitive& other) const {
-  return name() == other.name();
+  if (name() != other.name()) {
+    return false;
+  }
+  auto other_ptr = dynamic_cast<const FastGSRasterize*>(&other);
+  if (!other_ptr) {
+    return false;
+  }
+  const auto& p = params_;
+  const auto& q = other_ptr->params_;
+  return p.image_width == q.image_width && p.image_height == q.image_height &&
+         p.block_x == q.block_x && p.block_y == q.block_y &&
+         p.num_channels == q.num_channels && p.num_tiles == q.num_tiles &&
+         p.bucket_sum == q.bucket_sum && p.get_flag == q.get_flag;
 }
 
 }  // namespace fastgs_core

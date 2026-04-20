@@ -580,31 +580,46 @@
   - full SH parity across all configured degrees and branches
   - exact intermediate-buffer dependency parity with CUDA orchestration
 
+### Current Gap Matrix (2026-04-20)
+- [x] `preprocessCUDA` `radii > 0` gating parity:
+  - implemented in `fastgs_preprocess_backward_kernel` (Metal) and wired from forward `radii`.
+- [x] Primitive equivalence safety for raster stages:
+  - `FastGSRasterize::is_equivalent` and `FastGSRasterizeBackward::is_equivalent` upgraded from name-only to full `RasterizeParams` comparison.
+- [x] `BACKWARD::render` / `PerGaussianRenderCUDA` core data-path parity:
+  - launch shape uses CUDA-style bucket launch (`threads=32`, `grid~B*32`).
+  - backward kernel now consumes `bucket_to_tile`, `sampled_T`, `sampled_ar`, `final_T`, `n_contrib`, `max_contrib`, `pixel_colors`.
+  - bucket-index and per-splat traversal/gating are wired by `per_tile_bucket_offset` + `bucket_to_tile`.
+- [x] `computeCov2DCUDA` gradient chain parity (math path):
+  - `dL_dconic -> dL_dcov3D(extra) + dL_dmeans3D(extra)` is implemented in Metal and merged into preprocess backward.
+  - covariance source follows CUDA branch semantics (`cov3d_precomp` vs forward-generated `cov3d`).
+- [x] Full orchestrated buffer parity (`geom/binning/img/sample`) on backward critical path:
+  - raster backward VJP now receives forward outputs explicitly and replays sample/image state.
+
 ### Task 5.1 (Call-Path and API Surface Parity)
-- [ ] Ensure MLX binding/API flow mirrors CUDA backward call boundaries:
+- [x] Ensure MLX binding/API flow mirrors CUDA backward call boundaries:
   - raster backward stage
   - preprocess backward stage
-- [ ] Ensure backward input/output tensor contracts match CUDA semantics (shape, meaning, ordering).
-- [ ] Eliminate staged-only bypasses on parity-critical path.
+- [x] Ensure backward input/output tensor contracts match CUDA semantics (shape, meaning, ordering).
+- [x] Eliminate staged-only bypasses on parity-critical path.
 
 ### Task 5.2 (Render Backward Kernel Parity)
-- [ ] Rework `fastgs_render_backward_kernel` to mirror `PerGaussianRenderCUDA` logic:
+- [x] Rework `fastgs_render_backward_kernel` to mirror `PerGaussianRenderCUDA` logic:
   - bucket/thread mapping semantics
   - sampled state consumption (`sampled_T`, `sampled_ar`)
   - `final_T`, `n_contrib`, `max_contrib` usage
   - gradient accumulation parity for `dL_dmean2D (x,y,z,w)`, `dL_dconic2D`, `dL_dopacity`, `dL_dcolors`
-- [ ] Match CUDA gating/continue rules and accumulation order as closely as backend allows.
+- [x] Match CUDA gating/continue rules and accumulation order as closely as backend allows.
 
 ### Task 5.3 (Preprocess Backward Kernel Parity)
-- [ ] Implement full `computeCov2DCUDA` equivalent in Metal.
-- [ ] Implement full `preprocessCUDA` equivalent with strict `radii > 0` gating.
-- [ ] Ensure 3D-mean gradient composition parity (2D path + cov2D path + SH view-dir path).
-- [ ] Keep `computeCov3D` gradient math aligned with CUDA implementation.
+- [x] Implement full `computeCov2DCUDA` equivalent in Metal.
+- [x] Implement full `preprocessCUDA` equivalent with strict `radii > 0` gating.
+- [x] Ensure 3D-mean gradient composition parity (2D path + cov2D path + SH view-dir path).
+- [x] Keep `computeCov3D` gradient math aligned with CUDA implementation.
 
 ### Task 5.4 (SH Backward Full Parity)
-- [ ] Align `computeColorFromSH` backward behavior across all degree branches used in target configs.
-- [ ] Preserve clamping mask behavior parity.
-- [ ] Validate SH coefficient indexing/order parity against CUDA layout.
+- [x] Align `computeColorFromSH` backward behavior across all degree branches used in target configs.
+- [x] Preserve clamping mask behavior parity.
+- [x] Validate SH coefficient indexing/order parity against CUDA layout.
 
 ### Task 5.5 (Verification and Closure)
 - [ ] Re-run full local staged suite (smoke/contract/repeatability/numeric) with no regressions.

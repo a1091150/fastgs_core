@@ -26,6 +26,10 @@ struct PreprocessBackwardKernelParams {
   uint32_t image_height;
   uint32_t use_cov3d_precomp;
   uint32_t use_colors_precomp;
+  float tan_fovx;
+  float tan_fovy;
+  float focal_x;
+  float focal_y;
   int32_t degree;
   int32_t max_sh_coeffs;
 };
@@ -59,13 +63,15 @@ std::vector<mx::array> fastgs_preprocess_backward(
   }
 
   std::vector<mx::array> inputs;
-  inputs.reserve(primals.size() + cotangents.size() + 1);
+  inputs.reserve(primals.size() + cotangents.size() + 3);
   for (const auto& primal : primals) {
     inputs.push_back(mx::contiguous(primal));
   }
   for (const auto& cotangent : cotangents) {
     inputs.push_back(mx::contiguous(cotangent));
   }
+  inputs.push_back(mx::contiguous(forward_outputs[kCov3d]));
+  inputs.push_back(mx::contiguous(forward_outputs[kRadii]));
   inputs.push_back(mx::contiguous(forward_outputs[kClamped]));
 
   return mx::array::make_arrays(output_shapes, output_types, prim, inputs);
@@ -89,6 +95,7 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
 #ifdef _METAL_
   const auto& means3d = inputs[0];
   const auto& sh = inputs[2];
+  const auto& cov3d_precomp = inputs[7];
   const auto& scales = inputs[5];
   const auto& quats = inputs[6];
   const auto& cam_pos = inputs[10];
@@ -100,7 +107,9 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
   const auto& d_depths = inputs[kPreprocessNumInputs + kDepths];
   const auto& d_conic_opacity = inputs[kPreprocessNumInputs + kConicOpacity];
   const auto& d_viewspace = inputs[kPreprocessNumInputs + kViewspacePoints];
-  const auto& clamped = inputs[kPreprocessNumInputs + kPreprocessNumOutputs];
+  const auto& cov3d_fwd = inputs[kPreprocessNumInputs + kPreprocessNumOutputs];
+  const auto& radii = inputs[kPreprocessNumInputs + kPreprocessNumOutputs + 1];
+  const auto& clamped = inputs[kPreprocessNumInputs + kPreprocessNumOutputs + 2];
 
   auto& d_means3d = outputs[0];
   auto& d_dc = outputs[1];
@@ -118,6 +127,12 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
       .image_height = static_cast<uint32_t>(params_.image_height),
       .use_cov3d_precomp = static_cast<uint32_t>(params_.use_cov3d_precomp),
       .use_colors_precomp = static_cast<uint32_t>(params_.use_colors_precomp),
+      .tan_fovx = params_.tan_fovx,
+      .tan_fovy = params_.tan_fovy,
+      .focal_x = 0.5f * static_cast<float>(params_.image_width) /
+                 std::max(params_.tan_fovx, 1e-6f),
+      .focal_y = 0.5f * static_cast<float>(params_.image_height) /
+                 std::max(params_.tan_fovy, 1e-6f),
       .degree = params_.degree,
       .max_sh_coeffs = params_.max_sh_coeffs,
   };
@@ -137,21 +152,24 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
   compute_encoder.set_input_array(projmat, 5);
   compute_encoder.set_input_array(cam_pos, 6);
   compute_encoder.set_input_array(sh, 7);
-  compute_encoder.set_input_array(d_cov3d, 8);
-  compute_encoder.set_input_array(d_rgb, 9);
-  compute_encoder.set_input_array(d_xys, 10);
-  compute_encoder.set_input_array(d_depths, 11);
-  compute_encoder.set_input_array(d_conic_opacity, 12);
-  compute_encoder.set_input_array(d_viewspace, 13);
-  compute_encoder.set_input_array(clamped, 14);
-  compute_encoder.set_output_array(d_means3d, 15);
-  compute_encoder.set_output_array(d_dc, 16);
-  compute_encoder.set_output_array(d_sh, 17);
-  compute_encoder.set_output_array(d_colors_precomp, 18);
-  compute_encoder.set_output_array(d_opacities, 19);
-  compute_encoder.set_output_array(d_scales, 20);
-  compute_encoder.set_output_array(d_quats, 21);
-  compute_encoder.set_output_array(d_viewspace_in, 22);
+  compute_encoder.set_input_array(cov3d_precomp, 8);
+  compute_encoder.set_input_array(cov3d_fwd, 9);
+  compute_encoder.set_input_array(d_cov3d, 10);
+  compute_encoder.set_input_array(d_rgb, 11);
+  compute_encoder.set_input_array(d_xys, 12);
+  compute_encoder.set_input_array(d_depths, 13);
+  compute_encoder.set_input_array(d_conic_opacity, 14);
+  compute_encoder.set_input_array(d_viewspace, 15);
+  compute_encoder.set_input_array(radii, 16);
+  compute_encoder.set_input_array(clamped, 17);
+  compute_encoder.set_output_array(d_means3d, 18);
+  compute_encoder.set_output_array(d_dc, 19);
+  compute_encoder.set_output_array(d_sh, 20);
+  compute_encoder.set_output_array(d_colors_precomp, 21);
+  compute_encoder.set_output_array(d_opacities, 22);
+  compute_encoder.set_output_array(d_scales, 23);
+  compute_encoder.set_output_array(d_quats, 24);
+  compute_encoder.set_output_array(d_viewspace_in, 25);
 
   const size_t max_threads = kernel->maxTotalThreadsPerThreadgroup();
   size_t tgp_size = std::min(static_cast<size_t>(n), max_threads);

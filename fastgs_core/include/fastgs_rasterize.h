@@ -54,6 +54,7 @@ std::vector<mx::array> fastgs_rasterize(const RasterizeInput& input);
 std::vector<mx::array> fastgs_rasterize_backward(
     const std::vector<mx::array>& primals,
     const std::vector<mx::array>& cotangents,
+    const std::vector<mx::array>& forward_outputs,
     const RasterizeParams& params,
     mx::StreamOrDevice s);
 
