@@ -650,6 +650,7 @@
 - `scripts/render_2048_smoke.py`
 - `/Users/yangdunfu/Documents/cxxPractice/fastgs_mlx/3dgs_mlx/main2.ipynb`
 - `/Users/yangdunfu/Documents/cxxPractice/fastgs_mlx/fastgs_core/train_fastgs.py`
+- `/Users/yangdunfu/Documents/cxxPractice/fastgs_mlx/FastGS/train.py`
 
 ### Implementation Plan
 - [x] Add extension import fallback (`fastgs_core._fastgs_core` then `build/_fastgs_core`).
@@ -660,6 +661,7 @@
 - [x] Add single-image optimization loop (L1 loss, `mx.value_and_grad`, manual parameter update).
 - [x] Save side-by-side output (`target | prediction`) and training state `.npz`.
 - [x] Align training loop style with old `FastGS/train.py` (iteration-based loop, EMA logging, optional random background, periodic save).
+- [x] Upgrade optimizer path to MLX Adam + staged parameter updates + `MSE -> L1` loss schedule.
 
 ### Validation
 - [ ] Run `python scripts/train_square.py` in user conda env.

@@ -8,7 +8,10 @@ from datetime import datetime
 
 import cv2
 import mlx.core as mx
+import mlx.nn as nn
 import numpy as np
+from mlx.nn import value_and_grad
+from mlx.optimizers import Adam
 
 
 def import_extension():
@@ -133,6 +136,23 @@ def init_gaussians_grid(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.
     return means3d, colors, opacities, scales
 
 
+class SquareTrainModel(nn.Module):
+    def __init__(
+        self,
+        means3d: mx.array,
+        colors: mx.array,
+        opacities: mx.array,
+        scales: mx.array,
+        rotations: mx.array,
+    ):
+        super().__init__()
+        self.means3d = means3d
+        self.colors = colors
+        self.opacities = opacities
+        self.scales = scales
+        self.rotations = rotations
+
+
 def render_chw(
     ext,
     means3d: mx.array,
@@ -194,6 +214,11 @@ def main():
     parser.add_argument("--lr-opacity", type=float, default=2e-2)
     parser.add_argument("--lr-means", type=float, default=5e-3)
     parser.add_argument("--lr-scales", type=float, default=2e-3)
+    parser.add_argument("--adam-beta1", type=float, default=0.9)
+    parser.add_argument("--adam-beta2", type=float, default=0.99)
+    parser.add_argument("--stage-color-steps", type=int, default=400)
+    parser.add_argument("--stage-means-steps", type=int, default=1200)
+    parser.add_argument("--mse-until", type=int, default=800)
     parser.add_argument("--n", type=int, default=2048)
     parser.add_argument("--width", type=int, default=256)
     parser.add_argument("--height", type=int, default=256)
@@ -211,11 +236,13 @@ def main():
     rotations_np = np.zeros((args.n, 4), dtype=np.float32)
     rotations_np[:, 0] = 1.0
 
-    means3d = mx.array(means3d_np, dtype=mx.float32)
-    colors = mx.array(colors_np, dtype=mx.float32)
-    opacities = mx.array(opacities_np, dtype=mx.float32)
-    scales = mx.array(scales_np, dtype=mx.float32)
-    rotations = mx.array(rotations_np, dtype=mx.float32)
+    model = SquareTrainModel(
+        means3d=mx.array(means3d_np, dtype=mx.float32),
+        colors=mx.array(colors_np, dtype=mx.float32),
+        opacities=mx.array(opacities_np, dtype=mx.float32),
+        scales=mx.array(scales_np, dtype=mx.float32),
+        rotations=mx.array(rotations_np, dtype=mx.float32),
+    )
     viewmatrix = mx.array(viewmatrix_np, dtype=mx.float32)
     projmatrix = mx.array(projmatrix_np, dtype=mx.float32)
     campos = mx.array(eye_np[None, :], dtype=mx.float32)
@@ -225,15 +252,15 @@ def main():
 
     base_bg = mx.array([1.0, 1.0, 1.0], dtype=mx.float32)
 
-    def loss_fn(m: mx.array, c: mx.array, o: mx.array, s: mx.array, bg: mx.array):
-        n = m.shape[0]
+    def loss_fn(model: SquareTrainModel, bg: mx.array, use_l1: mx.array):
+        n = model.means3d.shape[0]
         inputs = {
             "background": bg,
-            "means3d": m,
-            "colors_precomp": c,
-            "opacities": o,
-            "scales": s,
-            "rotations": rotations,
+            "means3d": model.means3d,
+            "colors_precomp": model.colors,
+            "opacities": model.opacities,
+            "scales": model.scales,
+            "rotations": model.rotations,
             "metric_map": mx.zeros((args.width * args.height,), dtype=mx.int32),
             "viewmatrix": viewmatrix,
             "projmatrix": projmatrix,
@@ -261,12 +288,19 @@ def main():
             pred = mx.ones((3, args.height, args.width), dtype=mx.float32)
         else:
             pred = to_chw_mx(out_color, args.height, args.width)
-        # Follow old train.py style: L1 main loss.
-        return mx.mean(mx.abs(pred - target_chw))
+        diff = pred - target_chw
+        l1 = mx.mean(mx.abs(diff))
+        mse = mx.mean(diff * diff)
+        return mx.where(use_l1, l1, mse)
 
-    grad_fn = mx.value_and_grad(loss_fn, argnums=(0, 1, 2, 3))
+    loss_and_grad_fn = value_and_grad(model=model, fn=loss_fn)
+    betas = (args.adam_beta1, args.adam_beta2)
+    means_opt = Adam(learning_rate=args.lr_means, betas=betas)
+    colors_opt = Adam(learning_rate=args.lr_colors, betas=betas)
+    opacity_opt = Adam(learning_rate=args.lr_opacity, betas=betas)
+    scales_opt = Adam(learning_rate=args.lr_scales, betas=betas)
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    date_dir = datetime.now().strftime("%Y%m%d%S")
+    date_dir = datetime.now().strftime("%Y%m%d_%H_%M")
     out_dir = os.path.join(repo_root, "training", "output", "train_square", date_dir)
     os.makedirs(out_dir, exist_ok=True)
     out_npz = os.path.join(out_dir, "train_state.npz")
@@ -276,13 +310,24 @@ def main():
 
     for step in range(1, args.steps + 1):
         bg = mx.random.uniform(shape=(3,), low=0.0, high=1.0, dtype=mx.float32) if args.random_background else base_bg
-        loss, (g_means, g_colors, g_opacity, g_scales) = grad_fn(
-            means3d, colors, opacities, scales, bg
-        )
-        means3d = means3d - args.lr_means * g_means
-        colors = mx.clip(colors - args.lr_colors * g_colors, 0.0, 1.0)
-        opacities = mx.clip(opacities - args.lr_opacity * g_opacity, 0.0, 1.0)
-        scales = mx.clip(scales - args.lr_scales * g_scales, 1.0e-4, 2.0)
+        use_l1 = mx.array(step > args.mse_until, dtype=mx.bool_)
+        loss, grads = loss_and_grad_fn(model, bg, use_l1)
+
+        # Stage A: colors + opacity
+        colors_opt.update(model, {"colors": grads["colors"]})
+        opacity_opt.update(model, {"opacities": grads["opacities"]})
+
+        # Stage B: + means
+        if step > args.stage_color_steps:
+            means_opt.update(model, {"means3d": grads["means3d"]})
+
+        # Stage C: + scales
+        if step > args.stage_means_steps:
+            scales_opt.update(model, {"scales": grads["scales"]})
+
+        model.colors = mx.clip(model.colors, 0.0, 1.0)
+        model.opacities = mx.clip(model.opacities, 0.0, 1.0)
+        model.scales = mx.clip(model.scales, 1.0e-4, 2.0)
 
         if step == 1:
             ema_loss = float(loss.item())
@@ -299,11 +344,11 @@ def main():
         if step % args.save_every == 0 or step == args.steps:
             pred_chw = render_chw(
                 ext=ext,
-                means3d=means3d,
-                colors_precomp=colors,
-                opacities=opacities,
-                scales=scales,
-                rotations=rotations,
+                means3d=model.means3d,
+                colors_precomp=model.colors,
+                opacities=model.opacities,
+                scales=model.scales,
+                rotations=model.rotations,
                 viewmatrix=viewmatrix,
                 projmatrix=projmatrix,
                 campos=campos,
@@ -314,7 +359,8 @@ def main():
             )
             pred_hwc = np.clip(to_hwc_numpy(pred_chw), 0.0, 1.0)
             target_hwc = np.clip(target_np, 0.0, 1.0)
-            vis = np.concatenate([target_hwc, pred_hwc], axis=1)
+            sep = np.zeros((args.height, 2, 3), dtype=np.float32)
+            vis = np.concatenate([target_hwc, sep, pred_hwc], axis=1)
             vis_bgr = (vis[:, :, ::-1] * 255.0).astype(np.uint8)
             out_img = os.path.join(out_dir, f"step_{step:04d}.png")
             if not cv2.imwrite(out_img, vis_bgr):
@@ -322,11 +368,11 @@ def main():
 
     pred_chw = render_chw(
         ext=ext,
-        means3d=means3d,
-        colors_precomp=colors,
-        opacities=opacities,
-        scales=scales,
-        rotations=rotations,
+        means3d=model.means3d,
+        colors_precomp=model.colors,
+        opacities=model.opacities,
+        scales=model.scales,
+        rotations=model.rotations,
         viewmatrix=viewmatrix,
         projmatrix=projmatrix,
         campos=campos,
@@ -338,13 +384,13 @@ def main():
     pred_hwc = np.clip(to_hwc_numpy(pred_chw), 0.0, 1.0)
     target_hwc = np.clip(target_np, 0.0, 1.0)
 
-    mx.eval(means3d, colors, opacities, scales)
+    mx.eval(model.means3d, model.colors, model.opacities, model.scales)
     np.savez(
         out_npz,
-        means3d=np.array(means3d),
-        colors=np.array(colors),
-        opacities=np.array(opacities),
-        scales=np.array(scales),
+        means3d=np.array(model.means3d),
+        colors=np.array(model.colors),
+        opacities=np.array(model.opacities),
+        scales=np.array(model.scales),
         target=target_hwc,
         pred=pred_hwc,
         losses=np.array(losses, dtype=np.float32),
