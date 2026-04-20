@@ -511,3 +511,109 @@
   - Updated both `is_equivalent()` implementations to compare full `PreprocessParams` fields instead of name-only.
 - Verification:
   - After fix, higher-order SH numeric check case moved from FAIL to PASS (`sh[0,3,0] (degree=2)`).
+
+---
+
+## Task 5 (CUDA Call-Path Parity Migration: Backward, Non-Staged)
+
+### Scope
+- Re-implement backward path with strict call-path parity to FastGS CUDA reference.
+- Target is structural and behavioral equivalence to CUDA path, not only runnable gradients.
+- This task supersedes staged shortcuts for the backward core path.
+
+### Reference Call Path (Authoritative)
+- Python/Autograd entry:
+  - `diff_gaussian_rasterization_fastgs/__init__.py`
+  - `_RasterizeGaussians.backward(...)` -> `_C.rasterize_gaussians_backward(...)`
+- Extension binding:
+  - `ext.cpp` -> `RasterizeGaussiansBackwardCUDA(...)`
+- CUDA bridge:
+  - `rasterize_points.cu::RasterizeGaussiansBackwardCUDA`
+- Rasterizer orchestration:
+  - `cuda_rasterizer/rasterizer_impl.cu::CudaRasterizer::Rasterizer::backward`
+  - invokes `BACKWARD::render(...)` then `BACKWARD::preprocess(...)`
+- Backward kernels:
+  - `cuda_rasterizer/backward.cu::BACKWARD::render`
+  - `cuda_rasterizer/backward.cu::PerGaussianRenderCUDA` (kernel launch)
+  - `cuda_rasterizer/backward.cu::BACKWARD::preprocess`
+  - `cuda_rasterizer/backward.cu::computeCov2DCUDA`
+  - `cuda_rasterizer/backward.cu::preprocessCUDA`
+  - `cuda_rasterizer/backward.cu::computeColorFromSH`
+  - `cuda_rasterizer/backward.cu::computeCov3D`
+
+### Execution Steps (Do-Order, CUDA-Mapped)
+1. Lock backward API contract by CUDA order:
+   - `_RasterizeGaussians.backward` argument order and returns
+   - `_C.rasterize_gaussians_backward` binding order
+   - MLX side outputs must keep CUDA semantic ordering:
+     `grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_dc, grad_sh, grad_scales, grad_rotations`
+2. Rebuild raster-backward stage to CUDA orchestration:
+   - target mapping:
+     `RasterizeGaussiansBackwardCUDA -> CudaRasterizer::Rasterizer::backward -> BACKWARD::render -> PerGaussianRenderCUDA`
+   - implement bucket traversal, sampled-state reads, contributor gating, and accumulation in same conceptual order.
+3. Rebuild preprocess-backward stage to CUDA orchestration:
+   - target mapping:
+     `CudaRasterizer::Rasterizer::backward -> BACKWARD::preprocess -> computeCov2DCUDA + preprocessCUDA`
+   - first propagate `dL_dconic -> dL_dcov3D + partial dL_dmeans3D`, then apply projection/SH/cov3D backprop.
+4. Recheck SH backward branch parity:
+   - target mapping:
+     `preprocessCUDA -> computeColorFromSH`
+   - verify degree branch behavior (`degree=0/1/2/...`), coeff indexing, clamp mask handling.
+5. Enforce preprocess gating parity:
+   - target mapping:
+     `if (idx >= P || !(radii[idx] > 0)) return;`
+   - ensure Metal path has identical effective gating and no staged bypass.
+6. Reconcile intermediate buffer semantics:
+   - ensure Metal backward consumes CUDA-equivalent forward intermediates:
+     `geom/binning/img/sample`-equivalent state, including `sampled_T`, `sampled_ar`, `final_T`, `n_contrib`, `max_contrib`.
+7. Validate in three layers:
+   - local smoke/shape/repeatability (must pass)
+   - finite-difference checks on critical params (`means2d/means3d/opacity/scale/rotation/dc/sh`)
+   - CUDA snapshot parity compare (deferred until CUDA env exists)
+
+### Gap Summary vs Current Metal
+- Current implementation is functionally validated for staged paths but not yet kernel-for-kernel equivalent.
+- Missing/partial parity areas:
+  - full `PerGaussianRenderCUDA` execution model and state usage (`sampled_T/ar`, `final_T`, `n_contrib`, `max_contrib`, bucket/warp traversal)
+  - full `computeCov2DCUDA` chain (`dL_dconic -> dL_dcov3D + dL_dmeans3D`)
+  - strict `radii > 0` gating parity in preprocess path
+  - full SH parity across all configured degrees and branches
+  - exact intermediate-buffer dependency parity with CUDA orchestration
+
+### Task 5.1 (Call-Path and API Surface Parity)
+- [ ] Ensure MLX binding/API flow mirrors CUDA backward call boundaries:
+  - raster backward stage
+  - preprocess backward stage
+- [ ] Ensure backward input/output tensor contracts match CUDA semantics (shape, meaning, ordering).
+- [ ] Eliminate staged-only bypasses on parity-critical path.
+
+### Task 5.2 (Render Backward Kernel Parity)
+- [ ] Rework `fastgs_render_backward_kernel` to mirror `PerGaussianRenderCUDA` logic:
+  - bucket/thread mapping semantics
+  - sampled state consumption (`sampled_T`, `sampled_ar`)
+  - `final_T`, `n_contrib`, `max_contrib` usage
+  - gradient accumulation parity for `dL_dmean2D (x,y,z,w)`, `dL_dconic2D`, `dL_dopacity`, `dL_dcolors`
+- [ ] Match CUDA gating/continue rules and accumulation order as closely as backend allows.
+
+### Task 5.3 (Preprocess Backward Kernel Parity)
+- [ ] Implement full `computeCov2DCUDA` equivalent in Metal.
+- [ ] Implement full `preprocessCUDA` equivalent with strict `radii > 0` gating.
+- [ ] Ensure 3D-mean gradient composition parity (2D path + cov2D path + SH view-dir path).
+- [ ] Keep `computeCov3D` gradient math aligned with CUDA implementation.
+
+### Task 5.4 (SH Backward Full Parity)
+- [ ] Align `computeColorFromSH` backward behavior across all degree branches used in target configs.
+- [ ] Preserve clamping mask behavior parity.
+- [ ] Validate SH coefficient indexing/order parity against CUDA layout.
+
+### Task 5.5 (Verification and Closure)
+- [ ] Re-run full local staged suite (smoke/contract/repeatability/numeric) with no regressions.
+- [ ] Produce CUDA-vs-Metal parity report once CUDA reference environment is available:
+  - run `backward_parity_compare.py --ref <cuda_ref.npz>`
+  - document tolerance and residual mismatch.
+
+### Acceptance Criteria
+- [ ] Backward call path is kernel-stage-equivalent to CUDA reference (render + preprocess split).
+- [ ] Backward outputs satisfy CUDA-equivalent tensor semantics for training-critical paths.
+- [ ] Local regression suite passes.
+- [ ] CUDA parity report is produced (when CUDA environment is available) and residual deltas are documented.
