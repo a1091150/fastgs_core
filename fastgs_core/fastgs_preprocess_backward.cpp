@@ -26,6 +26,7 @@ struct PreprocessBackwardKernelParams {
   uint32_t image_height;
   uint32_t use_cov3d_precomp;
   uint32_t use_colors_precomp;
+  float scale_modifier;
   float tan_fovx;
   float tan_fovy;
   float focal_x;
@@ -127,6 +128,7 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
       .image_height = static_cast<uint32_t>(params_.image_height),
       .use_cov3d_precomp = static_cast<uint32_t>(params_.use_cov3d_precomp),
       .use_colors_precomp = static_cast<uint32_t>(params_.use_colors_precomp),
+      .scale_modifier = params_.scale_modifier,
       .tan_fovx = params_.tan_fovx,
       .tan_fovy = params_.tan_fovy,
       .focal_x = 0.5f * static_cast<float>(params_.image_width) /

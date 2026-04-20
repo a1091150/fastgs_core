@@ -8,6 +8,7 @@ struct PreprocessBackwardKernelParams {
   uint image_height;
   uint use_cov3d_precomp;
   uint use_colors_precomp;
+  float scale_modifier;
   float tan_fovx;
   float tan_fovy;
   float focal_x;
@@ -95,9 +96,8 @@ kernel void fastgs_preprocess_backward_kernel(
   const float4 ph = mul_mat4_vec3_h(projmat, p);
   const uint cov_base = 6u * tid;
 
-  const float gx = dL_dxys[2 * tid + 0];
-  const float gy = dL_dxys[2 * tid + 1];
-  const float gz = dL_ddepths[tid];
+  const float gx = dL_dviewspace_out[4 * tid + 0];
+  const float gy = dL_dviewspace_out[4 * tid + 1];
 
   // CUDA parity path: conic gradients feed cov3d + mean3d through cov2D chain.
   const device float* cov_src = (params.use_cov3d_precomp != 0u) ? cov3d_precomp : cov3d_fwd;
@@ -184,25 +184,20 @@ kernel void fastgs_preprocess_backward_kernel(
     dmean_cov = transform_vec4x3_transpose(float3(dL_dtx, dL_dty, dL_dtz), viewmat);
   }
 
-  // Approximate d(ndc)/d(pixel): x_pix = ((ndc_x + 1) * W - 1)/2
-  // so dL/dndc_x = dL/dx_pix * W/2, similarly for y.
-  const float dL_dndc_x = gx * (0.5f * float(params.image_width));
-  const float dL_dndc_y = gy * (0.5f * float(params.image_height));
-
-  const float w = (fabs(ph.w) < 1e-6f) ? 1e-6f : ph.w;
-  const float invw = 1.0f / w;
-
-  float dphx = dL_dndc_x * invw;
-  float dphy = dL_dndc_y * invw;
-  float dphw = -(dL_dndc_x * ph.x + dL_dndc_y * ph.y) * (invw * invw);
-
-  // Backprop through projection homogeneous transform + depth term via view matrix z row.
-  const float dmx =
-      projmat[0] * dphx + projmat[1] * dphy + projmat[3] * dphw + viewmat[2] * gz;
-  const float dmy =
-      projmat[4] * dphx + projmat[5] * dphy + projmat[7] * dphw + viewmat[6] * gz;
-  const float dmz =
-      projmat[8] * dphx + projmat[9] * dphy + projmat[11] * dphw + viewmat[10] * gz;
+  // CUDA preprocessCUDA parity: dL_dmean2D.xy -> dL_dmeans3D through projective Jacobian.
+  const float m_w = 1.0f / (ph.w + 1.0e-7f);
+  const float mul1 =
+      (projmat[0] * p.x + projmat[4] * p.y + projmat[8] * p.z + projmat[12]) *
+      m_w * m_w;
+  const float mul2 =
+      (projmat[1] * p.x + projmat[5] * p.y + projmat[9] * p.z + projmat[13]) *
+      m_w * m_w;
+  const float dmx = (projmat[0] * m_w - projmat[3] * mul1) * gx +
+                    (projmat[1] * m_w - projmat[3] * mul2) * gy;
+  const float dmy = (projmat[4] * m_w - projmat[7] * mul1) * gx +
+                    (projmat[5] * m_w - projmat[7] * mul2) * gy;
+  const float dmz = (projmat[8] * m_w - projmat[11] * mul1) * gx +
+                    (projmat[9] * m_w - projmat[11] * mul2) * gy;
 
   dL_dmeans3d[3 * tid + 0] = dmx + dmean_cov.x;
   dL_dmeans3d[3 * tid + 1] = dmy + dmean_cov.y;
@@ -380,7 +375,7 @@ kernel void fastgs_preprocess_backward_kernel(
         2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),
         2.f * (x * z - r * y), 2.f * (y * z + r * x), 1.f - 2.f * (x * x + y * y));
 
-    float3 s = scale;
+    float3 s = params.scale_modifier * scale;
     float3x3 S = float3x3(1.0f);
     S[0][0] = s.x;
     S[1][1] = s.y;
