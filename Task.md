@@ -355,11 +355,12 @@
 - [x] Verify gradient buffer initialization/atomic accumulation semantics.
 
 ### Validation
-- [ ] Backward output tensors have correct shapes/dtypes and finite values.
-- [ ] Deterministic repeatability check (same seed/input -> stable gradients within tolerance).
+- [x] Backward output tensors have correct shapes/dtypes and finite values.
+- [x] Deterministic repeatability check (same seed/input -> stable gradients within tolerance).
 
 ### Current Status Note
 - Current implementation is a working backward core for raster stage, but it is not the final CUDA-parity version yet.
+- Validation script: `scripts/rasterize_backward_validation.py` (shape/dtype/finite + repeatability checks passed).
 
 ---
 
