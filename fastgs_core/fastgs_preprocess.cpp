@@ -192,8 +192,8 @@ std::vector<mx::array> FastGSPreprocess::vjp(
     const std::vector<mx::array>& primals,
     const std::vector<mx::array>& cotangents,
     const std::vector<int>& argnums,
-    const std::vector<mx::array>&) {
-  auto grads = fastgs_preprocess_backward(primals, cotangents, params_, stream());
+    const std::vector<mx::array>& outputs) {
+  auto grads = fastgs_preprocess_backward(primals, cotangents, outputs, params_, stream());
   std::vector<mx::array> selected;
   selected.reserve(argnums.size());
   for (int argnum : argnums) {
@@ -212,7 +212,22 @@ std::pair<std::vector<mx::array>, std::vector<int>> FastGSPreprocess::vmap(
 }
 
 bool FastGSPreprocess::is_equivalent(const mx::Primitive& other) const {
-  return name() == other.name();
+  if (name() != other.name()) {
+    return false;
+  }
+  auto other_ptr = dynamic_cast<const FastGSPreprocess*>(&other);
+  if (!other_ptr) {
+    return false;
+  }
+  const auto& p = params_;
+  const auto& q = other_ptr->params_;
+  return p.degree == q.degree && p.max_sh_coeffs == q.max_sh_coeffs &&
+         p.scale_modifier == q.scale_modifier && p.tan_fovx == q.tan_fovx &&
+         p.tan_fovy == q.tan_fovy && p.image_height == q.image_height &&
+         p.image_width == q.image_width && p.tile_bounds == q.tile_bounds &&
+         p.mult == q.mult && p.prefiltered == q.prefiltered &&
+         p.use_cov3d_precomp == q.use_cov3d_precomp &&
+         p.use_colors_precomp == q.use_colors_precomp;
 }
 
 }  // namespace fastgs_core

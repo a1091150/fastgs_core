@@ -137,7 +137,7 @@ def _preprocess_sh_loss(ext, dc, sh):
         block_y=16,
         tan_fovx=1.0,
         tan_fovy=1.0,
-        degree=0,  # staged check focuses on degree-0 dc path
+        degree=2,
         scale_modifier=1.0,
         mult=1.0,
         prefiltered=False,
@@ -250,7 +250,12 @@ def main() -> None:
     # 6) Preprocess SH path (degree-0 staged): dc and sh
     n = 8
     dc = mx.array([[0.5, 0.4, 0.3] for _ in range(n)], dtype=mx.float32)
-    sh = mx.zeros((n, 1, 3), dtype=mx.float32)
+    sh = mx.array(
+        [[[0.1, 0.2, 0.3], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+          [0.05, -0.02, 0.01], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+         for _ in range(n)],
+        dtype=mx.float32,
+    )
     gdc = mx.grad(lambda d: _preprocess_sh_loss(ext, d, sh))(dc)
     mx.eval(gdc)
     ana_dc = [float(gdc[0, 0].item())]
@@ -259,9 +264,13 @@ def main() -> None:
 
     gsh = mx.grad(lambda s: _preprocess_sh_loss(ext, dc, s))(sh)
     mx.eval(gsh)
-    ana_sh = [float(gsh[0, 0, 0].item())]
-    num_sh = [_central_diff_scalar(lambda s: _preprocess_sh_loss(ext, dc, s), sh, (0, 0), args.eps)]
-    ok = _report("sh[0,0,0]", ana_sh, num_sh, args.tol_staged) and ok
+    ana_sh0 = [float(gsh[0, 0, 0].item())]
+    num_sh0 = [_central_diff_scalar(lambda s: _preprocess_sh_loss(ext, dc, s), sh, (0, 0, 0), args.eps)]
+    ok = _report("sh[0,0,0] (degree=2)", ana_sh0, num_sh0, args.tol_staged) and ok
+
+    ana_sh3 = [float(gsh[0, 3, 0].item())]
+    num_sh3 = [_central_diff_scalar(lambda s: _preprocess_sh_loss(ext, dc, s), sh, (0, 3, 0), args.eps)]
+    ok = _report("sh[0,3,0] (degree=2)", ana_sh3, num_sh3, args.tol_staged) and ok
 
     if not ok:
         raise SystemExit(1)

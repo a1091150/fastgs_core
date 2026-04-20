@@ -32,6 +32,12 @@ inline float4 read_packed_float4(const device float* arr, uint idx, uint stride)
   return float4(arr[stride * idx], arr[stride * idx + 1], arr[stride * idx + 2], arr[stride * idx + 3]);
 }
 
+inline float3 dnormvdv(float3 v, float3 g) {
+  float len = max(length(v), 1e-6f);
+  float3 n = v / len;
+  return (g - n * dot(n, g)) / len;
+}
+
 kernel void fastgs_preprocess_backward_kernel(
     constant PreprocessBackwardKernelParams& params [[buffer(0)]],
     const device float* means3d [[buffer(1)]],
@@ -39,20 +45,23 @@ kernel void fastgs_preprocess_backward_kernel(
     const device float* quats [[buffer(3)]],
     const device float* viewmat [[buffer(4)]],
     const device float* projmat [[buffer(5)]],
-    const device float* dL_dcov3d [[buffer(6)]],
-    const device float* dL_drgb [[buffer(7)]],
-    const device float* dL_dxys [[buffer(8)]],
-    const device float* dL_ddepths [[buffer(9)]],
-    const device float* dL_dconic_opacity [[buffer(10)]],
-    const device float* dL_dviewspace_out [[buffer(11)]],
-    device float* dL_dmeans3d [[buffer(12)]],
-    device float* dL_ddc [[buffer(13)]],
-    device float* dL_dsh [[buffer(14)]],
-    device float* dL_dcolors_precomp [[buffer(15)]],
-    device float* dL_dopacities [[buffer(16)]],
-    device float* dL_dscales [[buffer(17)]],
-    device float* dL_dquats [[buffer(18)]],
-    device float* dL_dviewspace_in [[buffer(19)]],
+    const device float* cam_pos [[buffer(6)]],
+    const device float* sh [[buffer(7)]],
+    const device float* dL_dcov3d [[buffer(8)]],
+    const device float* dL_drgb [[buffer(9)]],
+    const device float* dL_dxys [[buffer(10)]],
+    const device float* dL_ddepths [[buffer(11)]],
+    const device float* dL_dconic_opacity [[buffer(12)]],
+    const device float* dL_dviewspace_out [[buffer(13)]],
+    const device bool* clamped [[buffer(14)]],
+    device float* dL_dmeans3d [[buffer(15)]],
+    device float* dL_ddc [[buffer(16)]],
+    device float* dL_dsh [[buffer(17)]],
+    device float* dL_dcolors_precomp [[buffer(18)]],
+    device float* dL_dopacities [[buffer(19)]],
+    device float* dL_dscales [[buffer(20)]],
+    device float* dL_dquats [[buffer(21)]],
+    device float* dL_dviewspace_in [[buffer(22)]],
     uint tid [[thread_position_in_grid]]) {
   if (tid >= params.n) {
     return;
@@ -95,15 +104,156 @@ kernel void fastgs_preprocess_backward_kernel(
     dL_dcolors_precomp[3 * tid + 1] = dL_drgb[3 * tid + 1];
     dL_dcolors_precomp[3 * tid + 2] = dL_drgb[3 * tid + 2];
   } else {
-    // Staged SH path: degree-0 term (dc) only.
+    float3 dL_dRGB = float3(
+        clamped[3 * tid + 0] ? 0.0f : dL_drgb[3 * tid + 0],
+        clamped[3 * tid + 1] ? 0.0f : dL_drgb[3 * tid + 1],
+        clamped[3 * tid + 2] ? 0.0f : dL_drgb[3 * tid + 2]);
+
+    // degree-0 dc term
     constexpr float SH_C0 = 0.28209479177387814f;
-    dL_ddc[3 * tid + 0] = SH_C0 * dL_drgb[3 * tid + 0];
-    dL_ddc[3 * tid + 1] = SH_C0 * dL_drgb[3 * tid + 1];
-    dL_ddc[3 * tid + 2] = SH_C0 * dL_drgb[3 * tid + 2];
+    dL_ddc[3 * tid + 0] = SH_C0 * dL_dRGB[0];
+    dL_ddc[3 * tid + 1] = SH_C0 * dL_dRGB[1];
+    dL_ddc[3 * tid + 2] = SH_C0 * dL_dRGB[2];
     dL_dcolors_precomp[3 * tid + 0] = 0.0f;
     dL_dcolors_precomp[3 * tid + 1] = 0.0f;
     dL_dcolors_precomp[3 * tid + 2] = 0.0f;
-    // dL_dsh remains zero-initialized in staged implementation.
+
+    if (params.degree > 0 && params.max_sh_coeffs >= 3) {
+      constexpr float SH_C1 = 0.4886025119029199f;
+      constexpr float SH_C2[5] = {
+          1.0925484305920792f,
+          -1.0925484305920792f,
+          0.31539156525252005f,
+          -1.0925484305920792f,
+          0.5462742152960396f,
+      };
+      constexpr float SH_C3[7] = {
+          -0.5900435899266435f,
+          2.890611442640554f,
+          -0.4570457994644658f,
+          0.3731763325901154f,
+          -0.4570457994644658f,
+          1.445305721320277f,
+          -0.5900435899266435f,
+      };
+      float3 pos = read_packed_float3(means3d, tid, 3u);
+      float3 campos = float3(cam_pos[0], cam_pos[1], cam_pos[2]);
+      float3 dir_orig = pos - campos;
+      float3 dir = normalize(dir_orig);
+      float x = dir.x;
+      float y = dir.y;
+      float z = dir.z;
+
+      uint base = (tid * uint(params.max_sh_coeffs)) * 3u;
+      float3 sh0 = float3(sh[base + 0], sh[base + 1], sh[base + 2]);
+      float3 sh1 = float3(sh[base + 3], sh[base + 4], sh[base + 5]);
+      float3 sh2 = float3(sh[base + 6], sh[base + 7], sh[base + 8]);
+
+      float3 g0 = (-SH_C1 * y) * dL_dRGB;
+      float3 g1 = ( SH_C1 * z) * dL_dRGB;
+      float3 g2 = (-SH_C1 * x) * dL_dRGB;
+      dL_dsh[base + 0] = g0.x; dL_dsh[base + 1] = g0.y; dL_dsh[base + 2] = g0.z;
+      dL_dsh[base + 3] = g1.x; dL_dsh[base + 4] = g1.y; dL_dsh[base + 5] = g1.z;
+      dL_dsh[base + 6] = g2.x; dL_dsh[base + 7] = g2.y; dL_dsh[base + 8] = g2.z;
+
+      float3 dRGBdx = -SH_C1 * sh2;
+      float3 dRGBdy = -SH_C1 * sh0;
+      float3 dRGBdz =  SH_C1 * sh1;
+
+      if (params.degree > 1 && params.max_sh_coeffs >= 8) {
+        float xx = x * x, yy = y * y, zz = z * z;
+        float xy = x * y, yz = y * z, xz = x * z;
+        uint b3 = base + 9u;   // coeff 3
+        uint b4 = base + 12u;  // coeff 4
+        uint b5 = base + 15u;  // coeff 5
+        uint b6 = base + 18u;  // coeff 6
+        uint b7 = base + 21u;  // coeff 7
+
+        float3 sh3 = float3(sh[b3 + 0], sh[b3 + 1], sh[b3 + 2]);
+        float3 sh4 = float3(sh[b4 + 0], sh[b4 + 1], sh[b4 + 2]);
+        float3 sh5 = float3(sh[b5 + 0], sh[b5 + 1], sh[b5 + 2]);
+        float3 sh6 = float3(sh[b6 + 0], sh[b6 + 1], sh[b6 + 2]);
+        float3 sh7 = float3(sh[b7 + 0], sh[b7 + 1], sh[b7 + 2]);
+
+        float3 g3 = (SH_C2[0] * xy) * dL_dRGB;
+        float3 g4 = (SH_C2[1] * yz) * dL_dRGB;
+        float3 g5 = (SH_C2[2] * (2.0f * zz - xx - yy)) * dL_dRGB;
+        float3 g6 = (SH_C2[3] * xz) * dL_dRGB;
+        float3 g7 = (SH_C2[4] * (xx - yy)) * dL_dRGB;
+        dL_dsh[b3 + 0] = g3.x; dL_dsh[b3 + 1] = g3.y; dL_dsh[b3 + 2] = g3.z;
+        dL_dsh[b4 + 0] = g4.x; dL_dsh[b4 + 1] = g4.y; dL_dsh[b4 + 2] = g4.z;
+        dL_dsh[b5 + 0] = g5.x; dL_dsh[b5 + 1] = g5.y; dL_dsh[b5 + 2] = g5.z;
+        dL_dsh[b6 + 0] = g6.x; dL_dsh[b6 + 1] = g6.y; dL_dsh[b6 + 2] = g6.z;
+        dL_dsh[b7 + 0] = g7.x; dL_dsh[b7 + 1] = g7.y; dL_dsh[b7 + 2] = g7.z;
+
+        dRGBdx += SH_C2[0] * y * sh3 + SH_C2[2] * 2.f * -x * sh5 + SH_C2[3] * z * sh6 + SH_C2[4] * 2.f * x * sh7;
+        dRGBdy += SH_C2[0] * x * sh3 + SH_C2[1] * z * sh4 + SH_C2[2] * 2.f * -y * sh5 + SH_C2[4] * 2.f * -y * sh7;
+        dRGBdz += SH_C2[1] * y * sh4 + SH_C2[2] * 4.f * z * sh5 + SH_C2[3] * x * sh6;
+
+        if (params.degree > 2 && params.max_sh_coeffs >= 15) {
+          uint b8 = base + 24u;
+          uint b9 = base + 27u;
+          uint b10 = base + 30u;
+          uint b11 = base + 33u;
+          uint b12 = base + 36u;
+          uint b13 = base + 39u;
+          uint b14 = base + 42u;
+
+          float3 sh8 = float3(sh[b8 + 0], sh[b8 + 1], sh[b8 + 2]);
+          float3 sh9 = float3(sh[b9 + 0], sh[b9 + 1], sh[b9 + 2]);
+          float3 sh10 = float3(sh[b10 + 0], sh[b10 + 1], sh[b10 + 2]);
+          float3 sh11 = float3(sh[b11 + 0], sh[b11 + 1], sh[b11 + 2]);
+          float3 sh12 = float3(sh[b12 + 0], sh[b12 + 1], sh[b12 + 2]);
+          float3 sh13 = float3(sh[b13 + 0], sh[b13 + 1], sh[b13 + 2]);
+          float3 sh14 = float3(sh[b14 + 0], sh[b14 + 1], sh[b14 + 2]);
+
+          float3 g8 = (SH_C3[0] * y * (3.f * xx - yy)) * dL_dRGB;
+          float3 g9 = (SH_C3[1] * xy * z) * dL_dRGB;
+          float3 g10 = (SH_C3[2] * y * (4.f * zz - xx - yy)) * dL_dRGB;
+          float3 g11 = (SH_C3[3] * z * (2.f * zz - 3.f * xx - 3.f * yy)) * dL_dRGB;
+          float3 g12 = (SH_C3[4] * x * (4.f * zz - xx - yy)) * dL_dRGB;
+          float3 g13 = (SH_C3[5] * z * (xx - yy)) * dL_dRGB;
+          float3 g14 = (SH_C3[6] * x * (xx - 3.f * yy)) * dL_dRGB;
+          dL_dsh[b8 + 0] = g8.x; dL_dsh[b8 + 1] = g8.y; dL_dsh[b8 + 2] = g8.z;
+          dL_dsh[b9 + 0] = g9.x; dL_dsh[b9 + 1] = g9.y; dL_dsh[b9 + 2] = g9.z;
+          dL_dsh[b10 + 0] = g10.x; dL_dsh[b10 + 1] = g10.y; dL_dsh[b10 + 2] = g10.z;
+          dL_dsh[b11 + 0] = g11.x; dL_dsh[b11 + 1] = g11.y; dL_dsh[b11 + 2] = g11.z;
+          dL_dsh[b12 + 0] = g12.x; dL_dsh[b12 + 1] = g12.y; dL_dsh[b12 + 2] = g12.z;
+          dL_dsh[b13 + 0] = g13.x; dL_dsh[b13 + 1] = g13.y; dL_dsh[b13 + 2] = g13.z;
+          dL_dsh[b14 + 0] = g14.x; dL_dsh[b14 + 1] = g14.y; dL_dsh[b14 + 2] = g14.z;
+
+          dRGBdx += (
+              SH_C3[0] * sh8 * 6.f * xy +
+              SH_C3[1] * sh9 * yz +
+              SH_C3[2] * sh10 * -2.f * xy +
+              SH_C3[3] * sh11 * -6.f * xz +
+              SH_C3[4] * sh12 * (-3.f * xx + 4.f * zz - yy) +
+              SH_C3[5] * sh13 * 2.f * xz +
+              SH_C3[6] * sh14 * 3.f * (xx - yy));
+
+          dRGBdy += (
+              SH_C3[0] * sh8 * 3.f * (xx - yy) +
+              SH_C3[1] * sh9 * xz +
+              SH_C3[2] * sh10 * (-3.f * yy + 4.f * zz - xx) +
+              SH_C3[3] * sh11 * -6.f * yz +
+              SH_C3[4] * sh12 * -2.f * xy +
+              SH_C3[5] * sh13 * -2.f * yz +
+              SH_C3[6] * sh14 * -6.f * xy);
+
+          dRGBdz += (
+              SH_C3[1] * sh9 * xy +
+              SH_C3[2] * sh10 * 8.f * yz +
+              SH_C3[3] * sh11 * 3.f * (2.f * zz - xx - yy) +
+              SH_C3[4] * sh12 * 8.f * xz +
+              SH_C3[5] * sh13 * (xx - yy));
+        }
+      }
+      float3 dL_ddir = float3(dot(dRGBdx, dL_dRGB), dot(dRGBdy, dL_dRGB), dot(dRGBdz, dL_dRGB));
+      float3 dL_dmean_sh = dnormvdv(dir_orig, dL_ddir);
+      dL_dmeans3d[3 * tid + 0] += dL_dmean_sh.x;
+      dL_dmeans3d[3 * tid + 1] += dL_dmean_sh.y;
+      dL_dmeans3d[3 * tid + 2] += dL_dmean_sh.z;
+    }
   }
 
   // Backprop cov3d( scale, quat ) -> d_scales, d_quats

@@ -434,8 +434,8 @@
   - [x] Verify mandatory gradient presence and shape constraints.
   - [x] Verify `means2D/xys` gradient contract (`[P,4]`, split channels used by densification logic) for current staged implementation contract.
 - Numerical tests:
-  - [x] Finite-difference checks on currently implemented sampled parameter paths (`means2D`, `means3D`, `opacity`, `scale`, `rotation`, `colors_precomp`, staged degree-0 `dc/sh`) pass tolerance gates.
-  - [ ] Finite-difference checks on remaining sampled parameters (full degree>0 `dc/sh` parity path).
+  - [x] Finite-difference checks on currently implemented sampled parameter paths (`means2D`, `means3D`, `opacity`, `scale`, `rotation`, `colors_precomp`, staged `dc/sh` up to degree=2) pass tolerance gates.
+  - [ ] Finite-difference checks on remaining sampled parameters (full CUDA-parity `dc/sh` path across all degrees/configurations).
 - Stability tests:
   - [x] Repeat-run gradient consistency under fixed seeds.
 - Reference parity tests:
@@ -457,7 +457,7 @@
 - [x] Densification-consumed gradient contract works (`viewspace_points.grad` split logic compatible).
 - [ ] Backward parity report documented with tolerance and residual gaps.
   - Status: Deferred until CUDA reference generation environment is available.
-  - Additional parity gap: full degree>0 `dc/sh` backward parity path is pending.
+- Additional parity gap: full CUDA-parity `dc/sh` backward path (all degrees/configurations) is pending.
 
 ## Notes
 - This task explicitly disallows transitional implementations for final merged path.
@@ -482,21 +482,32 @@
 - Task 4.6.3 (`color/sh` backward path)
   - [x] Implement/fix color-related gradient for current staged color path (`colors_precomp`).
   - [x] Add targeted numeric check coverage and pass tolerance gates for `colors_precomp`.
-  - [x] Implement/fix staged `dc/sh` backward path for degree-0 contract and pass numeric checks.
-  - [ ] Implement/fix full degree>0 `dc/sh` backward parity path (deferred parity item).
+  - [x] Implement/fix staged `dc/sh` backward path through degree-2 contracts and pass numeric checks.
+  - [ ] Implement/fix full CUDA-parity `dc/sh` backward path across all degrees/configurations (deferred parity item).
 
 ### Validation
-- [x] Newly covered parameter paths (`opacity`, `scale`, `rotation`, `colors_precomp`, staged `dc/sh`) produce finite, non-trivial gradients on fixture tests.
+- [x] Newly covered parameter paths (`opacity`, `scale`, `rotation`, `colors_precomp`, staged `dc/sh` through degree-2) produce finite, non-trivial gradients on fixture tests.
 - [x] Corresponding finite-difference checks pass configured tolerances for covered paths.
-- [ ] Remaining parameter path (full degree>0 `dc/sh` parity) finite + finite-difference checks pending.
+- [ ] Remaining parameter path (full CUDA-parity `dc/sh`) finite + finite-difference checks pending.
 - [ ] No regression in existing backward smoke/contract/repeatability scripts.
 
 ### Exit Criteria
-- [ ] Task 4.5 numerical coverage item for remaining parameters is fully complete (remaining: full degree>0 `dc/sh` parity path).
+- [ ] Task 4.5 numerical coverage item for remaining parameters is fully complete (remaining: full CUDA-parity `dc/sh` path).
 - [ ] Task 4 acceptance item “End-to-end backward executes and returns complete required gradients” is satisfied for staged target scope.
 
 ### Handoff Notes (Post-Staged)
 - Staged backward migration is operational and validated on local Apple environment for covered paths.
 - Next environments/tasks to close remaining gaps:
   - CUDA-enabled environment to generate/reference parity snapshots and finalize `backward_parity_compare.py --ref`.
-  - Full degree>0 `dc/sh` backward parity implementation and numeric checks.
+  - Full CUDA-parity `dc/sh` backward implementation and numeric checks across all target degree/config combinations.
+
+### Debug Finding (Important)
+- Symptom:
+  - `backward_numeric_check.py` previously showed selective failure on higher-order SH term (example: `sh[0,3,0]`), while lower-order terms and other parameter paths passed.
+- Root cause:
+  - `FastGSPreprocess::is_equivalent()` and `FastGSPreprocessBackward::is_equivalent()` only compared primitive `name()` and did not compare parameter fields (for example `degree`, `max_sh_coeffs`, image/tile params).
+  - This allowed incorrect primitive reuse/caching across different SH configurations, causing backward to run with mismatched params.
+- Fix:
+  - Updated both `is_equivalent()` implementations to compare full `PreprocessParams` fields instead of name-only.
+- Verification:
+  - After fix, higher-order SH numeric check case moved from FAIL to PASS (`sh[0,3,0] (degree=2)`).

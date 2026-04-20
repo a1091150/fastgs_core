@@ -58,6 +58,7 @@ std::vector<mx::array> fastgs_preprocess(const PreprocessInput& input);
 std::vector<mx::array> fastgs_preprocess_backward(
     const std::vector<mx::array>& primals,
     const std::vector<mx::array>& cotangents,
+    const std::vector<mx::array>& forward_outputs,
     const PreprocessParams& params,
     mx::StreamOrDevice s);
 

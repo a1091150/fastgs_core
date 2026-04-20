@@ -34,6 +34,7 @@ struct PreprocessBackwardKernelParams {
 std::vector<mx::array> fastgs_preprocess_backward(
     const std::vector<mx::array>& primals,
     const std::vector<mx::array>& cotangents,
+    const std::vector<mx::array>& forward_outputs,
     const PreprocessParams& params,
     mx::StreamOrDevice s) {
   if (primals.size() != kPreprocessNumInputs) {
@@ -41,6 +42,9 @@ std::vector<mx::array> fastgs_preprocess_backward(
   }
   if (cotangents.size() != kPreprocessNumOutputs) {
     throw std::invalid_argument("fastgs_preprocess_backward expects 9 cotangents.");
+  }
+  if (forward_outputs.size() != kPreprocessNumOutputs) {
+    throw std::invalid_argument("fastgs_preprocess_backward expects 9 forward outputs.");
   }
 
   auto prim =
@@ -55,13 +59,14 @@ std::vector<mx::array> fastgs_preprocess_backward(
   }
 
   std::vector<mx::array> inputs;
-  inputs.reserve(primals.size() + cotangents.size());
+  inputs.reserve(primals.size() + cotangents.size() + 1);
   for (const auto& primal : primals) {
     inputs.push_back(mx::contiguous(primal));
   }
   for (const auto& cotangent : cotangents) {
     inputs.push_back(mx::contiguous(cotangent));
   }
+  inputs.push_back(mx::contiguous(forward_outputs[kClamped]));
 
   return mx::array::make_arrays(output_shapes, output_types, prim, inputs);
 }
@@ -83,8 +88,10 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
 
 #ifdef _METAL_
   const auto& means3d = inputs[0];
+  const auto& sh = inputs[2];
   const auto& scales = inputs[5];
   const auto& quats = inputs[6];
+  const auto& cam_pos = inputs[10];
   const auto& viewmat = inputs[8];
   const auto& projmat = inputs[9];
   const auto& d_cov3d = inputs[kPreprocessNumInputs + kCov3d];
@@ -93,6 +100,7 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
   const auto& d_depths = inputs[kPreprocessNumInputs + kDepths];
   const auto& d_conic_opacity = inputs[kPreprocessNumInputs + kConicOpacity];
   const auto& d_viewspace = inputs[kPreprocessNumInputs + kViewspacePoints];
+  const auto& clamped = inputs[kPreprocessNumInputs + kPreprocessNumOutputs];
 
   auto& d_means3d = outputs[0];
   auto& d_dc = outputs[1];
@@ -127,20 +135,23 @@ void FastGSPreprocessBackward::eval_gpu(const std::vector<mx::array>& inputs,
   compute_encoder.set_input_array(quats, 3);
   compute_encoder.set_input_array(viewmat, 4);
   compute_encoder.set_input_array(projmat, 5);
-  compute_encoder.set_input_array(d_cov3d, 6);
-  compute_encoder.set_input_array(d_rgb, 7);
-  compute_encoder.set_input_array(d_xys, 8);
-  compute_encoder.set_input_array(d_depths, 9);
-  compute_encoder.set_input_array(d_conic_opacity, 10);
-  compute_encoder.set_input_array(d_viewspace, 11);
-  compute_encoder.set_output_array(d_means3d, 12);
-  compute_encoder.set_output_array(d_dc, 13);
-  compute_encoder.set_output_array(d_sh, 14);
-  compute_encoder.set_output_array(d_colors_precomp, 15);
-  compute_encoder.set_output_array(d_opacities, 16);
-  compute_encoder.set_output_array(d_scales, 17);
-  compute_encoder.set_output_array(d_quats, 18);
-  compute_encoder.set_output_array(d_viewspace_in, 19);
+  compute_encoder.set_input_array(cam_pos, 6);
+  compute_encoder.set_input_array(sh, 7);
+  compute_encoder.set_input_array(d_cov3d, 8);
+  compute_encoder.set_input_array(d_rgb, 9);
+  compute_encoder.set_input_array(d_xys, 10);
+  compute_encoder.set_input_array(d_depths, 11);
+  compute_encoder.set_input_array(d_conic_opacity, 12);
+  compute_encoder.set_input_array(d_viewspace, 13);
+  compute_encoder.set_input_array(clamped, 14);
+  compute_encoder.set_output_array(d_means3d, 15);
+  compute_encoder.set_output_array(d_dc, 16);
+  compute_encoder.set_output_array(d_sh, 17);
+  compute_encoder.set_output_array(d_colors_precomp, 18);
+  compute_encoder.set_output_array(d_opacities, 19);
+  compute_encoder.set_output_array(d_scales, 20);
+  compute_encoder.set_output_array(d_quats, 21);
+  compute_encoder.set_output_array(d_viewspace_in, 22);
 
   const size_t max_threads = kernel->maxTotalThreadsPerThreadgroup();
   size_t tgp_size = std::min(static_cast<size_t>(n), max_threads);
@@ -175,7 +186,22 @@ std::pair<std::vector<mx::array>, std::vector<int>> FastGSPreprocessBackward::vm
 }
 
 bool FastGSPreprocessBackward::is_equivalent(const mx::Primitive& other) const {
-  return name() == other.name();
+  if (name() != other.name()) {
+    return false;
+  }
+  auto other_ptr = dynamic_cast<const FastGSPreprocessBackward*>(&other);
+  if (!other_ptr) {
+    return false;
+  }
+  const auto& p = params_;
+  const auto& q = other_ptr->params_;
+  return p.degree == q.degree && p.max_sh_coeffs == q.max_sh_coeffs &&
+         p.scale_modifier == q.scale_modifier && p.tan_fovx == q.tan_fovx &&
+         p.tan_fovy == q.tan_fovy && p.image_height == q.image_height &&
+         p.image_width == q.image_width && p.tile_bounds == q.tile_bounds &&
+         p.mult == q.mult && p.prefiltered == q.prefiltered &&
+         p.use_cov3d_precomp == q.use_cov3d_precomp &&
+         p.use_colors_precomp == q.use_colors_precomp;
 }
 
 }  // namespace fastgs_core
