@@ -14,6 +14,7 @@ import cv2
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
+from PIL import Image
 from mlx.nn import value_and_grad
 from mlx.optimizers import Adam
 
@@ -41,6 +42,7 @@ class ScannerFrame:
     index: int
     image_path: Path
     json_path: Path
+    frame: dict | None = None
 
 
 @dataclass
@@ -77,37 +79,30 @@ def to_chw_mx(out_color: mx.array, h: int, w: int) -> mx.array:
     raise RuntimeError(f"Unexpected out_color shape: {shape}")
 
 
-def read_ply_positions_colors_ascii(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    header_lines = 0
-    vertex_count = None
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            header_lines += 1
-            s = line.strip()
-            if s.startswith("element vertex"):
-                parts = s.split()
-                vertex_count = int(parts[-1])
-            if s == "end_header":
-                break
+def logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, 1.0e-6, 1.0 - 1.0e-6)
+    return np.log(p / (1.0 - p))
 
-    if vertex_count is None:
-        raise RuntimeError(f"Failed to parse vertex count from {path}")
 
-    data = np.loadtxt(
-        str(path),
-        dtype=np.float32,
-        skiprows=header_lines,
-        usecols=(0, 1, 2, 3, 4, 5),
-        max_rows=vertex_count,
-    )
-    if data.ndim == 1:
-        data = data[None, :]
+def load_ply_positions_colors(path: Path) -> tuple[np.ndarray, np.ndarray | None]:
+    try:
+        from plyfile import PlyData
+    except ImportError as exc:
+        raise ImportError(
+            "Reading dataset point clouds requires the 'plyfile' package at runtime."
+        ) from exc
 
-    points = data[:, :3].astype(np.float32)
-    colors = data[:, 3:6].astype(np.float32)
-    if colors.max() > 1.0:
-        colors = colors / 255.0
-    colors = np.clip(colors, 0.0, 1.0)
+    ply = PlyData.read(str(path))
+    vertices = ply["vertex"]
+    points = np.stack([vertices["x"], vertices["y"], vertices["z"]], axis=1).astype(np.float32)
+
+    colors = None
+    names = vertices.data.dtype.names or ()
+    if {"red", "green", "blue"}.issubset(names):
+        colors = np.stack([vertices["red"], vertices["green"], vertices["blue"]], axis=1).astype(np.float32)
+        if colors.max() > 1.0:
+            colors = colors / 255.0
+        colors = np.clip(colors, 0.0, 1.0)
     return points, colors
 
 
@@ -170,18 +165,8 @@ def make_axis_transform() -> tuple[np.ndarray, np.ndarray]:
     return a, a4
 
 
-def compute_normalization(frames: list[ScannerFrame], a4: np.ndarray) -> tuple[np.ndarray, float]:
-    centers = []
-    for frame in frames:
-        raw = load_json(frame.json_path)
-        pose = raw.get("cameraPoseARFrame")
-        if pose is None or len(pose) != 16:
-            raise RuntimeError(f"Invalid cameraPoseARFrame in {frame.json_path}")
-        c2w_src = np.array(pose, dtype=np.float32).reshape(4, 4)
-        c2w = a4 @ c2w_src
-        centers.append(c2w[:3, 3])
-
-    centers_np = np.stack(centers, axis=0).astype(np.float32)
+def compute_normalization(camera_positions: list[np.ndarray]) -> tuple[np.ndarray, float]:
+    centers_np = np.stack(camera_positions, axis=0).astype(np.float32)
     translation = centers_np.mean(axis=0)
     denom = np.max(np.abs(centers_np - translation[None, :]))
     scale = 1.0 / float(denom) if denom > 0.0 else 1.0
@@ -189,29 +174,25 @@ def compute_normalization(frames: list[ScannerFrame], a4: np.ndarray) -> tuple[n
 
 
 def build_camera_from_scanner_json(
-    meta: dict,
+    frame: dict,
     image_width: int,
     image_height: int,
-    a4: np.ndarray,
-    translation: np.ndarray,
-    norm_scale: float,
     znear: float = 0.001,
     zfar: float = 1000.0,
 ) -> TrainCamera:
-    intrinsics = meta.get("intrinsics")
-    if intrinsics is None or len(intrinsics) != 9:
-        raise RuntimeError("intrinsics must contain 9 elements")
+    width = float(image_width)
+    height = float(image_height)
+    raw_width = float(frame.get("w", image_width))
+    raw_height = float(frame.get("h", image_height))
+    sx = width / raw_width
+    sy = height / raw_height
 
-    fx = float(intrinsics[0])
-    fy = float(intrinsics[4])
+    fx = float(frame["fl_x"]) * sx
+    fy = float(frame["fl_y"]) * sy
+    cx = float(frame["cx"]) * sx
+    cy = float(frame["cy"]) * sy
 
-    pose = meta.get("cameraPoseARFrame")
-    if pose is None or len(pose) != 16:
-        raise RuntimeError("cameraPoseARFrame must contain 16 elements")
-    c2w_src = np.array(pose, dtype=np.float32).reshape(4, 4)
-    c2w = (a4 @ c2w_src).astype(np.float32)
-    c2w[:3, 3] = (c2w[:3, 3] - translation) * norm_scale
-
+    c2w = np.array(frame["transform_matrix"], dtype=np.float32)
     r = c2w[:3, :3].astype(np.float32)
     t = c2w[:3, 3:4].astype(np.float32)
     r = r @ np.diag([1.0, -1.0, -1.0]).astype(np.float32)
@@ -223,8 +204,6 @@ def build_camera_from_scanner_json(
     raw_viewmat[:3, :3] = rinv
     raw_viewmat[:3, 3:4] = tinv
 
-    width = float(image_width)
-    height = float(image_height)
     fovx = 2.0 * math.atan(width / (2.0 * fx))
     fovy = 2.0 * math.atan(height / (2.0 * fy))
 
@@ -258,13 +237,17 @@ def build_camera_from_scanner_json(
 
 
 def load_target_image(path: Path, width: int, height: int) -> np.ndarray:
-    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    if img is None:
-        raise RuntimeError(f"Failed to read image: {path}")
-    if img.shape[1] != width or img.shape[0] != height:
-        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    return rgb.astype(np.float32) / 255.0
+    image = Image.open(path)
+    rgba = np.array(image.convert("RGBA"), dtype=np.float32) / 255.0
+    if rgba.shape[1] != width or rgba.shape[0] != height:
+        rgba = np.array(
+            Image.fromarray((rgba * 255.0).astype(np.uint8), mode="RGBA").resize(
+                (width, height), Image.Resampling.BILINEAR
+            ),
+            dtype=np.float32,
+        ) / 255.0
+    bg = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return rgba[:, :, :3] * rgba[:, :, 3:4] + bg * (1.0 - rgba[:, :, 3:4])
 
 
 def prepare_dataset(
@@ -279,59 +262,105 @@ def prepare_dataset(
 ) -> tuple[list[TrainCamera], list[mx.array], np.ndarray, np.ndarray]:
     a, a4 = make_axis_transform()
     frames = collect_scanner_frames(dataset_dir, max_frames, frame_step, start_index)
-    translation, norm_scale = compute_normalization(frames, a4)
-
-    points, colors = read_ply_positions_colors_ascii(dataset_dir / "points.ply")
+    points, colors = load_ply_positions_colors(dataset_dir / "points.ply")
     points = (a @ points.T).T
+
+    camera_positions = []
+    for frame in frames:
+        raw = load_json(frame.json_path)
+        with Image.open(frame.image_path) as img:
+            raw_width, raw_height = img.size
+
+        intrinsics = raw.get("intrinsics")
+        if intrinsics is None or len(intrinsics) != 9:
+            raise RuntimeError(f"Invalid intrinsics in {frame.json_path}")
+        pose = raw.get("cameraPoseARFrame")
+        if pose is None or len(pose) != 16:
+            raise RuntimeError(f"Invalid cameraPoseARFrame in {frame.json_path}")
+
+        c2w_src = np.array(pose, dtype=np.float32).reshape(4, 4)
+        c2w = (a4 @ c2w_src).astype(np.float32)
+        frame.frame = {
+            "w": int(raw_width),
+            "h": int(raw_height),
+            "file_path": frame.image_path.name,
+            "fl_x": float(intrinsics[0]),
+            "fl_y": float(intrinsics[4]),
+            "cx": float(intrinsics[2]),
+            "cy": float(intrinsics[5]),
+            "transform_matrix": c2w.tolist(),
+        }
+        camera_positions.append(c2w[:3, 3])
+
+    translation, norm_scale = compute_normalization(camera_positions)
     points = (points - translation[None, :]) * norm_scale
 
     rng = np.random.default_rng(seed)
     if max_points > 0 and points.shape[0] > max_points:
         keep = rng.choice(points.shape[0], size=max_points, replace=False)
         points = points[keep]
-        colors = colors[keep]
+        if colors is not None:
+            colors = colors[keep]
 
     cameras = []
     targets = []
     for f in frames:
-        meta = load_json(f.json_path)
+        if f.frame is None:
+            raise RuntimeError(f"Missing normalized frame metadata for {f.json_path}")
+        c2w = np.array(f.frame["transform_matrix"], dtype=np.float32)
+        c2w[:3, 3] = (c2w[:3, 3] - translation) * norm_scale
+        norm_frame = dict(f.frame)
+        norm_frame["transform_matrix"] = c2w.tolist()
         camera = build_camera_from_scanner_json(
-            meta=meta,
+            frame=norm_frame,
             image_width=width,
             image_height=height,
-            a4=a4,
-            translation=translation,
-            norm_scale=norm_scale,
         )
         target_hwc = load_target_image(f.image_path, width, height)
         target_chw = np.transpose(target_hwc, (2, 0, 1))
         cameras.append(camera)
         targets.append(mx.array(target_chw, dtype=mx.float32))
 
-    return cameras, targets, points.astype(np.float32), colors.astype(np.float32)
+    colors_np = colors.astype(np.float32) if colors is not None else np.full_like(points, 0.5, dtype=np.float32)
+    return cameras, targets, points.astype(np.float32), colors_np
 
 
 class ScannerTrainModel(nn.Module):
     def __init__(
         self,
         means3d: mx.array,
-        colors: mx.array,
-        opacities: mx.array,
-        scales: mx.array,
+        features_dc: mx.array,
+        features_rest: mx.array,
+        opacity_logits: mx.array,
+        log_scales: mx.array,
         rotations: mx.array,
     ):
         super().__init__()
         self.means3d = means3d
-        self.colors = colors
-        self.opacities = opacities
-        self.scales = scales
+        self.features_dc = features_dc
+        self.features_rest = features_rest
+        self.opacity_logits = opacity_logits
+        self.log_scales = log_scales
         self.rotations = rotations
+
+    @property
+    def get_opacities(self) -> mx.array:
+        return mx.sigmoid(self.opacity_logits)
+
+    @property
+    def get_scales(self) -> mx.array:
+        return mx.exp(self.log_scales)
+
+    @property
+    def get_rotations(self) -> mx.array:
+        return self.rotations / (mx.linalg.norm(self.rotations, axis=1, keepdims=True) + 1.0e-8)
 
 
 def render_chw(
     ext,
     means3d: mx.array,
-    colors_precomp: mx.array,
+    features_dc: mx.array,
+    features_rest: mx.array,
     opacities: mx.array,
     scales: mx.array,
     rotations: mx.array,
@@ -343,15 +372,14 @@ def render_chw(
     inputs = {
         "background": background,
         "means3d": means3d,
-        "colors_precomp": colors_precomp,
+        "dc": features_dc,
+        "sh": features_rest,
         "opacities": opacities,
         "scales": scales,
         "rotations": rotations,
         "metric_map": mx.zeros((camera.image_width * camera.image_height,), dtype=mx.int32),
         "viewmatrix": camera.viewmatrix,
         "projmatrix": camera.projmatrix,
-        "dc": mx.zeros((0,), dtype=mx.float32),
-        "sh": mx.zeros((0,), dtype=mx.float32),
         "campos": camera.campos,
         "viewspace_points": mx.zeros((n, 4), dtype=mx.float32),
     }
@@ -391,23 +419,30 @@ def save_side_by_side(target_chw: mx.array, pred_chw: mx.array, out_path: Path) 
         raise RuntimeError(f"Failed to write image: {out_path}")
 
 
-def init_model(points: np.ndarray, colors: np.ndarray) -> ScannerTrainModel:
+def init_model(points: np.ndarray, colors: np.ndarray, sh_degree: int) -> ScannerTrainModel:
     n = points.shape[0]
     bbox_min = points.min(axis=0)
     bbox_max = points.max(axis=0)
     diag = float(np.linalg.norm(bbox_max - bbox_min))
-    base_scale = max(1.0e-3, 0.01 * diag)
+    # base_scale = max(1.0e-3, 0.01 * diag)
+    base_scale = 0.02
 
-    scales = np.full((n, 3), base_scale, dtype=np.float32)
+    log_scales = np.full((n, 3), math.log(base_scale), dtype=np.float32)
     rotations = np.zeros((n, 4), dtype=np.float32)
     rotations[:, 0] = 1.0
-    opacities = np.full((n,), 0.35, dtype=np.float32)
+    opacity_logits = logit(np.full((n,), 0.35, dtype=np.float32)).astype(np.float32)
+
+    sh_c0 = 0.28209479177387814
+    features_dc = ((colors - 0.5) / sh_c0).astype(np.float32)
+    rest_coeffs = max(0, (sh_degree + 1) ** 2 - 1)
+    features_rest = np.zeros((n, rest_coeffs, 3), dtype=np.float32)
 
     return ScannerTrainModel(
         means3d=mx.array(points, dtype=mx.float32),
-        colors=mx.array(colors, dtype=mx.float32),
-        opacities=mx.array(opacities, dtype=mx.float32),
-        scales=mx.array(scales, dtype=mx.float32),
+        features_dc=mx.array(features_dc, dtype=mx.float32),
+        features_rest=mx.array(features_rest, dtype=mx.float32),
+        opacity_logits=mx.array(opacity_logits, dtype=mx.float32),
+        log_scales=mx.array(log_scales, dtype=mx.float32),
         rotations=mx.array(rotations, dtype=mx.float32),
     )
 
@@ -420,23 +455,28 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
     cloud = spz.GaussianCloud()
     cloud.antialiased = True
 
-    mx.eval(model.means3d, model.scales, model.rotations, model.opacities, model.colors)
+    mx.eval(
+        model.means3d,
+        model.get_scales,
+        model.get_rotations,
+        model.get_opacities,
+        model.features_dc,
+        model.features_rest,
+    )
     means = np.array(model.means3d, dtype=np.float32)
-    scales = np.array(model.scales, dtype=np.float32)
-    quats = np.array(model.rotations, dtype=np.float32)
-    quats = quats / (np.linalg.norm(quats, axis=1, keepdims=True) + 1.0e-8)
-    opacities = np.array(model.opacities, dtype=np.float32)
-    colors = np.array(model.colors, dtype=np.float32)
+    scales = np.array(model.get_scales, dtype=np.float32)
+    quats = np.array(model.get_rotations, dtype=np.float32)
+    opacities = np.array(model.get_opacities, dtype=np.float32)
+    features_dc = np.array(model.features_dc, dtype=np.float32)
+    features_rest = np.array(model.features_rest, dtype=np.float32)
 
     cloud.positions = means.flatten().astype(np.float32)
     cloud.scales = scales.flatten().astype(np.float32)
     cloud.rotations = quats.flatten().astype(np.float32)
     cloud.alphas = opacities.flatten().astype(np.float32)
-    cloud.colors = colors.flatten().astype(np.float32)
+    cloud.colors = features_dc.flatten().astype(np.float32)
     cloud.sh_degree = int(sh_degree)
-    sh_coeffs_per_channel = max(0, (cloud.sh_degree + 1) ** 2 - 1)
-    sh_len = means.shape[0] * 3 * sh_coeffs_per_channel
-    cloud.sh = np.zeros((sh_len,), dtype=np.float32)
+    cloud.sh = features_rest.transpose(0, 2, 1).flatten().astype(np.float32)
 
     opts = spz.PackOptions()
     ok = spz.save_spz(cloud, opts, str(filename))
@@ -449,15 +489,15 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="/Users/yangdunfu/Downloads/2026_03_01_16_36_14")
-    parser.add_argument("--steps", type=int, default=3000)
-    parser.add_argument("--log-every", type=int, default=20)
+    parser.add_argument("--steps", type=int, default=1)
+    parser.add_argument("--log-every", type=int, default=93)
     parser.add_argument("--save-every", type=int, default=200)
     parser.add_argument("--width", type=int, default=480)
     parser.add_argument("--height", type=int, default=360)
     parser.add_argument("--max-frames", type=int, default=80)
     parser.add_argument("--frame-step", type=int, default=8)
-    parser.add_argument("--start-index", type=int, default=0)
-    parser.add_argument("--max-points", type=int, default=30000)
+    parser.add_argument("--start-index", type=int, default=10)
+    parser.add_argument("--max-points", type=int, default=30000000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--random-background", action="store_true")
     parser.add_argument("--lr-colors", type=float, default=2e-2)
@@ -470,7 +510,12 @@ def main():
     parser.add_argument("--stage-means-steps", type=int, default=800)
     parser.add_argument("--mse-until", type=int, default=600)
     parser.add_argument("--sh-degree", type=int, default=2)
+    parser.add_argument("--debug-scales", action="store_true")
+    parser.add_argument("--debug-scale-threshold", type=float, default=0.5)
+    parser.add_argument("--debug-scale-growth-ratio", type=float, default=1.25)
     args = parser.parse_args()
+    if args.sh_degree < 0 or args.sh_degree > 3:
+        raise ValueError("--sh-degree must be between 0 and 3")
 
     dataset_dir = Path(args.data)
     if not dataset_dir.exists():
@@ -490,10 +535,11 @@ def main():
     if len(cameras) != len(targets):
         raise RuntimeError("Internal error: camera/target length mismatch")
 
-    model = init_model(points, colors)
+    model = init_model(points, colors, args.sh_degree)
     betas = (args.adam_beta1, args.adam_beta2)
     means_opt = Adam(learning_rate=args.lr_means, betas=betas)
-    colors_opt = Adam(learning_rate=args.lr_colors, betas=betas)
+    dc_opt = Adam(learning_rate=args.lr_colors, betas=betas)
+    rest_opt = Adam(learning_rate=args.lr_colors, betas=betas)
     opacity_opt = Adam(learning_rate=args.lr_opacity, betas=betas)
     scales_opt = Adam(learning_rate=args.lr_scales, betas=betas)
 
@@ -503,10 +549,11 @@ def main():
         pred = render_chw(
             ext=ext,
             means3d=model.means3d,
-            colors_precomp=model.colors,
-            opacities=model.opacities,
-            scales=model.scales,
-            rotations=model.rotations,
+            features_dc=model.features_dc,
+            features_rest=model.features_rest,
+            opacities=model.get_opacities,
+            scales=model.get_scales,
+            rotations=model.get_rotations,
             camera=camera,
             background=bg,
             sh_degree=args.sh_degree,
@@ -531,6 +578,16 @@ def main():
     best_step = -1
     ema_loss = 0.0
     losses = []
+    prev_scale_mean = None
+
+    def _arr_stats(arr: np.ndarray) -> tuple[float, float, float, float]:
+        flat = arr.reshape(-1)
+        return (
+            float(np.min(flat)),
+            float(np.max(flat)),
+            float(np.mean(flat)),
+            float(np.percentile(flat, 95.0)),
+        )
 
     eval_idx = 0
     for step in range(1, args.steps + 1):
@@ -542,18 +599,15 @@ def main():
         use_l1 = mx.array(step > args.mse_until, dtype=mx.bool_)
         loss, grads = loss_and_grad_fn(model, camera, target_chw, bg, use_l1)
 
-        colors_opt.update(model, {"colors": grads["colors"]})
-        opacity_opt.update(model, {"opacities": grads["opacities"]})
+        dc_opt.update(model, {"features_dc": grads["features_dc"]})
+        rest_opt.update(model, {"features_rest": grads["features_rest"]})
+        opacity_opt.update(model, {"opacity_logits": grads["opacity_logits"]})
 
         if step > args.stage_color_steps:
             means_opt.update(model, {"means3d": grads["means3d"]})
 
         if step > args.stage_means_steps:
-            scales_opt.update(model, {"scales": grads["scales"]})
-
-        model.colors = mx.clip(model.colors, 0.0, 1.0)
-        model.opacities = mx.clip(model.opacities, 0.0, 1.0)
-        model.scales = mx.clip(model.scales, 1.0e-5, 2.0)
+            scales_opt.update(model, {"log_scales": grads["log_scales"]})
 
         mx.eval(loss)
         curr_loss = float(loss.item())
@@ -564,10 +618,11 @@ def main():
             pred_best = render_chw(
                 ext=ext,
                 means3d=model.means3d,
-                colors_precomp=model.colors,
-                opacities=model.opacities,
-                scales=model.scales,
-                rotations=model.rotations,
+                features_dc=model.features_dc,
+                features_rest=model.features_rest,
+                opacities=model.get_opacities,
+                scales=model.get_scales,
+                rotations=model.get_rotations,
                 camera=cameras[eval_idx],
                 background=base_bg,
                 sh_degree=args.sh_degree,
@@ -582,15 +637,47 @@ def main():
         if step % args.log_every == 0 or step == args.steps:
             losses.append((step, curr_loss, ema_loss))
             print(f"[train] step={step:04d} view={idx:03d} loss={curr_loss:.6f} ema={ema_loss:.6f}")
+            if args.debug_scales:
+                mx.eval(model.log_scales, model.get_scales, grads["log_scales"], model.get_opacities)
+                log_scales_np = np.array(model.log_scales, dtype=np.float32)
+                scales_np = np.array(model.get_scales, dtype=np.float32)
+                grads_scales_np = np.array(grads["log_scales"], dtype=np.float32)
+                opacity_np = np.array(model.get_opacities, dtype=np.float32)
+                ls_min, ls_max, ls_mean, ls_p95 = _arr_stats(log_scales_np)
+                s_min, s_max, s_mean, s_p95 = _arr_stats(scales_np)
+                g_min, g_max, g_mean, g_p95 = _arr_stats(grads_scales_np)
+                o_min, o_max, o_mean, o_p95 = _arr_stats(opacity_np)
+                growth = 1.0 if prev_scale_mean is None else (s_mean / (prev_scale_mean + 1.0e-12))
+                print(
+                    "[debug:scales] "
+                    f"step={step:04d} "
+                    f"log_scale[min={ls_min:.6f}, max={ls_max:.6f}, mean={ls_mean:.6f}, p95={ls_p95:.6f}] "
+                    f"scale[min={s_min:.6f}, max={s_max:.6f}, mean={s_mean:.6f}, p95={s_p95:.6f}] "
+                    f"log_grad[min={g_min:.6f}, max={g_max:.6f}, mean={g_mean:.6f}, p95={g_p95:.6f}] "
+                    f"opacity[min={o_min:.6f}, max={o_max:.6f}, mean={o_mean:.6f}, p95={o_p95:.6f}] "
+                    f"growth_vs_prev={growth:.4f}"
+                )
+                if s_max > args.debug_scale_threshold:
+                    print(
+                        "[warn:scales] "
+                        f"step={step:04d} scale max {s_max:.6f} exceeds threshold {args.debug_scale_threshold:.6f}"
+                    )
+                if prev_scale_mean is not None and growth > args.debug_scale_growth_ratio:
+                    print(
+                        "[warn:scales] "
+                        f"step={step:04d} mean scale growth {growth:.4f} exceeds ratio {args.debug_scale_growth_ratio:.4f}"
+                    )
+                prev_scale_mean = s_mean
 
-        if step % args.save_every == 0 or step == args.steps:
+        if step % args.save_every == 0 or step == args.steps or step == 0:
             pred_eval = render_chw(
                 ext=ext,
                 means3d=model.means3d,
-                colors_precomp=model.colors,
-                opacities=model.opacities,
-                scales=model.scales,
-                rotations=model.rotations,
+                features_dc=model.features_dc,
+                features_rest=model.features_rest,
+                opacities=model.get_opacities,
+                scales=model.get_scales,
+                rotations=model.get_rotations,
                 camera=cameras[eval_idx],
                 background=base_bg,
                 sh_degree=args.sh_degree,
@@ -602,22 +689,34 @@ def main():
     pred_final = render_chw(
         ext=ext,
         means3d=model.means3d,
-        colors_precomp=model.colors,
-        opacities=model.opacities,
-        scales=model.scales,
-        rotations=model.rotations,
+        features_dc=model.features_dc,
+        features_rest=model.features_rest,
+        opacities=model.get_opacities,
+        scales=model.get_scales,
+        rotations=model.get_rotations,
         camera=cameras[eval_idx],
         background=base_bg,
         sh_degree=args.sh_degree,
     )
 
-    mx.eval(model.means3d, model.colors, model.opacities, model.scales)
+    mx.eval(
+        model.means3d,
+        model.features_dc,
+        model.features_rest,
+        model.opacity_logits,
+        model.get_opacities,
+        model.log_scales,
+        model.get_scales,
+    )
     np.savez(
         out_npz,
         means3d=np.array(model.means3d),
-        colors=np.array(model.colors),
-        opacities=np.array(model.opacities),
-        scales=np.array(model.scales),
+        features_dc=np.array(model.features_dc),
+        features_rest=np.array(model.features_rest),
+        opacity_logits=np.array(model.opacity_logits),
+        opacities=np.array(model.get_opacities),
+        log_scales=np.array(model.log_scales),
+        scales=np.array(model.get_scales),
         losses=np.array(losses, dtype=np.float32),
         best_step=np.array([best_step], dtype=np.int32),
         best_loss=np.array([best_loss], dtype=np.float32),
