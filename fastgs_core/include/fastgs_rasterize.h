@@ -51,6 +51,11 @@ enum RasterizeOutputIndex {
 };
 
 std::vector<mx::array> fastgs_rasterize(const RasterizeInput& input);
+std::vector<mx::array> fastgs_rasterize_backward(
+    const std::vector<mx::array>& primals,
+    const std::vector<mx::array>& cotangents,
+    const RasterizeParams& params,
+    mx::StreamOrDevice s);
 
 class FastGSRasterize : public mx::Primitive {
  public:
@@ -76,6 +81,37 @@ class FastGSRasterize : public mx::Primitive {
       const std::vector<int>& axes) override;
 
   const char* name() const override { return "FastGSRasterize"; }
+
+  bool is_equivalent(const mx::Primitive& other) const override;
+
+ private:
+  RasterizeParams params_;
+};
+
+class FastGSRasterizeBackward : public mx::Primitive {
+ public:
+  FastGSRasterizeBackward(mx::Stream stream, RasterizeParams params)
+      : mx::Primitive(stream), params_(params) {}
+
+  void eval_cpu(const std::vector<mx::array>& inputs,
+                std::vector<mx::array>& outputs) override;
+  void eval_gpu(const std::vector<mx::array>& inputs,
+                std::vector<mx::array>& outputs) override;
+
+  std::vector<mx::array> jvp(const std::vector<mx::array>& primals,
+                             const std::vector<mx::array>& tangents,
+                             const std::vector<int>& argnums) override;
+
+  std::vector<mx::array> vjp(const std::vector<mx::array>& primals,
+                             const std::vector<mx::array>& cotangents,
+                             const std::vector<int>& argnums,
+                             const std::vector<mx::array>& outputs) override;
+
+  std::pair<std::vector<mx::array>, std::vector<int>> vmap(
+      const std::vector<mx::array>& inputs,
+      const std::vector<int>& axes) override;
+
+  const char* name() const override { return "FastGSRasterizeBackward"; }
 
   bool is_equivalent(const mx::Primitive& other) const override;
 

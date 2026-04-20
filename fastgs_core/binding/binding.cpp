@@ -214,7 +214,7 @@ nb::dict rasterize_gaussians_forward(
           .ranges = ranges,
           .point_list = point_list,
           .per_tile_bucket_offset = bucket_offsets,
-          .means2d = mx::stop_gradient(xys),
+          .means2d = xys,
           .colors = rgbs,
           .conic_opacity = conic_opacity,
           .background = background,

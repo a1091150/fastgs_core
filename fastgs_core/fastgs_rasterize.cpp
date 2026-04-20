@@ -189,11 +189,20 @@ std::vector<mx::array> FastGSRasterize::jvp(const std::vector<mx::array>&,
 }
 
 std::vector<mx::array> FastGSRasterize::vjp(
-    const std::vector<mx::array>&,
-    const std::vector<mx::array>&,
-    const std::vector<int>&,
+    const std::vector<mx::array>& primals,
+    const std::vector<mx::array>& cotangents,
+    const std::vector<int>& argnums,
     const std::vector<mx::array>&) {
-  throw std::runtime_error("FastGSRasterize vjp is not implemented yet.");
+  auto grads = fastgs_rasterize_backward(primals, cotangents, params_, stream());
+  std::vector<mx::array> selected;
+  selected.reserve(argnums.size());
+  for (int argnum : argnums) {
+    if (argnum < 0 || argnum >= static_cast<int>(grads.size())) {
+      throw std::out_of_range("FastGSRasterize vjp argnum out of range.");
+    }
+    selected.push_back(grads[argnum]);
+  }
+  return selected;
 }
 
 std::pair<std::vector<mx::array>, std::vector<int>> FastGSRasterize::vmap(

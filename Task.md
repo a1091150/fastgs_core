@@ -317,15 +317,15 @@
 - headers under `fastgs_core/include/` for backward signatures
 
 ### Steps
-- [ ] Implement `vjp()` for migrated primitives needed on training critical path.
-- [ ] Ensure each `vjp()` dispatches to corresponding `*_backward` primitive.
-- [ ] Ensure `binding.cpp` does not apply `mx::stop_gradient(...)` on backward-critical tensors (`xys/means2d`, etc.).
+- [x] Implement `vjp()` for migrated primitives needed on training critical path.
+- [x] Ensure each `vjp()` dispatches to corresponding `*_backward` primitive.
+- [x] Ensure `binding.cpp` does not apply `mx::stop_gradient(...)` on backward-critical tensors (`xys/means2d`, etc.).
 - [ ] Add explicit backward API/output schema for debug parity dumps (optional runtime flag).
 - [ ] Add shape/dtype assertions for backward outputs (`[P,4]` on means2D gradient is mandatory).
 
 ### Validation
-- [ ] `make pyext-build` passes.
-- [ ] Minimal autograd call (`mx::value_and_grad` or Python-facing equivalent) executes without `vjp not implemented` exceptions.
+- [x] `make pyext-build` passes.
+- [x] Minimal autograd call (`mx::value_and_grad` or Python-facing equivalent) executes without `vjp not implemented` exceptions.
 
 ---
 
