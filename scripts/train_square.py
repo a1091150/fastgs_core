@@ -190,14 +190,14 @@ def save_as_spz(filename: str, model: SquareTrainModel, sh_degree: int = 0) -> b
 
     mx.eval(
         model.means3d,
-        model.get_scales,
+        model.log_scales,
         model.get_rotations,
         model.get_opacities,
         model.features_dc,
         model.features_rest,
     )
     means = np.array(model.means3d, dtype=np.float32)
-    scales = np.array(model.get_scales, dtype=np.float32)
+    scales = np.array(model.log_scales, dtype=np.float32)
     quats = np.array(model.get_rotations, dtype=np.float32)
     opacities = np.array(model.get_opacities, dtype=np.float32)
     features_dc = np.array(model.features_dc, dtype=np.float32)
