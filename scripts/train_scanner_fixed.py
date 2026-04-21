@@ -349,6 +349,8 @@ class ScannerTrainModel(nn.Module):
 
     @property
     def get_scales(self) -> mx.array:
+        # Trainable scales are stored in log space for optimization stability.
+        # Rendering/rasterization expects linear-space scales, so convert here.
         return mx.exp(self.log_scales)
 
     @property
@@ -427,6 +429,8 @@ def init_model(points: np.ndarray, colors: np.ndarray, sh_degree: int) -> Scanne
     # base_scale = max(1.0e-3, 0.01 * diag)
     base_scale = 0.02
 
+    # Keep the trainable scale parameter in log space. Any render/rasterizer path
+    # must convert back to linear scale via exp(log_scales).
     log_scales = np.full((n, 3), math.log(base_scale), dtype=np.float32)
     rotations = np.zeros((n, 4), dtype=np.float32)
     rotations[:, 0] = 1.0
@@ -455,6 +459,8 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
     cloud = spz.GaussianCloud()
     cloud.antialiased = True
 
+    # Match the legacy fastgs_mlx export path: SPZ stores the underlying
+    # log-scale tensor instead of the linear scale used for rasterization.
     mx.eval(
         model.means3d,
         model.log_scales,
@@ -546,6 +552,7 @@ def main():
     base_bg = mx.array([1.0, 1.0, 1.0], dtype=mx.float32)
 
     def loss_fn(model: ScannerTrainModel, camera: TrainCamera, target_chw: mx.array, bg: mx.array, use_l1: mx.array):
+        # Rasterization expects linear-space scales, so pass get_scales here.
         pred = render_chw(
             ext=ext,
             means3d=model.means3d,
@@ -615,6 +622,7 @@ def main():
         if curr_loss < best_loss:
             best_loss = curr_loss
             best_step = step
+            # Rasterization expects linear-space scales, so pass get_scales here.
             pred_best = render_chw(
                 ext=ext,
                 means3d=model.means3d,
@@ -670,6 +678,7 @@ def main():
                 prev_scale_mean = s_mean
 
         if step % args.save_every == 0 or step == args.steps or step == 0:
+            # Rasterization expects linear-space scales, so pass get_scales here.
             pred_eval = render_chw(
                 ext=ext,
                 means3d=model.means3d,
@@ -686,6 +695,7 @@ def main():
             save_side_by_side(targets[eval_idx], pred_eval, out_img)
         pass
 
+    # Rasterization expects linear-space scales, so pass get_scales here.
     pred_final = render_chw(
         ext=ext,
         means3d=model.means3d,
