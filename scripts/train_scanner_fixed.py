@@ -461,7 +461,7 @@ def init_model(points: np.ndarray, colors: np.ndarray, sh_degree: int) -> Scanne
     log_scales = np.full((n, 3), math.log(base_scale), dtype=np.float32)
     rotations = np.zeros((n, 4), dtype=np.float32)
     rotations[:, 0] = 1.0
-    opacity_logits = logit(np.full((n,), 0.02, dtype=np.float32)).astype(np.float32)
+    opacity_logits = logit(np.full((n,), 0.82, dtype=np.float32)).astype(np.float32)
 
     sh_c0 = 0.28209479177387814
     features_dc = ((colors - 0.5) / sh_c0).astype(np.float32)
@@ -492,7 +492,7 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
         model.means3d,
         model.log_scales,
         model.get_rotations,
-        model.get_opacities,
+        model.opacity_logits,
         model.features_dc,
         model.features_rest,
     )
@@ -505,14 +505,14 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 
     scales = np.array(model.log_scales, dtype=np.float32)
     quats = np.array(model.get_rotations, dtype=np.float32)
-    opacities = np.array(model.get_opacities, dtype=np.float32)
+    opacity_logits = np.array(model.opacity_logits, dtype=np.float32)
     features_dc = np.array(model.features_dc, dtype=np.float32)
     features_rest = np.array(model.features_rest, dtype=np.float32)
 
     cloud.positions = means_spz.flatten().astype(np.float32)
     cloud.scales = scales.flatten().astype(np.float32)
     cloud.rotations = quats.flatten().astype(np.float32)
-    cloud.alphas = opacities.flatten().astype(np.float32)
+    cloud.alphas = opacity_logits.flatten().astype(np.float32)
     cloud.colors = features_dc.flatten().astype(np.float32)
     cloud.sh_degree = int(sh_degree)
     cloud.sh = features_rest.flatten().astype(np.float32)
