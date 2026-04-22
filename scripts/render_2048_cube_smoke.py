@@ -48,6 +48,11 @@ def normalize(v: np.ndarray) -> np.ndarray:
     return v / (np.linalg.norm(v) + 1.0e-8)
 
 
+def logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, 1.0e-6, 1.0 - 1.0e-6)
+    return np.log(p / (1.0 - p))
+
+
 def get_projection_matrix(znear: float, zfar: float, fovx: float, fovy: float) -> np.ndarray:
     tan_half_fovy = math.tan(fovy / 2.0)
     tan_half_fovx = math.tan(fovx / 2.0)
@@ -194,10 +199,12 @@ def build_hollow_cube_gaussians(n: int, cube_half_extent: float, face_inset: flo
 def save_as_spz(
     filename: str,
     means3d_np: np.ndarray,
-    colors_np: np.ndarray,
-    opacities_np: np.ndarray,
+    features_dc_np: np.ndarray,
+    opacity_logits_np: np.ndarray,
     log_scales_np: np.ndarray,
     rotations_np: np.ndarray,
+    features_rest_np: np.ndarray,
+    sh_degree: int,
 ) -> bool:
     if spz is None:
         print("[WARN] spz is not available; skip spz export")
@@ -205,18 +212,16 @@ def save_as_spz(
 
     cloud = spz.GaussianCloud()
     cloud.antialiased = True
-    sh_degree = 0
-    rest_coeffs = (sh_degree + 1) ** 2 - 1
-    features_rest = np.zeros((means3d_np.shape[0], rest_coeffs, 3), dtype=np.float32)
     cloud.positions = means3d_np.astype(np.float32).flatten()
     cloud.scales = log_scales_np.astype(np.float32).flatten()
     cloud.rotations = rotations_np.astype(np.float32).flatten()
-    cloud.alphas = opacities_np.astype(np.float32).flatten()
-    cloud.colors = colors_np.astype(np.float32).flatten()
+    cloud.alphas = opacity_logits_np.astype(np.float32).flatten()
+    cloud.colors = features_dc_np.astype(np.float32).flatten()
     cloud.sh_degree = sh_degree
-    cloud.sh = features_rest.transpose(0, 2, 1).flatten()
+    cloud.sh = features_rest_np.astype(np.float32).flatten()
 
     opts = spz.PackOptions()
+    opts.from_coord = spz.RUF
     ok = spz.save_spz(cloud, opts, filename)
     if not ok:
         raise RuntimeError(f"failed to save spz to {filename}")
@@ -248,24 +253,29 @@ def main() -> None:
         face_inset=args.face_inset,
     )
     n = means3d_np.shape[0]
+    sh_degree = 2
+    sh_c0 = 0.28209479177387814
+    features_dc_np = ((colors_np - 0.5) / sh_c0).astype(np.float32)
+    rest_coeffs = (sh_degree + 1) ** 2 - 1
+    features_rest_np = np.zeros((n, rest_coeffs, 3), dtype=np.float32)
     log_scales_np = np.full((n, 3), np.log(args.scale), dtype=np.float32)
     scales_np = np.exp(log_scales_np).astype(np.float32)
     rotations_np = np.zeros((n, 4), dtype=np.float32)
     rotations_np[:, 0] = 1.0
     opacities_np = np.full((n,), args.opacity, dtype=np.float32)
+    opacity_logits_np = logit(opacities_np).astype(np.float32)
 
     inputs = {
         "background": mx.array([0.015, 0.016, 0.022], dtype=mx.float32),
         "means3d": mx.array(means3d_np, dtype=mx.float32),
-        "colors_precomp": mx.array(colors_np, dtype=mx.float32),
+        "dc": mx.array(features_dc_np, dtype=mx.float32),
+        "sh": mx.array(features_rest_np, dtype=mx.float32),
         "opacities": mx.array(opacities_np, dtype=mx.float32),
         "scales": mx.array(scales_np, dtype=mx.float32),
         "rotations": mx.array(rotations_np, dtype=mx.float32),
         "metric_map": mx.zeros((args.image_width * args.image_height,), dtype=mx.int32),
         "viewmatrix": mx.array(viewmatrix_np, dtype=mx.float32),
         "projmatrix": mx.array(projmatrix_np, dtype=mx.float32),
-        "dc": mx.zeros((0,), dtype=mx.float32),
-        "sh": mx.zeros((0,), dtype=mx.float32),
         "campos": mx.array(eye_np[None, :], dtype=mx.float32),
         "viewspace_points": mx.zeros((n, 4), dtype=mx.float32),
     }
@@ -278,7 +288,7 @@ def main() -> None:
         16,
         tan_fovx,
         tan_fovy,
-        0,
+        sh_degree,
         1.0,
         1.0,
         False,
@@ -309,10 +319,12 @@ def main() -> None:
     save_as_spz(
         out_spz,
         means3d_np=means3d_np,
-        colors_np=colors_np,
-        opacities_np=opacities_np,
+        features_dc_np=features_dc_np,
+        opacity_logits_np=opacity_logits_np,
         log_scales_np=log_scales_np,
         rotations_np=rotations_np,
+        features_rest_np=features_rest_np,
+        sh_degree=sh_degree,
     )
 
     print("render_2048_cube_smoke ok")
