@@ -495,25 +495,26 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="/Users/yangdunfu/Downloads/2026_03_01_16_36_14")
-    parser.add_argument("--steps", type=int, default=2000)
-    parser.add_argument("--log-every", type=int, default=93)
-    parser.add_argument("--save-every", type=int, default=200)
+    parser.add_argument("--steps", type=int, default=4000)
+    parser.add_argument("--log-every", type=int, default=1)
+    parser.add_argument("--save-every", type=int, default=161)
     parser.add_argument("--width", type=int, default=480)
     parser.add_argument("--height", type=int, default=360)
-    parser.add_argument("--max-frames", type=int, default=80)
-    parser.add_argument("--frame-step", type=int, default=8)
-    parser.add_argument("--start-index", type=int, default=10)
+    parser.add_argument("--max-frames", type=int, default=120)
+    parser.add_argument("--frame-step", type=int, default=1)
+    parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--max-points", type=int, default=30000000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--random-background", action="store_true")
-    parser.add_argument("--lr-colors", type=float, default=2e-2)
-    parser.add_argument("--lr-opacity", type=float, default=1e-2)
+    parser.add_argument("--lr-colors", type=float, default=1e-3)
+    parser.add_argument("--lr-opacity", type=float, default=1e-3)
     parser.add_argument("--lr-means", type=float, default=3e-3)
     parser.add_argument("--lr-scales", type=float, default=1e-3)
     parser.add_argument("--adam-beta1", type=float, default=0.9)
     parser.add_argument("--adam-beta2", type=float, default=0.99)
-    parser.add_argument("--stage-color-steps", type=int, default=200)
-    parser.add_argument("--stage-means-steps", type=int, default=800)
+    parser.add_argument("--stage-color-steps", type=int, default=0)
+    parser.add_argument("--stage-means-steps", type=int, default=0)
+    parser.add_argument("--stage-scales-steps", type=int, default=0)
     parser.add_argument("--mse-until", type=int, default=600)
     parser.add_argument("--sh-degree", type=int, default=2)
     parser.add_argument("--debug-scales", action="store_true")
@@ -598,7 +599,8 @@ def main():
 
     eval_idx = 0
     for step in range(1, args.steps + 1):
-        idx = int(rng.integers(0, len(cameras)))
+        # idx = int(rng.integers(0, len(cameras)))
+        idx = step % len(cameras)
         camera = cameras[idx]
         target_chw = targets[idx]
 
@@ -606,14 +608,17 @@ def main():
         use_l1 = mx.array(step > args.mse_until, dtype=mx.bool_)
         loss, grads = loss_and_grad_fn(model, camera, target_chw, bg, use_l1)
 
-        dc_opt.update(model, {"features_dc": grads["features_dc"]})
-        rest_opt.update(model, {"features_rest": grads["features_rest"]})
+        
         opacity_opt.update(model, {"opacity_logits": grads["opacity_logits"]})
 
         if step > args.stage_color_steps:
-            means_opt.update(model, {"means3d": grads["means3d"]})
+            dc_opt.update(model, {"features_dc": grads["features_dc"]})
+            rest_opt.update(model, {"features_rest": grads["features_rest"]})
 
         if step > args.stage_means_steps:
+            means_opt.update(model, {"means3d": grads["means3d"]})
+
+        if step > args.stage_scales_steps:
             scales_opt.update(model, {"log_scales": grads["log_scales"]})
 
         mx.eval(loss)
