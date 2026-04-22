@@ -509,9 +509,10 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
     cloud.alphas = opacities.flatten().astype(np.float32)
     cloud.colors = features_dc.flatten().astype(np.float32)
     cloud.sh_degree = int(sh_degree)
-    cloud.sh = features_rest.transpose(0, 2, 1).flatten().astype(np.float32)
+    cloud.sh = features_rest.flatten().astype(np.float32)
 
     opts = spz.PackOptions()
+    opts.from_coord = spz.RUF
     ok = spz.save_spz(cloud, opts, str(filename))
     if not ok:
         raise RuntimeError(f"failed to save spz to {filename}")

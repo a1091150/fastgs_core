@@ -210,7 +210,7 @@ def save_as_spz(filename: str, model: SquareTrainModel, sh_degree: int = 0) -> b
     cloud.colors = features_dc.flatten().astype(np.float32)
     cloud.sh_degree = int(sh_degree)
     if  sh_degree != 0:
-        cloud.sh = features_rest.transpose(0, 2, 1).flatten().astype(np.float32)
+        cloud.sh = features_rest.flatten().astype(np.float32)
     opts = spz.PackOptions()
     opts.from_coord = spz.RUF
     ok = spz.save_spz(cloud, opts, filename)
@@ -235,6 +235,7 @@ def render_chw(
     image_height: int,
     tan_fovx: float,
     tan_fovy: float,
+    sh_degree: int,
 ) -> mx.array:
     n = means3d.shape[0]
     inputs = {
@@ -259,7 +260,7 @@ def render_chw(
         16,
         tan_fovx,
         tan_fovy,
-        2,
+        sh_degree,
         1.0,
         1.0,
         False,
@@ -433,6 +434,7 @@ def main():
                 image_height=args.height,
                 tan_fovx=tan_fovx,
                 tan_fovy=tan_fovy,
+                sh_degree=sh_degree,
             )
             pred_hwc_best = np.clip(to_hwc_numpy(pred_chw_best), 0.0, 1.0)
             target_hwc_best = np.clip(target_np, 0.0, 1.0)
@@ -500,6 +502,7 @@ def main():
                 image_height=args.height,
                 tan_fovx=tan_fovx,
                 tan_fovy=tan_fovy,
+                sh_degree=sh_degree,
             )
             pred_hwc = np.clip(to_hwc_numpy(pred_chw), 0.0, 1.0)
             target_hwc = np.clip(target_np, 0.0, 1.0)
@@ -525,6 +528,7 @@ def main():
         image_height=args.height,
         tan_fovx=tan_fovx,
         tan_fovy=tan_fovy,
+        sh_degree=sh_degree,
     )
     pred_hwc = np.clip(to_hwc_numpy(pred_chw), 0.0, 1.0)
     target_hwc = np.clip(target_np, 0.0, 1.0)
