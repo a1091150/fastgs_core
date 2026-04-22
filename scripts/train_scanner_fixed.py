@@ -18,7 +18,7 @@ from PIL import Image
 from mlx.nn import value_and_grad
 from mlx.optimizers import Adam
 
-mx.set_cache_limit(limit=(1 << 31))
+mx.set_cache_limit(limit=(1 << 32))
 
 try:
     import spz
@@ -259,7 +259,10 @@ def prepare_dataset(
     start_index: int,
     max_points: int,
     seed: int,
-) -> tuple[list[TrainCamera], list[mx.array], np.ndarray, np.ndarray]:
+    extra_points_ratio: float,
+    extra_points_mode: str,
+    extra_points_jitter_scale: float,
+) -> tuple[list[TrainCamera], list[mx.array], np.ndarray, np.ndarray, int]:
     a, a4 = make_axis_transform()
     frames = collect_scanner_frames(dataset_dir, max_frames, frame_step, start_index)
     points, colors = load_ply_positions_colors(dataset_dir / "points.ply")
@@ -302,6 +305,31 @@ def prepare_dataset(
         if colors is not None:
             colors = colors[keep]
 
+    colors_np = colors.astype(np.float32) if colors is not None else np.full_like(points, 0.5, dtype=np.float32)
+    base_point_count = int(points.shape[0])
+    extra_points = int(round(points.shape[0] * extra_points_ratio))
+    if extra_points > 0:
+        if extra_points_mode == "surface-jitter":
+            source_idx = rng.integers(0, points.shape[0], size=extra_points)
+            bbox_min = points.min(axis=0)
+            bbox_max = points.max(axis=0)
+            diag = float(np.linalg.norm(bbox_max - bbox_min))
+            jitter_std = extra_points_jitter_scale * diag
+            jitter = rng.normal(loc=0.0, scale=jitter_std, size=(extra_points, 3)).astype(np.float32)
+            extra_xyz = points[source_idx] + jitter
+            extra_rgb = colors_np[source_idx]
+        elif extra_points_mode == "bbox":
+            bbox_min = points.min(axis=0)
+            bbox_max = points.max(axis=0)
+            extra_xyz = rng.uniform(low=bbox_min, high=bbox_max, size=(extra_points, 3)).astype(np.float32)
+            source_idx = rng.integers(0, colors_np.shape[0], size=extra_points)
+            extra_rgb = colors_np[source_idx]
+        else:
+            raise ValueError(f"Unsupported --extra-points-mode: {extra_points_mode}")
+
+        points = np.concatenate([points, extra_xyz], axis=0).astype(np.float32)
+        colors_np = np.concatenate([colors_np, extra_rgb.astype(np.float32)], axis=0)
+
     cameras = []
     targets = []
     for f in frames:
@@ -321,8 +349,7 @@ def prepare_dataset(
         cameras.append(camera)
         targets.append(mx.array(target_chw, dtype=mx.float32))
 
-    colors_np = colors.astype(np.float32) if colors is not None else np.full_like(points, 0.5, dtype=np.float32)
-    return cameras, targets, points.astype(np.float32), colors_np
+    return cameras, targets, points.astype(np.float32), colors_np, base_point_count
 
 
 class ScannerTrainModel(nn.Module):
@@ -495,7 +522,7 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="/Users/yangdunfu/Downloads/2026_03_01_16_36_14")
-    parser.add_argument("--steps", type=int, default=4000)
+    parser.add_argument("--steps", type=int, default=2000)
     parser.add_argument("--log-every", type=int, default=1)
     parser.add_argument("--save-every", type=int, default=161)
     parser.add_argument("--width", type=int, default=480)
@@ -505,6 +532,9 @@ def main():
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--max-points", type=int, default=30000000)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--extra-points-ratio", type=float, default=0.0)
+    parser.add_argument("--extra-points-mode", type=str, default="surface-jitter")
+    parser.add_argument("--extra-points-jitter-scale", type=float, default=0.01)
     parser.add_argument("--random-background", action="store_true")
     parser.add_argument("--lr-colors", type=float, default=1e-3)
     parser.add_argument("--lr-opacity", type=float, default=1e-3)
@@ -518,8 +548,8 @@ def main():
     parser.add_argument("--stage-scales-steps", type=int, default=0)
     parser.add_argument("--stage-rotations-steps", type=int, default=0)
     parser.add_argument("--mse-until", type=int, default=600)
-    parser.add_argument("--sh-degree", type=int, default=0)
-    parser.add_argument("--sh-degree-interval", type=int, default=1000)
+    parser.add_argument("--sh-degree", type=int, default=3)
+    parser.add_argument("--sh-degree-interval", type=int, default=200)
     parser.add_argument("--debug-scales", action="store_true")
     parser.add_argument("--debug-scale-threshold", type=float, default=0.5)
     parser.add_argument("--debug-scale-growth-ratio", type=float, default=1.25)
@@ -528,13 +558,19 @@ def main():
         raise ValueError("--sh-degree must be between 0 and 3")
     if args.sh_degree_interval <= 0:
         raise ValueError("--sh-degree-interval must be positive")
+    if args.extra_points_ratio < 0.0:
+        raise ValueError("--extra-points-ratio must be non-negative")
+    if args.extra_points_mode not in {"surface-jitter", "bbox"}:
+        raise ValueError("--extra-points-mode must be one of: surface-jitter, bbox")
+    if args.extra_points_jitter_scale < 0.0:
+        raise ValueError("--extra-points-jitter-scale must be non-negative")
 
     dataset_dir = Path(args.data)
     if not dataset_dir.exists():
         raise RuntimeError(f"Dataset path does not exist: {dataset_dir}")
 
     ext = import_extension()
-    cameras, targets, points, colors = prepare_dataset(
+    cameras, targets, points, colors, base_point_count = prepare_dataset(
         dataset_dir=dataset_dir,
         width=args.width,
         height=args.height,
@@ -543,9 +579,13 @@ def main():
         start_index=args.start_index,
         max_points=args.max_points,
         seed=args.seed,
+        extra_points_ratio=args.extra_points_ratio,
+        extra_points_mode=args.extra_points_mode,
+        extra_points_jitter_scale=args.extra_points_jitter_scale,
     )
     if len(cameras) != len(targets):
         raise RuntimeError("Internal error: camera/target length mismatch")
+    extra_point_count = int(points.shape[0] - base_point_count)
 
     model = init_model(points, colors, args.sh_degree)
     betas = (args.adam_beta1, args.adam_beta2)
@@ -586,6 +626,8 @@ def main():
     out_npz = out_dir / "train_state.npz"
     out_best = out_dir / "best_step.png"
     out_spz = out_dir / "final.spz"
+    out_final_dir = out_dir / "final"
+    out_final_dir.mkdir(parents=True, exist_ok=True)
 
     rng = np.random.default_rng(args.seed)
     best_loss = float("inf")
@@ -729,6 +771,21 @@ def main():
         sh_degree=active_sh_degree,
     )
 
+    for cam_idx, (camera, target_chw) in enumerate(zip(cameras, targets)):
+        pred_camera = render_chw(
+            ext=ext,
+            means3d=model.means3d,
+            features_dc=model.features_dc,
+            features_rest=model.features_rest,
+            opacities=model.get_opacities,
+            scales=model.get_scales,
+            rotations=model.get_rotations,
+            camera=camera,
+            background=base_bg,
+            sh_degree=active_sh_degree,
+        )
+        save_side_by_side(target_chw, pred_camera, out_final_dir / f"final_{cam_idx:04d}.png")
+
     mx.eval(
         model.means3d,
         model.features_dc,
@@ -763,8 +820,11 @@ def main():
 
     print("[OK] train_scanner_fixed done")
     print("frames:", len(cameras), "points:", points.shape[0])
+    print("base_points:", points.shape[0] - extra_point_count, "extra_points:", extra_point_count)
+    print("extra_points_mode:", args.extra_points_mode, "extra_points_ratio:", args.extra_points_ratio)
     print("saved state:", out_npz)
     print("saved best:", out_best)
+    print("saved final dir:", out_final_dir)
     print("saved spz:", out_spz)
 
 
