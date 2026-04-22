@@ -6,7 +6,7 @@ CONDA_BASE := $(shell conda info --base 2>/dev/null)
 CLASS ?=
 FORCE ?= 0
 
-.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel train-scanner-fixed clean
+.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel train-scanner-fixed train-scanner-fastgs train-scanner-fastgs-smoke train-scanner-fastgs-bbox clean
 
 help:
 	@printf "Targets:\n"
@@ -22,6 +22,9 @@ help:
 	@printf "  make pip-develop       pip install -e . --no-build-isolation\n"
 	@printf "  make pip-wheel         Build wheel/sdist via python -m build.\n"
 	@printf "  make train-scanner-fixed Run scripts/train_scanner_fixed.py with the active conda python.\n"
+	@printf "  make train-scanner-fastgs Run scripts/train_scanner_fastgs.py with FastGS-style densify/prune.\n"
+	@printf "  make train-scanner-fastgs-smoke Short smoke run for train_scanner_fastgs.py.\n"
+	@printf "  make train-scanner-fastgs-bbox FastGS training with bbox extra-point seeding.\n"
 	@printf "  make clean             Remove root build folders and dist artifacts.\n"
 
 env-check:
@@ -72,8 +75,20 @@ pip-wheel:
 train-scanner-fixed:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14'
 
+test-scanner:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/test_gaussian_render.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14 --eval-index 0 --render-all'
+
 train-scanner-fixed-bbox:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14 --extra-points-ratio 0.5 --extra-points-mode bbox'
+
+train-scanner-fastgs:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14' --final-prune-min-opacity 0.03 --final-prune-score-thresh 0.95 --final-prune-min-gaussians 128
+
+train-scanner-fastgs-smoke:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14 --steps 200 --save-every 100 --log-every 10 --max-frames 24 --densify-from-step 50 --densification-interval 50 --densify-until-step 200 --final-prune-start 100000 --final-prune-end 100000'
+
+train-scanner-fastgs-bbox:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14 --extra-points-ratio 0.5 --extra-points-mode bbox'
 
 clean:
 	rm -rf $(BUILD_DIR) $(XCODE_BUILD_DIR) dist *.egg-info python_package/*.egg-info
