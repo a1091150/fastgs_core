@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
+import math
 from datetime import datetime
 from pathlib import Path
 
 import mlx.core as mx
+import numpy as np
 
 from train_scanner_fixed import (
     import_extension,
     init_model,
+    logit,
     prepare_dataset,
     render_chw,
     save_as_spz,
@@ -34,6 +37,8 @@ def main() -> None:
     parser.add_argument("--sh-degree", type=int, default=3)
     parser.add_argument("--eval-index", type=int, default=0)
     parser.add_argument("--render-all", action="store_true")
+    parser.add_argument("--scale", type=float, default=0.02)
+    parser.add_argument("--opacity", type=float, default=0.82)
     args = parser.parse_args()
 
     if args.sh_degree < 0 or args.sh_degree > 3:
@@ -44,6 +49,10 @@ def main() -> None:
         raise ValueError("--extra-points-mode must be one of: surface-jitter, bbox")
     if args.extra_points_jitter_scale < 0.0:
         raise ValueError("--extra-points-jitter-scale must be non-negative")
+    if args.scale <= 0.0:
+        raise ValueError("--scale must be positive")
+    if not (0.0 < args.opacity < 1.0):
+        raise ValueError("--opacity must be between 0 and 1")
 
     dataset_dir = Path(args.data)
     if not dataset_dir.exists():
@@ -69,7 +78,22 @@ def main() -> None:
     eval_idx = max(0, min(args.eval_index, len(cameras) - 1))
     extra_point_count = int(points.shape[0] - base_point_count)
     model = init_model(points, colors, args.sh_degree)
+    n = points.shape[0]
+    model.log_scales = mx.array(
+        np.full((n, 3), math.log(args.scale), dtype=np.float32),
+        dtype=mx.float32,
+    )
+    model.opacity_logits = mx.array(
+        logit(np.full((n,), args.opacity, dtype=np.float32)).astype(np.float32),
+        dtype=mx.float32,
+    )
     background = mx.array([0.0, 0.0, 0.0], dtype=mx.float32)
+    render_means3d = model.means3d
+    render_features_dc = model.features_dc
+    render_features_rest = model.features_rest
+    render_opacities = mx.sigmoid(model.opacity_logits)
+    render_scales = mx.exp(model.log_scales)
+    render_rotations = model.rotations / (mx.linalg.norm(model.rotations, axis=1, keepdims=True) + 1.0e-8)
 
     repo_root = Path(__file__).resolve().parent.parent
     date_dir = datetime.now().strftime("%Y%m%d_%H_%M")
@@ -80,12 +104,12 @@ def main() -> None:
 
     pred_eval = render_chw(
         ext=ext,
-        means3d=model.means3d,
-        features_dc=model.features_dc,
-        features_rest=model.features_rest,
-        opacities=model.get_opacities,
-        scales=model.get_scales,
-        rotations=model.get_rotations,
+        means3d=render_means3d,
+        features_dc=render_features_dc,
+        features_rest=render_features_rest,
+        opacities=render_opacities,
+        scales=render_scales,
+        rotations=render_rotations,
         camera=cameras[eval_idx],
         background=background,
         sh_degree=args.sh_degree,
@@ -98,12 +122,12 @@ def main() -> None:
         for cam_idx, (camera, target_chw) in enumerate(zip(cameras, targets)):
             pred_camera = render_chw(
                 ext=ext,
-                means3d=model.means3d,
-                features_dc=model.features_dc,
-                features_rest=model.features_rest,
-                opacities=model.get_opacities,
-                scales=model.get_scales,
-                rotations=model.get_rotations,
+                means3d=render_means3d,
+                features_dc=render_features_dc,
+                features_rest=render_features_rest,
+                opacities=render_opacities,
+                scales=render_scales,
+                rotations=render_rotations,
                 camera=camera,
                 background=background,
                 sh_degree=args.sh_degree,
@@ -116,6 +140,8 @@ def main() -> None:
     print("frames:", len(cameras), "points:", points.shape[0])
     print("base_points:", points.shape[0] - extra_point_count, "extra_points:", extra_point_count)
     print("extra_points_mode:", args.extra_points_mode, "extra_points_ratio:", args.extra_points_ratio)
+    print("render_scales:", "exp(log_scales)")
+    print("scale:", args.scale, "opacity:", args.opacity)
     print("eval_index:", eval_idx)
     print("saved sbs:", out_sbs)
     if args.render_all:
