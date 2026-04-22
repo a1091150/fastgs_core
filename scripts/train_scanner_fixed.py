@@ -461,7 +461,7 @@ def init_model(points: np.ndarray, colors: np.ndarray, sh_degree: int) -> Scanne
     log_scales = np.full((n, 3), math.log(base_scale), dtype=np.float32)
     rotations = np.zeros((n, 4), dtype=np.float32)
     rotations[:, 0] = 1.0
-    opacity_logits = logit(np.full((n,), 0.35, dtype=np.float32)).astype(np.float32)
+    opacity_logits = logit(np.full((n,), 0.02, dtype=np.float32)).astype(np.float32)
 
     sh_c0 = 0.28209479177387814
     features_dc = ((colors - 0.5) / sh_c0).astype(np.float32)
@@ -522,7 +522,7 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="/Users/yangdunfu/Downloads/2026_03_01_16_36_14")
-    parser.add_argument("--steps", type=int, default=2000)
+    parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--log-every", type=int, default=1)
     parser.add_argument("--save-every", type=int, default=161)
     parser.add_argument("--width", type=int, default=480)
@@ -535,7 +535,7 @@ def main():
     parser.add_argument("--extra-points-ratio", type=float, default=0.0)
     parser.add_argument("--extra-points-mode", type=str, default="surface-jitter")
     parser.add_argument("--extra-points-jitter-scale", type=float, default=0.01)
-    parser.add_argument("--random-background", action="store_true")
+    parser.add_argument("--random-background", type=bool, default=False)
     parser.add_argument("--lr-colors", type=float, default=1e-3)
     parser.add_argument("--lr-opacity", type=float, default=1e-3)
     parser.add_argument("--lr-means", type=float, default=3e-3)
@@ -596,7 +596,7 @@ def main():
     scales_opt = Adam(learning_rate=args.lr_scales, betas=betas)
     rotations_opt = Adam(learning_rate=args.lr_rotations, betas=betas)
 
-    base_bg = mx.array([1.0, 1.0, 1.0], dtype=mx.float32)
+    base_bg = mx.array([0.0, 0.0, 0.0], dtype=mx.float32)
 
     def loss_fn(model: ScannerTrainModel, camera: TrainCamera, target_chw: mx.array, bg: mx.array, use_l1: mx.array):
         # Rasterization expects linear-space scales, so pass get_scales here.

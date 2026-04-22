@@ -72,5 +72,8 @@ pip-wheel:
 train-scanner-fixed:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14'
 
+train-scanner-fixed-bbox:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14 --extra-points-ratio 0.5 --extra-points-mode bbox'
+
 clean:
 	rm -rf $(BUILD_DIR) $(XCODE_BUILD_DIR) dist *.egg-info python_package/*.egg-info
