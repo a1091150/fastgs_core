@@ -18,7 +18,7 @@ from PIL import Image
 from mlx.nn import value_and_grad
 from mlx.optimizers import Adam
 
-mx.set_cache_limit(limit=(1 << 32))
+mx.set_cache_limit(limit=(1 << 31))
 
 try:
     import spz
@@ -797,25 +797,25 @@ def main():
         model.rotations,
         model.get_rotations,
     )
-    np.savez(
-        out_npz,
-        means3d=np.array(model.means3d),
-        features_dc=np.array(model.features_dc),
-        features_rest=np.array(model.features_rest),
-        opacity_logits=np.array(model.opacity_logits),
-        opacities=np.array(model.get_opacities),
-        log_scales=np.array(model.log_scales),
-        scales=np.array(model.get_scales),
-        rotations=np.array(model.rotations),
-        normalized_rotations=np.array(model.get_rotations),
-        losses=np.array(losses, dtype=np.float32),
-        active_sh_degree=np.array([active_sh_degree], dtype=np.int32),
-        max_sh_degree=np.array([args.sh_degree], dtype=np.int32),
-        best_step=np.array([best_step], dtype=np.int32),
-        best_loss=np.array([best_loss], dtype=np.float32),
-        eval_target=np.array(targets[eval_idx]),
-        eval_pred=np.array(pred_final),
-    )
+    # np.savez(
+    #     out_npz,
+    #     means3d=np.array(model.means3d),
+    #     features_dc=np.array(model.features_dc),
+    #     features_rest=np.array(model.features_rest),
+    #     opacity_logits=np.array(model.opacity_logits),
+    #     opacities=np.array(model.get_opacities),
+    #     log_scales=np.array(model.log_scales),
+    #     scales=np.array(model.get_scales),
+    #     rotations=np.array(model.rotations),
+    #     normalized_rotations=np.array(model.get_rotations),
+    #     losses=np.array(losses, dtype=np.float32),
+    #     active_sh_degree=np.array([active_sh_degree], dtype=np.int32),
+    #     max_sh_degree=np.array([args.sh_degree], dtype=np.int32),
+    #     best_step=np.array([best_step], dtype=np.int32),
+    #     best_loss=np.array([best_loss], dtype=np.float32),
+    #     eval_target=np.array(targets[eval_idx]),
+    #     eval_pred=np.array(pred_final),
+    # )
     save_as_spz(out_spz, model, args.sh_degree)
 
     print("[OK] train_scanner_fixed done")

@@ -230,6 +230,10 @@ kernel void fastgs_render_backward_kernel(
       const float dG_ddelx = -gdx * con_o.x - gdy * con_o.y;
       const float dG_ddely = -gdy * con_o.z - gdx * con_o.y;
 
+      if (con_o.w * G > 0.99f) {
+        continue;
+      }
+
       const float tmp_x = dL_dG * dG_ddelx * ddelx_dx;
       const float tmp_y = dL_dG * dG_ddely * ddely_dy;
       reg_dmean_x += tmp_x;

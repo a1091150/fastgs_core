@@ -96,8 +96,8 @@ kernel void fastgs_preprocess_backward_kernel(
   const float4 ph = mul_mat4_vec3_h(projmat, p);
   const uint cov_base = 6u * tid;
 
-  const float gx = dL_dviewspace_out[4 * tid + 0];
-  const float gy = dL_dviewspace_out[4 * tid + 1];
+  const float gx = dL_dxys[2 * tid + 0];
+  const float gy = dL_dxys[2 * tid + 1];
 
   // CUDA parity path: conic gradients feed cov3d + mean3d through cov2D chain.
   const device float* cov_src = (params.use_cov3d_precomp != 0u) ? cov3d_precomp : cov3d_fwd;
