@@ -497,13 +497,19 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
         model.features_rest,
     )
     means = np.array(model.means3d, dtype=np.float32)
+    means_spz = np.empty_like(means)
+    # Only care about scaniverse app preview.
+    means_spz[:, 0] = means[:, 0]
+    means_spz[:, 1] = -means[:, 2]
+    means_spz[:, 2] = means[:, 1]
+
     scales = np.array(model.log_scales, dtype=np.float32)
     quats = np.array(model.get_rotations, dtype=np.float32)
     opacities = np.array(model.get_opacities, dtype=np.float32)
     features_dc = np.array(model.features_dc, dtype=np.float32)
     features_rest = np.array(model.features_rest, dtype=np.float32)
 
-    cloud.positions = means.flatten().astype(np.float32)
+    cloud.positions = means_spz.flatten().astype(np.float32)
     cloud.scales = scales.flatten().astype(np.float32)
     cloud.rotations = quats.flatten().astype(np.float32)
     cloud.alphas = opacities.flatten().astype(np.float32)
@@ -512,7 +518,6 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
     cloud.sh = features_rest.flatten().astype(np.float32)
 
     opts = spz.PackOptions()
-    opts.from_coord = spz.RUF
     ok = spz.save_spz(cloud, opts, str(filename))
     if not ok:
         raise RuntimeError(f"failed to save spz to {filename}")
