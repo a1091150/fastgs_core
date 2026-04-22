@@ -6,7 +6,7 @@ CONDA_BASE := $(shell conda info --base 2>/dev/null)
 CLASS ?=
 FORCE ?= 0
 
-.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel clean
+.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel train-scanner-fixed clean
 
 help:
 	@printf "Targets:\n"
@@ -21,6 +21,7 @@ help:
 	@printf "  make pip-install       pip install . --no-build-isolation\n"
 	@printf "  make pip-develop       pip install -e . --no-build-isolation\n"
 	@printf "  make pip-wheel         Build wheel/sdist via python -m build.\n"
+	@printf "  make train-scanner-fixed Run scripts/train_scanner_fixed.py with the active conda python.\n"
 	@printf "  make clean             Remove root build folders and dist artifacts.\n"
 
 env-check:
@@ -67,6 +68,9 @@ pip-develop:
 
 pip-wheel:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python -m build'
+
+train-scanner-fixed:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14'
 
 clean:
 	rm -rf $(BUILD_DIR) $(XCODE_BUILD_DIR) dist *.egg-info python_package/*.egg-info

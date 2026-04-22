@@ -70,10 +70,12 @@ nb::dict rasterize_gaussians_forward(
   if (colors_precomp.size() == 0) {
     colors_precomp = get_or_empty("colors");
   }
-  mx::array dc = get_or_empty("dc");
-  mx::array sh = get_or_empty("sh");
+  const bool has_dc_input = inputs.find("dc") != inputs.end();
+  const bool has_sh_input = inputs.find("sh") != inputs.end();
+  mx::array dc = has_dc_input ? inputs.at("dc") : mx::zeros({0}, mx::float32);
+  mx::array sh = has_sh_input ? inputs.at("sh") : mx::zeros({0, 0, 3}, mx::float32);
   const bool has_colors_precomp = colors_precomp.size() != 0;
-  const bool has_sh_path = (dc.size() != 0) && (sh.size() != 0);
+  const bool has_sh_path = has_dc_input && has_sh_input;
   if (has_colors_precomp == has_sh_path) {
     throw std::runtime_error(
         "rasterize_gaussians_forward expects exactly one color path: "
@@ -427,10 +429,12 @@ nb::dict preprocess_forward(
   const auto& viewspace_points = require_key("viewspace_points");
 
   mx::array colors_precomp = get_or_empty("colors_precomp");
-  mx::array dc = get_or_empty("dc");
-  mx::array sh = get_or_empty("sh");
+  const bool has_dc_input = inputs.find("dc") != inputs.end();
+  const bool has_sh_input = inputs.find("sh") != inputs.end();
+  mx::array dc = has_dc_input ? inputs.at("dc") : mx::zeros({0}, mx::float32);
+  mx::array sh = has_sh_input ? inputs.at("sh") : mx::zeros({0, 0, 3}, mx::float32);
   const bool has_colors_precomp = colors_precomp.size() != 0;
-  const bool has_sh_path = (dc.size() != 0) && (sh.size() != 0);
+  const bool has_sh_path = has_dc_input && has_sh_input;
   if (has_colors_precomp == has_sh_path) {
     throw std::runtime_error(
         "preprocess_forward expects exactly one color path: "

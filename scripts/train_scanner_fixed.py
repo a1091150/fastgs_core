@@ -510,19 +510,24 @@ def main():
     parser.add_argument("--lr-opacity", type=float, default=1e-3)
     parser.add_argument("--lr-means", type=float, default=3e-3)
     parser.add_argument("--lr-scales", type=float, default=1e-3)
+    parser.add_argument("--lr-rotations", type=float, default=1e-3)
     parser.add_argument("--adam-beta1", type=float, default=0.9)
     parser.add_argument("--adam-beta2", type=float, default=0.99)
     parser.add_argument("--stage-color-steps", type=int, default=0)
     parser.add_argument("--stage-means-steps", type=int, default=0)
     parser.add_argument("--stage-scales-steps", type=int, default=0)
+    parser.add_argument("--stage-rotations-steps", type=int, default=0)
     parser.add_argument("--mse-until", type=int, default=600)
-    parser.add_argument("--sh-degree", type=int, default=2)
+    parser.add_argument("--sh-degree", type=int, default=0)
+    parser.add_argument("--sh-degree-interval", type=int, default=1000)
     parser.add_argument("--debug-scales", action="store_true")
     parser.add_argument("--debug-scale-threshold", type=float, default=0.5)
     parser.add_argument("--debug-scale-growth-ratio", type=float, default=1.25)
     args = parser.parse_args()
     if args.sh_degree < 0 or args.sh_degree > 3:
         raise ValueError("--sh-degree must be between 0 and 3")
+    if args.sh_degree_interval <= 0:
+        raise ValueError("--sh-degree-interval must be positive")
 
     dataset_dir = Path(args.data)
     if not dataset_dir.exists():
@@ -549,6 +554,7 @@ def main():
     rest_opt = Adam(learning_rate=args.lr_colors, betas=betas)
     opacity_opt = Adam(learning_rate=args.lr_opacity, betas=betas)
     scales_opt = Adam(learning_rate=args.lr_scales, betas=betas)
+    rotations_opt = Adam(learning_rate=args.lr_rotations, betas=betas)
 
     base_bg = mx.array([1.0, 1.0, 1.0], dtype=mx.float32)
 
@@ -564,7 +570,7 @@ def main():
             rotations=model.get_rotations,
             camera=camera,
             background=bg,
-            sh_degree=args.sh_degree,
+            sh_degree=active_sh_degree,
         )
         diff = pred - target_chw
         l1 = mx.mean(mx.abs(diff))
@@ -587,6 +593,7 @@ def main():
     ema_loss = 0.0
     losses = []
     prev_scale_mean = None
+    active_sh_degree = 0
 
     def _arr_stats(arr: np.ndarray) -> tuple[float, float, float, float]:
         flat = arr.reshape(-1)
@@ -599,6 +606,7 @@ def main():
 
     eval_idx = 0
     for step in range(1, args.steps + 1):
+        active_sh_degree = min(step // args.sh_degree_interval, args.sh_degree)
         # idx = int(rng.integers(0, len(cameras)))
         idx = step % len(cameras)
         camera = cameras[idx]
@@ -621,6 +629,9 @@ def main():
         if step > args.stage_scales_steps:
             scales_opt.update(model, {"log_scales": grads["log_scales"]})
 
+        if step > args.stage_rotations_steps:
+            rotations_opt.update(model, {"rotations": grads["rotations"]})
+
         mx.eval(loss)
         curr_loss = float(loss.item())
 
@@ -638,7 +649,7 @@ def main():
                 rotations=model.get_rotations,
                 camera=cameras[eval_idx],
                 background=base_bg,
-                sh_degree=args.sh_degree,
+                sh_degree=active_sh_degree,
             )
             save_side_by_side(targets[eval_idx], pred_best, out_best)
 
@@ -649,7 +660,11 @@ def main():
 
         if step % args.log_every == 0 or step == args.steps:
             losses.append((step, curr_loss, ema_loss))
-            print(f"[train] step={step:04d} view={idx:03d} loss={curr_loss:.6f} ema={ema_loss:.6f}")
+            print(
+                f"[train] step={step:04d} view={idx:03d} "
+                f"sh_degree={active_sh_degree}/{args.sh_degree} "
+                f"loss={curr_loss:.6f} ema={ema_loss:.6f}"
+            )
             if args.debug_scales:
                 mx.eval(model.log_scales, model.get_scales, grads["log_scales"], model.get_opacities)
                 log_scales_np = np.array(model.log_scales, dtype=np.float32)
@@ -694,7 +709,7 @@ def main():
                 rotations=model.get_rotations,
                 camera=cameras[eval_idx],
                 background=base_bg,
-                sh_degree=args.sh_degree,
+                sh_degree=active_sh_degree,
             )
             out_img = out_dir / f"step_{step:04d}.png"
             save_side_by_side(targets[eval_idx], pred_eval, out_img)
@@ -711,7 +726,7 @@ def main():
         rotations=model.get_rotations,
         camera=cameras[eval_idx],
         background=base_bg,
-        sh_degree=args.sh_degree,
+        sh_degree=active_sh_degree,
     )
 
     mx.eval(
@@ -722,6 +737,8 @@ def main():
         model.get_opacities,
         model.log_scales,
         model.get_scales,
+        model.rotations,
+        model.get_rotations,
     )
     np.savez(
         out_npz,
@@ -732,7 +749,11 @@ def main():
         opacities=np.array(model.get_opacities),
         log_scales=np.array(model.log_scales),
         scales=np.array(model.get_scales),
+        rotations=np.array(model.rotations),
+        normalized_rotations=np.array(model.get_rotations),
         losses=np.array(losses, dtype=np.float32),
+        active_sh_degree=np.array([active_sh_degree], dtype=np.int32),
+        max_sh_degree=np.array([args.sh_degree], dtype=np.int32),
         best_step=np.array([best_step], dtype=np.int32),
         best_loss=np.array([best_loss], dtype=np.float32),
         eval_target=np.array(targets[eval_idx]),
