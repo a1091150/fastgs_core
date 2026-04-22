@@ -133,8 +133,8 @@ def logit(p: np.ndarray) -> np.ndarray:
 def init_gaussians_grid(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     cols = int(round(math.sqrt(n)))
     rows = int(math.ceil(n / cols))
-    xs = np.linspace(-1.0, 1.0, cols, dtype=np.float32)
-    ys = np.linspace(-1.0, 1.0, rows, dtype=np.float32)
+    xs = np.linspace(-2.0, 2.0, cols, dtype=np.float32)
+    ys = np.linspace(-2.0, 2.0, rows, dtype=np.float32)
     xv, yv = np.meshgrid(xs, ys)
     xy = np.stack([xv.reshape(-1), yv.reshape(-1)], axis=1)[:n]
     z = np.zeros((n, 1), dtype=np.float32)
@@ -209,9 +209,10 @@ def save_as_spz(filename: str, model: SquareTrainModel, sh_degree: int = 0) -> b
     cloud.alphas = opacities.flatten().astype(np.float32)
     cloud.colors = features_dc.flatten().astype(np.float32)
     cloud.sh_degree = int(sh_degree)
-    cloud.sh = features_rest.transpose(0, 2, 1).flatten().astype(np.float32)
-
+    if  sh_degree != 0:
+        cloud.sh = features_rest.transpose(0, 2, 1).flatten().astype(np.float32)
     opts = spz.PackOptions()
+    opts.from_coord = spz.RUF
     ok = spz.save_spz(cloud, opts, filename)
     if not ok:
         raise RuntimeError(f"failed to save spz to {filename}")
@@ -237,7 +238,7 @@ def render_chw(
 ) -> mx.array:
     n = means3d.shape[0]
     inputs = {
-        "background": mx.array([1.0, 1.0, 1.0], dtype=mx.float32),
+        "background": mx.array([0.0, 0.0, 0.0], dtype=mx.float32),
         "means3d": means3d,
         "dc": features_dc,
         "sh": features_rest,
@@ -282,10 +283,10 @@ def main():
     parser.add_argument("--lr-scales", type=float, default=2e-3)
     parser.add_argument("--adam-beta1", type=float, default=0.9)
     parser.add_argument("--adam-beta2", type=float, default=0.99)
-    parser.add_argument("--stage-color-steps", type=int, default=400)
-    parser.add_argument("--stage-means-steps", type=int, default=1200)
+    parser.add_argument("--stage-color-steps", type=int, default=0)
+    parser.add_argument("--stage-means-steps", type=int, default=0)
     parser.add_argument("--mse-until", type=int, default=800)
-    parser.add_argument("--n", type=int, default=2048)
+    parser.add_argument("--n", type=int, default=4096)
     parser.add_argument("--width", type=int, default=256)
     parser.add_argument("--height", type=int, default=256)
     parser.add_argument("--debug-scales", action="store_true")
@@ -302,7 +303,7 @@ def main():
     viewmatrix_np, projmatrix_np, eye_np = build_look_at_camera(fovx, fovy)
 
     means3d_np, features_dc_np, opacity_logits_np, log_scales_np = init_gaussians_grid(args.n)
-    sh_degree = 2
+    sh_degree = 1
     rest_coeffs = (sh_degree + 1) ** 2 - 1
     features_rest_np = np.zeros((args.n, rest_coeffs, 3), dtype=np.float32)
     rotations_np = np.zeros((args.n, 4), dtype=np.float32)
@@ -406,12 +407,10 @@ def main():
         opacity_opt.update(model, {"opacity_logits": grads["opacity_logits"]})
 
         # Stage B: + means
-        if step > args.stage_color_steps:
-            means_opt.update(model, {"means3d": grads["means3d"]})
+        means_opt.update(model, {"means3d": grads["means3d"]})
 
         # Stage C: + scales
-        if step > args.stage_means_steps:
-            scales_opt.update(model, {"log_scales": grads["log_scales"]})
+        scales_opt.update(model, {"log_scales": grads["log_scales"]})
 
         mx.eval(loss)
         curr_loss = float(loss.item())
@@ -485,7 +484,7 @@ def main():
                     )
                 prev_scale_mean = s_mean
 
-        if step % args.save_every == 0 or step == args.steps:
+        if step % args.save_every == 0 or step == args.steps or step == 1:
             pred_chw = render_chw(
                 ext=ext,
                 means3d=model.means3d,
@@ -538,21 +537,21 @@ def main():
         model.log_scales,
         model.get_scales,
     )
-    np.savez(
-        out_npz,
-        means3d=np.array(model.means3d),
-        features_dc=np.array(model.features_dc),
-        features_rest=np.array(model.features_rest),
-        opacity_logits=np.array(model.opacity_logits),
-        opacities=np.array(model.get_opacities),
-        log_scales=np.array(model.log_scales),
-        scales=np.array(model.get_scales),
-        target=target_hwc,
-        pred=pred_hwc,
-        losses=np.array(losses, dtype=np.float32),
-        best_step=np.array([best_step], dtype=np.int32),
-        best_loss=np.array([best_loss], dtype=np.float32),
-    )
+    # np.savez(
+    #     out_npz,
+    #     means3d=np.array(model.means3d),
+    #     features_dc=np.array(model.features_dc),
+    #     features_rest=np.array(model.features_rest),
+    #     opacity_logits=np.array(model.opacity_logits),
+    #     opacities=np.array(model.get_opacities),
+    #     log_scales=np.array(model.log_scales),
+    #     scales=np.array(model.get_scales),
+    #     target=target_hwc,
+    #     pred=pred_hwc,
+    #     losses=np.array(losses, dtype=np.float32),
+    #     best_step=np.array([best_step], dtype=np.int32),
+    #     best_loss=np.array([best_loss], dtype=np.float32),
+    # )
     save_as_spz(out_spz, model, sh_degree=sh_degree)
 
     print("[OK] train_square done")
