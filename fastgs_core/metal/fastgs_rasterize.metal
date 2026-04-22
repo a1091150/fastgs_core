@@ -1,7 +1,8 @@
 #include <metal_stdlib>
 
 using namespace metal;
-
+#define BLOCK_X 16
+#define BLOCK_Y 16
 struct RasterizeKernelParams {
   uint image_width;
   uint image_height;
@@ -44,6 +45,7 @@ kernel void fastgs_render_forward_kernel(
     uint2 tid [[thread_position_in_threadgroup]],
     uint2 gid [[thread_position_in_grid]],
     uint2 tgp [[threadgroup_position_in_grid]]) {
+  threadgroup uint shared_last_contributor[BLOCK_X * BLOCK_Y];
   uint pix_x = gid.x;
   uint pix_y = gid.y;
   uint tile_x = tgp.x;
@@ -131,11 +133,26 @@ kernel void fastgs_render_forward_kernel(
 
   final_t[pix_id] = t_val;
   n_contrib[pix_id] = last_contributor;
-  max_contrib[tile_id] = max(max_contrib[tile_id], last_contributor);
   for (uint ch = 0; ch < min(params.num_channels, kMaxChannels); ++ch) {
     pixel_colors[ch * params.image_height * params.image_width + pix_id] = c_accum[ch];
     out_color[ch * params.image_height * params.image_width + pix_id] =
         c_accum[ch] + t_val * background[ch];
+  }
+
+  shared_last_contributor[local_rank] = last_contributor;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+
+  for (uint stride = (params.block_x * params.block_y) / 2u; stride > 0u; stride >>= 1u) {
+    if (local_rank < stride) {
+      shared_last_contributor[local_rank] = max(
+          shared_last_contributor[local_rank],
+          shared_last_contributor[local_rank + stride]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+
+  if (local_rank == 0u) {
+    max_contrib[tile_id] = shared_last_contributor[0];
   }
 
   (void)radii;
