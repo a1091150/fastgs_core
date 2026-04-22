@@ -239,7 +239,7 @@ def render_chw(
 ) -> mx.array:
     n = means3d.shape[0]
     inputs = {
-        "background": mx.array([0.0, 0.0, 0.0], dtype=mx.float32),
+        "background": mx.array([0.5, 0.5, 0.5], dtype=mx.float32),
         "means3d": means3d,
         "dc": features_dc,
         "sh": features_rest,
@@ -277,7 +277,7 @@ def main():
     parser.add_argument("--steps", type=int, default=2000)
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--save-every", type=int, default=200)
-    parser.add_argument("--random-background", action="store_true")
+    parser.add_argument("--random-background", type=bool, default=False)
     parser.add_argument("--lr-colors", type=float, default=5e-2)
     parser.add_argument("--lr-opacity", type=float, default=2e-2)
     parser.add_argument("--lr-means", type=float, default=5e-3)
@@ -286,7 +286,6 @@ def main():
     parser.add_argument("--adam-beta2", type=float, default=0.99)
     parser.add_argument("--stage-color-steps", type=int, default=0)
     parser.add_argument("--stage-means-steps", type=int, default=0)
-    parser.add_argument("--mse-until", type=int, default=800)
     parser.add_argument("--n", type=int, default=4096)
     parser.add_argument("--width", type=int, default=256)
     parser.add_argument("--height", type=int, default=256)
@@ -325,9 +324,9 @@ def main():
     target_np = make_square_target(args.height, args.width)
     target_chw = mx.array(np.transpose(target_np, (2, 0, 1)), dtype=mx.float32)
 
-    base_bg = mx.array([1.0, 1.0, 1.0], dtype=mx.float32)
+    base_bg = mx.array([0.0, 0.0, 0.0], dtype=mx.float32)
 
-    def loss_fn(model: SquareTrainModel, bg: mx.array, use_l1: mx.array):
+    def loss_fn(model: SquareTrainModel, bg: mx.array):
         n = model.means3d.shape[0]
         inputs = {
             "background": bg,
@@ -362,10 +361,8 @@ def main():
             pred = mx.ones((3, args.height, args.width), dtype=mx.float32)
         else:
             pred = to_chw_mx(out_color, args.height, args.width)
-        diff = pred - target_chw
-        l1 = mx.mean(mx.abs(diff))
-        mse = mx.mean(diff * diff)
-        return mx.where(use_l1, l1, mse)
+        l1 = nn.losses.l1_loss(pred, target_chw, reduction="mean")
+        return l1
 
     loss_and_grad_fn = value_and_grad(model=model, fn=loss_fn)
     betas = (args.adam_beta1, args.adam_beta2)
@@ -399,8 +396,7 @@ def main():
 
     for step in range(1, args.steps + 1):
         bg = mx.random.uniform(shape=(3,), low=0.0, high=1.0, dtype=mx.float32) if args.random_background else base_bg
-        use_l1 = mx.array(step > args.mse_until, dtype=mx.bool_)
-        loss, grads = loss_and_grad_fn(model, bg, use_l1)
+        loss, grads = loss_and_grad_fn(model, bg)
 
         # Stage A: SH color + opacity
         dc_opt.update(model, {"features_dc": grads["features_dc"]})
