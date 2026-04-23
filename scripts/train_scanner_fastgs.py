@@ -436,7 +436,7 @@ class ScannerGaussianOps:
         pruning_score: np.ndarray,
         rng: np.random.Generator,
     ) -> None:
-        densify_and_prune_fastgs(
+        return densify_and_prune_fastgs(
             model,
             state,
             args,
@@ -542,10 +542,10 @@ def densify_and_clone_fastgs(
     metric_mask: np.ndarray,
     clone_filter: np.ndarray,
     optimizer_policy: ScannerFastGSOptimizerPolicy | None = None,
-) -> None:
+) -> int:
     selected = metric_mask & clone_filter
     if not np.any(selected):
-        return
+        return 0
     current = capture_model_np(model)
     append_new_points(
         model,
@@ -561,6 +561,7 @@ def densify_and_clone_fastgs(
         },
         optimizer_policy=optimizer_policy,
     )
+    return int(np.sum(selected))
 
 
 def densify_and_split_fastgs(
@@ -571,10 +572,10 @@ def densify_and_split_fastgs(
     rng: np.random.Generator,
     split_factor: int,
     optimizer_policy: ScannerFastGSOptimizerPolicy | None = None,
-) -> None:
+) -> tuple[int, int]:
     selected = metric_mask & split_filter
     if not np.any(selected):
-        return
+        return 0, 0
     current = capture_model_np(model)
     means = current["means3d"][selected]
     scales = current["scales"][selected]
@@ -611,6 +612,8 @@ def densify_and_split_fastgs(
         axis=0,
     )
     prune_points(model, state, prune_mask, optimizer_policy=optimizer_policy)
+    selected_count = int(np.sum(selected))
+    return selected_count, int(selected_count * split_factor)
 
 
 def cap_opacity_logits(
@@ -664,7 +667,7 @@ def densify_and_prune_fastgs(
     pruning_score: np.ndarray,
     rng: np.random.Generator,
     optimizer_policy: ScannerFastGSOptimizerPolicy | None = None,
-) -> None:
+) -> dict[str, int]:
     denom = np.maximum(state.denom, 1.0)
     grad_vars = state.xyz_grad_accum / denom
     grads_abs = state.xyz_grad_accum_abs / denom
@@ -676,15 +679,17 @@ def densify_and_prune_fastgs(
     clone_qualifiers = max_scale <= args.dense * scene_extent
     split_qualifiers = max_scale > args.dense * scene_extent
     metric_mask = importance_score > args.importance_score_threshold
+    clone_candidates = int(np.sum(metric_mask & clone_qualifiers & grad_qualifiers))
+    split_candidates = int(np.sum(metric_mask & split_qualifiers & grad_qualifiers_abs))
 
-    densify_and_clone_fastgs(
+    cloned = densify_and_clone_fastgs(
         model,
         state,
         metric_mask,
         clone_qualifiers & grad_qualifiers,
         optimizer_policy=optimizer_policy,
     )
-    densify_and_split_fastgs(
+    split_sources, split_children = densify_and_split_fastgs(
         model,
         state,
         metric_mask,
@@ -695,14 +700,20 @@ def densify_and_prune_fastgs(
     )
 
     current = capture_model_np(model)
-    prune_mask = current["opacities"] < args.min_opacity
+    opacity_prune_mask = current["opacities"] < args.min_opacity
+    prune_mask = opacity_prune_mask.copy()
+    screen_prune_mask = np.zeros_like(prune_mask)
     if args.max_screen_size > 0:
-        prune_mask = prune_mask | (state.max_radii2d > args.max_screen_size)
+        screen_prune_mask = state.max_radii2d > args.max_screen_size
+        prune_mask = prune_mask | screen_prune_mask
+    world_prune_mask = np.zeros_like(prune_mask)
     if args.max_world_scale_factor > 0.0:
-        prune_mask = prune_mask | (np.max(current["scales"], axis=1) > args.max_world_scale_factor * scene_extent)
+        world_prune_mask = np.max(current["scales"], axis=1) > args.max_world_scale_factor * scene_extent
+        prune_mask = prune_mask | world_prune_mask
 
     to_remove = int(np.sum(prune_mask))
     remove_budget = int(args.prune_budget_factor * to_remove)
+    actual_removed = 0
     if remove_budget > 0 and pruning_score.size > 0:
         weights = np.zeros_like(pruning_score, dtype=np.float32)
         weights[:] = 1.0 / (1.0e-6 + (1.0 - pruning_score))
@@ -714,9 +725,24 @@ def densify_and_prune_fastgs(
             final_prune = np.zeros_like(prune_mask)
             final_prune[chosen] = True
             final_prune &= prune_mask
+            actual_removed = int(np.sum(final_prune))
             prune_points(model, state, final_prune, optimizer_policy=optimizer_policy)
 
     cap_opacity_logits(model, args.opacity_cap_after_densify, optimizer_policy=optimizer_policy)
+    return {
+        "metric_hits": int(np.sum(metric_mask)),
+        "clone_candidates": clone_candidates,
+        "split_candidates": split_candidates,
+        "cloned": cloned,
+        "split_sources": split_sources,
+        "split_children": split_children,
+        "opacity_prune_candidates": int(np.sum(opacity_prune_mask)),
+        "screen_prune_candidates": int(np.sum(screen_prune_mask)),
+        "world_prune_candidates": int(np.sum(world_prune_mask)),
+        "total_prune_candidates": to_remove,
+        "prune_budget": remove_budget,
+        "actual_removed": actual_removed,
+    }
 
 
 def final_prune_fastgs(
@@ -1006,7 +1032,7 @@ def main():
                     densify=True,
                 )
                 before = int(model.means3d.shape[0])
-                gaussian_ops.densify_and_prune_fastgs(
+                densify_stats = gaussian_ops.densify_and_prune_fastgs(
                     model,
                     dens_state,
                     args,
@@ -1016,7 +1042,18 @@ def main():
                     rng,
                 )
                 after = int(model.means3d.shape[0])
-                print(f"[fastgs] step={step:05d} densify/prune points {before} -> {after}")
+                print(
+                    f"[fastgs] step={step:05d} densify/prune points {before} -> {after} "
+                    f"(metric_hits={densify_stats['metric_hits']}, "
+                    f"clone_candidates={densify_stats['clone_candidates']}, cloned={densify_stats['cloned']}, "
+                    f"split_candidates={densify_stats['split_candidates']}, "
+                    f"split_sources={densify_stats['split_sources']}, split_children={densify_stats['split_children']}, "
+                    f"opacity_prune={densify_stats['opacity_prune_candidates']}, "
+                    f"screen_prune={densify_stats['screen_prune_candidates']}, "
+                    f"world_prune={densify_stats['world_prune_candidates']}, "
+                    f"total_prune={densify_stats['total_prune_candidates']}, "
+                    f"prune_budget={densify_stats['prune_budget']}, actual_removed={densify_stats['actual_removed']})"
+                )
 
             if step % args.opacity_reset_interval == 0:
                 gaussian_ops.reset_opacity_logits(model, args.opacity_reset_value)
