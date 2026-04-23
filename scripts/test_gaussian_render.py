@@ -14,9 +14,139 @@ from train_scanner_fixed import (
     logit,
     prepare_dataset,
     render_chw,
-    save_as_spz,
     save_side_by_side,
 )
+
+try:
+    import spz
+except Exception:
+    spz = None
+
+
+def quaternions_wxyz_to_rotation_matrices(quats: np.ndarray) -> np.ndarray:
+    q = np.asarray(quats, dtype=np.float32)
+    norms = np.linalg.norm(q, axis=1, keepdims=True)
+    q = q / np.clip(norms, 1.0e-8, None)
+
+    w = q[:, 0]
+    x = q[:, 1]
+    y = q[:, 2]
+    z = q[:, 3]
+
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    wx = w * x
+    wy = w * y
+    wz = w * z
+
+    rot = np.empty((q.shape[0], 3, 3), dtype=np.float32)
+    rot[:, 0, 0] = 1.0 - 2.0 * (yy + zz)
+    rot[:, 0, 1] = 2.0 * (xy - wz)
+    rot[:, 0, 2] = 2.0 * (xz + wy)
+    rot[:, 1, 0] = 2.0 * (xy + wz)
+    rot[:, 1, 1] = 1.0 - 2.0 * (xx + zz)
+    rot[:, 1, 2] = 2.0 * (yz - wx)
+    rot[:, 2, 0] = 2.0 * (xz - wy)
+    rot[:, 2, 1] = 2.0 * (yz + wx)
+    rot[:, 2, 2] = 1.0 - 2.0 * (xx + yy)
+    return rot
+
+
+def rotation_matrices_to_quaternions_wxyz(rot: np.ndarray) -> np.ndarray:
+    r = np.asarray(rot, dtype=np.float32)
+    q = np.empty((r.shape[0], 4), dtype=np.float32)
+
+    trace = r[:, 0, 0] + r[:, 1, 1] + r[:, 2, 2]
+    mask = trace > 0.0
+
+    if np.any(mask):
+        s = np.sqrt(trace[mask] + 1.0) * 2.0
+        q[mask, 0] = 0.25 * s
+        q[mask, 1] = (r[mask, 2, 1] - r[mask, 1, 2]) / s
+        q[mask, 2] = (r[mask, 0, 2] - r[mask, 2, 0]) / s
+        q[mask, 3] = (r[mask, 1, 0] - r[mask, 0, 1]) / s
+
+    mask_x = (~mask) & (r[:, 0, 0] > r[:, 1, 1]) & (r[:, 0, 0] > r[:, 2, 2])
+    if np.any(mask_x):
+        s = np.sqrt(1.0 + r[mask_x, 0, 0] - r[mask_x, 1, 1] - r[mask_x, 2, 2]) * 2.0
+        q[mask_x, 0] = (r[mask_x, 2, 1] - r[mask_x, 1, 2]) / s
+        q[mask_x, 1] = 0.25 * s
+        q[mask_x, 2] = (r[mask_x, 0, 1] + r[mask_x, 1, 0]) / s
+        q[mask_x, 3] = (r[mask_x, 0, 2] + r[mask_x, 2, 0]) / s
+
+    mask_y = (~mask) & (~mask_x) & (r[:, 1, 1] > r[:, 2, 2])
+    if np.any(mask_y):
+        s = np.sqrt(1.0 + r[mask_y, 1, 1] - r[mask_y, 0, 0] - r[mask_y, 2, 2]) * 2.0
+        q[mask_y, 0] = (r[mask_y, 0, 2] - r[mask_y, 2, 0]) / s
+        q[mask_y, 1] = (r[mask_y, 0, 1] + r[mask_y, 1, 0]) / s
+        q[mask_y, 2] = 0.25 * s
+        q[mask_y, 3] = (r[mask_y, 1, 2] + r[mask_y, 2, 1]) / s
+
+    mask_z = (~mask) & (~mask_x) & (~mask_y)
+    if np.any(mask_z):
+        s = np.sqrt(1.0 + r[mask_z, 2, 2] - r[mask_z, 0, 0] - r[mask_z, 1, 1]) * 2.0
+        q[mask_z, 0] = (r[mask_z, 1, 0] - r[mask_z, 0, 1]) / s
+        q[mask_z, 1] = (r[mask_z, 0, 2] + r[mask_z, 2, 0]) / s
+        q[mask_z, 2] = (r[mask_z, 1, 2] + r[mask_z, 2, 1]) / s
+        q[mask_z, 3] = 0.25 * s
+
+    q /= np.clip(np.linalg.norm(q, axis=1, keepdims=True), 1.0e-8, None)
+    return q
+
+
+def save_as_spz_local(filename: Path, model, sh_degree: int) -> bool:
+    if spz is None:
+        print("[WARN] spz is not available; skip spz export")
+        return False
+
+    mx.eval(
+        model.means3d,
+        model.log_scales,
+        model.get_rotations,
+        model.opacity_logits,
+        model.features_dc,
+        model.features_rest,
+    )
+
+    means = np.array(model.means3d, dtype=np.float32)
+    means_spz = np.empty_like(means)
+    means_spz[:, 0] = means[:, 0]
+    means_spz[:, 1] = -means[:, 2]
+    means_spz[:, 2] = means[:, 1]
+
+    quats = np.array(model.get_rotations, dtype=np.float32)
+    rot_mats = quaternions_wxyz_to_rotation_matrices(quats)
+    axis3 = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, -1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    rot_mats_spz = axis3 @ rot_mats @ axis3.T
+    quats_spz = rotation_matrices_to_quaternions_wxyz(rot_mats_spz)
+
+    cloud = spz.GaussianCloud()
+    cloud.antialiased = True
+    cloud.positions = means_spz.flatten().astype(np.float32)
+    cloud.scales = np.array(model.log_scales, dtype=np.float32).flatten()
+    cloud.rotations = quats_spz.flatten().astype(np.float32)
+    cloud.alphas = np.array(model.opacity_logits, dtype=np.float32).flatten()
+    cloud.colors = np.array(model.features_dc, dtype=np.float32).flatten()
+    cloud.sh_degree = int(sh_degree)
+    cloud.sh = np.array(model.features_rest, dtype=np.float32).flatten()
+
+    opts = spz.PackOptions()
+    ok = spz.save_spz(cloud, opts, str(filename))
+    if not ok:
+        raise RuntimeError(f"failed to save spz to {filename}")
+    print(f"saved spz: {filename}")
+    return True
 
 
 def main() -> None:
@@ -134,7 +264,7 @@ def main() -> None:
             )
             save_side_by_side(target_chw, pred_camera, out_all_dir / f"sbs_{cam_idx:04d}.png")
 
-    save_as_spz(out_spz, model, args.sh_degree)
+    save_as_spz_local(out_spz, model, args.sh_degree)
 
     print("[OK] test_gaussian_render done")
     print("frames:", len(cameras), "points:", points.shape[0])
