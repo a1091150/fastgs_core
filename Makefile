@@ -90,5 +90,44 @@ train-scanner-fastgs-smoke:
 train-scanner-fastgs-bbox:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14 --extra-points-ratio 0.5 --extra-points-mode bbox'
 
+train-scanner-fastgs-densify:
+	python scripts/train_scanner_fastgs.py \
+		--data /path/to/your_scanner_dataset \
+		--steps 6000 \
+		--log-every 20 \
+		--save-every 200 \
+		--opacity-reset-interval 3000 \
+		--opacity-reset-value 0.82 \
+		--opacity-cap-after-densify 0.82 \
+		--densify-from-step 500 \
+		--densify-until-step 6000 \
+		--densification-interval 500 \
+		--importance-score-threshold 2.0 \
+		--grad-thresh 1e-4 \
+		--grad-abs-thresh 6e-4 \
+		--split-factor 2 \
+		--min-opacity 0.005 \
+		--max-screen-size 20.0 \
+		--max-world-scale-factor 0.1 \
+		--data /Users/yangdunfu/Downloads/2026_03_01_16_36_14
+
+train-scanner-fastgs-densify2:
+	python scripts/train_scanner_fastgs.py \
+		--data /path/to/your_scanner_dataset \
+		--steps 6000 \
+		--log-every 20 \
+		--save-every 500 \
+		--densify-from-step 500 \
+		--densify-until-step 6000 \
+		--densification-interval 500 \
+		--importance-score-threshold 1.0 \
+		--grad-thresh 5e-5 \
+		--grad-abs-thresh 3e-4 \
+		--max-screen-size 0 \
+		--opacity-reset-value 0.82 \
+		--opacity-cap-after-densify 0.82 \
+		--data /Users/yangdunfu/Downloads/2026_03_01_16_36_14
+
+
 clean:
 	rm -rf $(BUILD_DIR) $(XCODE_BUILD_DIR) dist *.egg-info python_package/*.egg-info
