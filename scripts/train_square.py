@@ -102,6 +102,16 @@ def make_square_target(height: int, width: int, square_ratio: float = 0.38) -> n
     return img
 
 
+def load_target_image(path: str, height: int, width: int) -> np.ndarray:
+    image = cv2.imread(path, cv2.IMREAD_COLOR)
+    if image is None:
+        raise RuntimeError(f"Failed to read input image: {path}")
+    if image.shape[:2] != (height, width):
+        image = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    return image.astype(np.float32) / 255.0
+
+
 def to_chw_mx(out_color: mx.array, h: int, w: int) -> mx.array:
     shape = tuple(out_color.shape)
     if len(shape) == 1 and shape[0] == h * w * 3:
@@ -274,6 +284,7 @@ def render_chw(
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--data", type=str, default=None, help="Path to the input target image.")
     parser.add_argument("--steps", type=int, default=2000)
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--save-every", type=int, default=200)
@@ -321,7 +332,11 @@ def main():
     projmatrix = mx.array(projmatrix_np, dtype=mx.float32)
     campos = mx.array(eye_np[None, :], dtype=mx.float32)
 
-    target_np = make_square_target(args.height, args.width)
+    if args.data:
+        target_np = load_target_image(args.data, args.height, args.width)
+        print(f"[info] loaded target image from {args.data}")
+    else:
+        target_np = make_square_target(args.height, args.width)
     target_chw = mx.array(np.transpose(target_np, (2, 0, 1)), dtype=mx.float32)
 
     base_bg = mx.array([0.0, 0.0, 0.0], dtype=mx.float32)
