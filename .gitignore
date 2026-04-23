@@ -4,7 +4,7 @@
 *.npy
 result/**/*.npz
 result/**/*.npy
-*.mp4
+training/**/*.mp4
 *.gif
 # Byte-compiled / optimized / DLL files
 __pycache__/
