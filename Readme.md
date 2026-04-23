@@ -1,4 +1,6 @@
 # FastGS MLX
+[正體中文版](./Readme_zhtw.md)
+
 
 This project reimplements [FastGS](https://github.com/fastgs/FastGS) using MLX and Metal code. It supports both `forward` image rendering and `backward` model training.
 
