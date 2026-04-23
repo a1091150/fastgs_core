@@ -5,6 +5,9 @@ This project reimplements [FastGS](https://github.com/fastgs/FastGS) using MLX a
 FastGS differs from 3DGS. In 3DGS, `torch.Tensor.retain_grad()` is used to preserve `means2d`-related information for later training stages. MLX does not provide an equivalent to `retain_grad()`. FastGS instead uses `viewspace_points`(a dummy trainable parameter) to preserve `means2d.grad` and the required intermediate information, making it possible to obtain gradients in MLX as well.
 
 ### Features
+
+[![Demo Video]()](./assets/output.mp4)
+
 1. Build the project with CMake.
 2. Generate an Xcode project for easier Metal code testing and code completion.
 3. Pure MLX-based 3DGS training and rendering.
