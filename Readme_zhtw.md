@@ -79,6 +79,7 @@ pip install .
 
 目前推薦使用 `train-scanner-fastgs-densify3` 進行訓練。
 
+
 #### Scripts
 
 `scripts/` 提供一些可測試的 python scripts:
@@ -87,10 +88,14 @@ pip install .
 
 
 ## 致謝
-- 3DGS
-- FastGS
+MLX 在設計上並不具備如 Pytorch retain gradient 的方式訓練。在某次偶然，找到 FastGS 具備輸出 `means2d gradient`，此讓移植 MLX 難度大幅下降，不需要自行串接反相傳播路徑，只為了取得梯度。
 
-## 注意
+- [3D Gaussian Splatting for Real-Time Radiance Field Rendering](https://github.com/graphdeco-inria/gaussian-splatting)
+- [FastGS: Training 3D Gaussian Splatting in 100 Seconds](https://github.com/fastgs/FastGS)
 
+## 其它
+
+- 使用 [SuperSplat SPZ Online Viewer](https://superspl.at/editor) 查看 spz 內容。
 - 本專案使用 Codex 5.3, 5.4 生成程式碼，因此會有許多奇妙的程式碼。Cuda code to Metal Code 是 Codex 不擅長的部分，容易生成簡化且錯誤的實作。Python 倒是沒有問題。
 - MLX 不支援 boolean indices，可使用 range 替代。
+- 3DGS and FastGS 訓練出的 Gaussian 品質在於後訓練機制的設計。
