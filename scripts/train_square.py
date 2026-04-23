@@ -18,6 +18,7 @@ try:
 except Exception:
     spz = None
 
+mx.set_cache_limit(limit=(1 << 31))
 
 def import_extension():
     try:
