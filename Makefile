@@ -128,6 +128,25 @@ train-scanner-fastgs-densify2:
 		--opacity-cap-after-densify 0.82 \
 		--data /Users/yangdunfu/Downloads/2026_03_01_16_36_14
 
+train-scanner-fastgs-densify3:
+	python scripts/train_scanner_fastgs.py \
+		--data /path/to/your_scanner_dataset \
+		--steps 6000 \
+		--log-every 20 \
+		--save-every 500 \
+		--densify-from-step 500 \
+		--densify-until-step 6000 \
+		--densification-interval 500 \
+		--importance-score-threshold 0.5 \
+		--grad-thresh 5e-6 \
+		--grad-abs-thresh 5e-5 \
+		--dense 0.02 \
+		--max-screen-size 0 \
+		--opacity-reset-value 0.82 \
+		--opacity-cap-after-densify 0.82 \
+		--data /Users/yangdunfu/Downloads/2026_03_01_16_36_14
+
+
 
 clean:
 	rm -rf $(BUILD_DIR) $(XCODE_BUILD_DIR) dist *.egg-info python_package/*.egg-info
