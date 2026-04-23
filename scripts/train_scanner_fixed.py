@@ -56,6 +56,81 @@ class TrainCamera:
     tan_fovy: float
 
 
+@dataclass
+class FixedOptimizerPolicyConfig:
+    means_lr: float
+    dc_lr: float
+    sh_lr: float
+    opacity_lr: float
+    scaling_lr: float
+    rotation_lr: float
+    position_lr_init: float | None = None
+    position_lr_final: float = 1.6e-6
+    position_lr_delay_mult: float = 0.01
+    position_lr_max_steps: int = 30000
+    spatial_lr_scale: float = 1.0
+    betas: tuple[float, float] = (0.9, 0.99)
+    sh_lr_divisor: float = 20.0
+
+
+def get_expon_lr_func(
+    lr_init: float,
+    lr_final: float,
+    lr_delay_steps: int = 0,
+    lr_delay_mult: float = 1.0,
+    max_steps: int = 1000000,
+):
+    def helper(step: int) -> float:
+        if step < 0 or (lr_init == 0.0 and lr_final == 0.0):
+            return 0.0
+        if lr_delay_steps > 0:
+            delay_rate = lr_delay_mult + (1.0 - lr_delay_mult) * math.sin(
+                0.5 * math.pi * min(max(step / lr_delay_steps, 0.0), 1.0)
+            )
+        else:
+            delay_rate = 1.0
+        t = min(max(step / max_steps, 0.0), 1.0)
+        log_lerp = math.exp(math.log(lr_init) * (1.0 - t) + math.log(lr_final) * t)
+        return delay_rate * log_lerp
+
+    return helper
+
+
+class FixedOptimizerPolicy:
+    def __init__(self, cfg: FixedOptimizerPolicyConfig):
+        self.cfg = cfg
+        self.main_optimizers = {
+            "means3d": Adam(learning_rate=cfg.means_lr, betas=cfg.betas),
+            "features_dc": Adam(learning_rate=cfg.dc_lr, betas=cfg.betas),
+            "opacity_logits": Adam(learning_rate=cfg.opacity_lr, betas=cfg.betas),
+            "log_scales": Adam(learning_rate=cfg.scaling_lr, betas=cfg.betas),
+            "rotations": Adam(learning_rate=cfg.rotation_lr, betas=cfg.betas),
+        }
+        self.sh_optimizer = Adam(
+            learning_rate=cfg.sh_lr / cfg.sh_lr_divisor,
+            betas=cfg.betas,
+        )
+        xyz_lr_init = cfg.position_lr_init if cfg.position_lr_init is not None else cfg.means_lr
+        self.xyz_scheduler = get_expon_lr_func(
+            lr_init=xyz_lr_init * cfg.spatial_lr_scale,
+            lr_final=cfg.position_lr_final * cfg.spatial_lr_scale,
+            lr_delay_mult=cfg.position_lr_delay_mult,
+            max_steps=cfg.position_lr_max_steps,
+        )
+
+    def update_learning_rate(self, step: int) -> float:
+        xyz_lr = self.xyz_scheduler(step)
+        self.main_optimizers["means3d"].learning_rate = xyz_lr
+        return xyz_lr
+
+    def apply_gradients(self, model: "ScannerTrainModel", grad_map: dict[str, mx.array]) -> None:
+        for name, grad in grad_map.items():
+            if name == "features_rest":
+                self.sh_optimizer.update(model, {name: grad})
+            else:
+                self.main_optimizers[name].update(model, {name: grad})
+
+
 def to_hwc_numpy(chw: mx.array) -> np.ndarray:
     mx.eval(chw)
     arr = np.array(chw)
@@ -82,6 +157,81 @@ def to_chw_mx(out_color: mx.array, h: int, w: int) -> mx.array:
 def logit(p: np.ndarray) -> np.ndarray:
     p = np.clip(p, 1.0e-6, 1.0 - 1.0e-6)
     return np.log(p / (1.0 - p))
+
+
+def quaternions_wxyz_to_rotation_matrices(quats: np.ndarray) -> np.ndarray:
+    q = np.asarray(quats, dtype=np.float32)
+    norms = np.linalg.norm(q, axis=1, keepdims=True)
+    q = q / np.clip(norms, 1.0e-8, None)
+
+    w = q[:, 0]
+    x = q[:, 1]
+    y = q[:, 2]
+    z = q[:, 3]
+
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    wx = w * x
+    wy = w * y
+    wz = w * z
+
+    rot = np.empty((q.shape[0], 3, 3), dtype=np.float32)
+    rot[:, 0, 0] = 1.0 - 2.0 * (yy + zz)
+    rot[:, 0, 1] = 2.0 * (xy - wz)
+    rot[:, 0, 2] = 2.0 * (xz + wy)
+    rot[:, 1, 0] = 2.0 * (xy + wz)
+    rot[:, 1, 1] = 1.0 - 2.0 * (xx + zz)
+    rot[:, 1, 2] = 2.0 * (yz - wx)
+    rot[:, 2, 0] = 2.0 * (xz - wy)
+    rot[:, 2, 1] = 2.0 * (yz + wx)
+    rot[:, 2, 2] = 1.0 - 2.0 * (xx + yy)
+    return rot
+
+
+def rotation_matrices_to_quaternions_wxyz(rot: np.ndarray) -> np.ndarray:
+    r = np.asarray(rot, dtype=np.float32)
+    q = np.empty((r.shape[0], 4), dtype=np.float32)
+
+    trace = r[:, 0, 0] + r[:, 1, 1] + r[:, 2, 2]
+    mask = trace > 0.0
+
+    if np.any(mask):
+        s = np.sqrt(trace[mask] + 1.0) * 2.0
+        q[mask, 0] = 0.25 * s
+        q[mask, 1] = (r[mask, 2, 1] - r[mask, 1, 2]) / s
+        q[mask, 2] = (r[mask, 0, 2] - r[mask, 2, 0]) / s
+        q[mask, 3] = (r[mask, 1, 0] - r[mask, 0, 1]) / s
+
+    mask_x = (~mask) & (r[:, 0, 0] > r[:, 1, 1]) & (r[:, 0, 0] > r[:, 2, 2])
+    if np.any(mask_x):
+        s = np.sqrt(1.0 + r[mask_x, 0, 0] - r[mask_x, 1, 1] - r[mask_x, 2, 2]) * 2.0
+        q[mask_x, 0] = (r[mask_x, 2, 1] - r[mask_x, 1, 2]) / s
+        q[mask_x, 1] = 0.25 * s
+        q[mask_x, 2] = (r[mask_x, 0, 1] + r[mask_x, 1, 0]) / s
+        q[mask_x, 3] = (r[mask_x, 0, 2] + r[mask_x, 2, 0]) / s
+
+    mask_y = (~mask) & (~mask_x) & (r[:, 1, 1] > r[:, 2, 2])
+    if np.any(mask_y):
+        s = np.sqrt(1.0 + r[mask_y, 1, 1] - r[mask_y, 0, 0] - r[mask_y, 2, 2]) * 2.0
+        q[mask_y, 0] = (r[mask_y, 0, 2] - r[mask_y, 2, 0]) / s
+        q[mask_y, 1] = (r[mask_y, 0, 1] + r[mask_y, 1, 0]) / s
+        q[mask_y, 2] = 0.25 * s
+        q[mask_y, 3] = (r[mask_y, 1, 2] + r[mask_y, 2, 1]) / s
+
+    mask_z = (~mask) & (~mask_x) & (~mask_y)
+    if np.any(mask_z):
+        s = np.sqrt(1.0 + r[mask_z, 2, 2] - r[mask_z, 0, 0] - r[mask_z, 1, 1]) * 2.0
+        q[mask_z, 0] = (r[mask_z, 1, 0] - r[mask_z, 0, 1]) / s
+        q[mask_z, 1] = (r[mask_z, 0, 2] + r[mask_z, 2, 0]) / s
+        q[mask_z, 2] = (r[mask_z, 1, 2] + r[mask_z, 2, 1]) / s
+        q[mask_z, 3] = 0.25 * s
+
+    q /= np.clip(np.linalg.norm(q, axis=1, keepdims=True), 1.0e-8, None)
+    return q
 
 
 def load_ply_positions_colors(path: Path) -> tuple[np.ndarray, np.ndarray | None]:
@@ -505,13 +655,24 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 
     scales = np.array(model.log_scales, dtype=np.float32)
     quats = np.array(model.get_rotations, dtype=np.float32)
+    rot_mats = quaternions_wxyz_to_rotation_matrices(quats)
+    axis3 = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, -1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    rot_mats_spz = axis3 @ rot_mats @ axis3.T
+    quats_spz = rotation_matrices_to_quaternions_wxyz(rot_mats_spz)
     opacity_logits = np.array(model.opacity_logits, dtype=np.float32)
     features_dc = np.array(model.features_dc, dtype=np.float32)
     features_rest = np.array(model.features_rest, dtype=np.float32)
 
     cloud.positions = means_spz.flatten().astype(np.float32)
     cloud.scales = scales.flatten().astype(np.float32)
-    cloud.rotations = quats.flatten().astype(np.float32)
+    cloud.rotations = quats_spz.flatten().astype(np.float32)
     cloud.alphas = opacity_logits.flatten().astype(np.float32)
     cloud.colors = features_dc.flatten().astype(np.float32)
     cloud.sh_degree = int(sh_degree)
@@ -594,36 +755,80 @@ def main():
     extra_point_count = int(points.shape[0] - base_point_count)
 
     model = init_model(points, colors, args.sh_degree)
-    betas = (args.adam_beta1, args.adam_beta2)
-    means_opt = Adam(learning_rate=args.lr_means, betas=betas)
-    dc_opt = Adam(learning_rate=args.lr_colors, betas=betas)
-    rest_opt = Adam(learning_rate=args.lr_colors, betas=betas)
-    opacity_opt = Adam(learning_rate=args.lr_opacity, betas=betas)
-    scales_opt = Adam(learning_rate=args.lr_scales, betas=betas)
-    rotations_opt = Adam(learning_rate=args.lr_rotations, betas=betas)
+    optimizer_policy = FixedOptimizerPolicy(
+        FixedOptimizerPolicyConfig(
+            means_lr=args.lr_means,
+            dc_lr=args.lr_colors,
+            sh_lr=args.lr_colors,
+            opacity_lr=args.lr_opacity,
+            scaling_lr=args.lr_scales,
+            rotation_lr=args.lr_rotations,
+            position_lr_init=args.lr_means,
+            position_lr_final=1.6e-6,
+            position_lr_delay_mult=0.01,
+            position_lr_max_steps=args.steps,
+            betas=(args.adam_beta1, args.adam_beta2),
+        )
+    )
 
     base_bg = mx.array([0.0, 0.0, 0.0], dtype=mx.float32)
 
-    def loss_fn(model: ScannerTrainModel, camera: TrainCamera, target_chw: mx.array, bg: mx.array, use_l1: mx.array):
-        # Rasterization expects linear-space scales, so pass get_scales here.
+    def loss_fn(means3d, features_dc, features_rest, opacity_logits, log_scales, rotations, viewspace_points, camera, target_chw, bg, use_l1, sh_degree):
+        local_model = ScannerTrainModel(
+            means3d=means3d,
+            features_dc=features_dc,
+            features_rest=features_rest,
+            opacity_logits=opacity_logits,
+            log_scales=log_scales,
+            rotations=rotations,
+        )
+        n = means3d.shape[0]
+        inputs = {
+            "background": bg,
+            "means3d": local_model.means3d,
+            "dc": local_model.features_dc,
+            "sh": local_model.features_rest,
+            "opacities": local_model.get_opacities,
+            "scales": local_model.get_scales,
+            "rotations": local_model.get_rotations,
+            "metric_map": mx.zeros((camera.image_width * camera.image_height,), dtype=mx.int32),
+            "viewmatrix": camera.viewmatrix,
+            "projmatrix": camera.projmatrix,
+            "campos": camera.campos,
+            "viewspace_points": viewspace_points,
+        }
+        out = ext.rasterize_gaussians(
+            inputs,
+            camera.image_width,
+            camera.image_height,
+            16,
+            16,
+            camera.tan_fovx,
+            camera.tan_fovy,
+            sh_degree,
+            1.0,
+            1.0,
+            False,
+            False,
+        )
         pred = render_chw(
             ext=ext,
-            means3d=model.means3d,
-            features_dc=model.features_dc,
-            features_rest=model.features_rest,
-            opacities=model.get_opacities,
-            scales=model.get_scales,
-            rotations=model.get_rotations,
+            means3d=local_model.means3d,
+            features_dc=local_model.features_dc,
+            features_rest=local_model.features_rest,
+            opacities=local_model.get_opacities,
+            scales=local_model.get_scales,
+            rotations=local_model.get_rotations,
             camera=camera,
             background=bg,
-            sh_degree=active_sh_degree,
+            sh_degree=sh_degree,
         )
         diff = pred - target_chw
         l1 = mx.mean(mx.abs(diff))
         mse = mx.mean(diff * diff)
-        return mx.where(use_l1, l1, mse)
+        return mx.where(use_l1, l1, mse) + 0.0 * mx.sum(out["viewspace_points"])
 
-    loss_and_grad_fn = value_and_grad(model=model, fn=loss_fn)
+    grad_fn = mx.value_and_grad(loss_fn, argnums=(0, 1, 2, 3, 4, 5, 6))
 
     repo_root = Path(__file__).resolve().parent.parent
     date_dir = datetime.now().strftime("%Y%m%d_%H_%M")
@@ -640,8 +845,8 @@ def main():
     best_step = -1
     ema_loss = 0.0
     losses = []
-    prev_scale_mean = None
     active_sh_degree = 0
+    viewpoint_stack = list(range(len(cameras)))
 
     def _arr_stats(arr: np.ndarray) -> tuple[float, float, float, float]:
         flat = arr.reshape(-1)
@@ -654,33 +859,49 @@ def main():
 
     eval_idx = 0
     for step in range(1, args.steps + 1):
-        active_sh_degree = min(step // args.sh_degree_interval, args.sh_degree)
-        # idx = int(rng.integers(0, len(cameras)))
-        idx = step % len(cameras)
+        xyz_lr = optimizer_policy.update_learning_rate(step)
+        if step % 1000 == 0:
+            active_sh_degree = min(active_sh_degree + 1, args.sh_degree)
+        if not viewpoint_stack:
+            viewpoint_stack = list(range(len(cameras)))
+        rand_pos = int(rng.integers(0, len(viewpoint_stack)))
+        idx = viewpoint_stack.pop(rand_pos)
         camera = cameras[idx]
         target_chw = targets[idx]
 
         bg = mx.random.uniform(shape=(3,), low=0.0, high=1.0, dtype=mx.float32) if args.random_background else base_bg
         use_l1 = mx.array(step > args.mse_until, dtype=mx.bool_)
-        loss, grads = loss_and_grad_fn(model, camera, target_chw, bg, use_l1)
+        viewspace_seed = mx.zeros((model.means3d.shape[0], 4), dtype=mx.float32)
+        loss, grads = grad_fn(
+            model.means3d,
+            model.features_dc,
+            model.features_rest,
+            model.opacity_logits,
+            model.log_scales,
+            model.rotations,
+            viewspace_seed,
+            camera,
+            target_chw,
+            bg,
+            use_l1,
+            active_sh_degree,
+        )
+        d_means3d, d_features_dc, d_features_rest, d_opacity_logits, d_log_scales, d_rotations, d_viewspace = grads
 
-        
-        opacity_opt.update(model, {"opacity_logits": grads["opacity_logits"]})
-
+        grad_map = {"opacity_logits": d_opacity_logits}
         if step > args.stage_color_steps:
-            dc_opt.update(model, {"features_dc": grads["features_dc"]})
-            rest_opt.update(model, {"features_rest": grads["features_rest"]})
-
+            grad_map["features_dc"] = d_features_dc
+            grad_map["features_rest"] = d_features_rest
         if step > args.stage_means_steps:
-            means_opt.update(model, {"means3d": grads["means3d"]})
-
+            grad_map["means3d"] = d_means3d
         if step > args.stage_scales_steps:
-            scales_opt.update(model, {"log_scales": grads["log_scales"]})
-
+            grad_map["log_scales"] = d_log_scales
         if step > args.stage_rotations_steps:
-            rotations_opt.update(model, {"rotations": grads["rotations"]})
+            grad_map["rotations"] = d_rotations
 
-        mx.eval(loss)
+        optimizer_policy.apply_gradients(model, grad_map)
+
+        mx.eval(loss, d_viewspace, model.means3d)
         curr_loss = float(loss.item())
 
         if curr_loss < best_loss:
@@ -709,42 +930,33 @@ def main():
         if step % args.log_every == 0 or step == args.steps:
             losses.append((step, curr_loss, ema_loss))
             print(
-                f"[train] step={step:04d} view={idx:03d} "
+                f"[train] step={step:05d} view={idx:03d} "
                 f"sh_degree={active_sh_degree}/{args.sh_degree} "
-                f"loss={curr_loss:.6f} ema={ema_loss:.6f}"
+                f"loss={curr_loss:.6f} ema={ema_loss:.6f} xyz_lr={xyz_lr:.8f}"
             )
             if args.debug_scales:
-                mx.eval(model.log_scales, model.get_scales, grads["log_scales"], model.get_opacities)
+                mx.eval(model.log_scales, model.get_scales, d_log_scales, model.get_opacities)
                 log_scales_np = np.array(model.log_scales, dtype=np.float32)
                 scales_np = np.array(model.get_scales, dtype=np.float32)
-                grads_scales_np = np.array(grads["log_scales"], dtype=np.float32)
+                grads_scales_np = np.array(d_log_scales, dtype=np.float32)
                 opacity_np = np.array(model.get_opacities, dtype=np.float32)
                 ls_min, ls_max, ls_mean, ls_p95 = _arr_stats(log_scales_np)
                 s_min, s_max, s_mean, s_p95 = _arr_stats(scales_np)
                 g_min, g_max, g_mean, g_p95 = _arr_stats(grads_scales_np)
                 o_min, o_max, o_mean, o_p95 = _arr_stats(opacity_np)
-                growth = 1.0 if prev_scale_mean is None else (s_mean / (prev_scale_mean + 1.0e-12))
                 print(
                     "[debug:scales] "
                     f"step={step:04d} "
                     f"log_scale[min={ls_min:.6f}, max={ls_max:.6f}, mean={ls_mean:.6f}, p95={ls_p95:.6f}] "
                     f"scale[min={s_min:.6f}, max={s_max:.6f}, mean={s_mean:.6f}, p95={s_p95:.6f}] "
                     f"log_grad[min={g_min:.6f}, max={g_max:.6f}, mean={g_mean:.6f}, p95={g_p95:.6f}] "
-                    f"opacity[min={o_min:.6f}, max={o_max:.6f}, mean={o_mean:.6f}, p95={o_p95:.6f}] "
-                    f"growth_vs_prev={growth:.4f}"
+                    f"opacity[min={o_min:.6f}, max={o_max:.6f}, mean={o_mean:.6f}, p95={o_p95:.6f}]"
                 )
                 if s_max > args.debug_scale_threshold:
                     print(
                         "[warn:scales] "
                         f"step={step:04d} scale max {s_max:.6f} exceeds threshold {args.debug_scale_threshold:.6f}"
                     )
-                if prev_scale_mean is not None and growth > args.debug_scale_growth_ratio:
-                    print(
-                        "[warn:scales] "
-                        f"step={step:04d} mean scale growth {growth:.4f} exceeds ratio {args.debug_scale_growth_ratio:.4f}"
-                    )
-                prev_scale_mean = s_mean
-
         if step % args.save_every == 0 or step == args.steps or step == 0:
             # Rasterization expects linear-space scales, so pass get_scales here.
             pred_eval = render_chw(
