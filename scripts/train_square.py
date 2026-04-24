@@ -156,7 +156,7 @@ def init_gaussians_grid(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.
     init_rgb = np.full((n, 3), 0.5, dtype=np.float32)
     features_dc = (init_rgb - 0.5) / sh_c0
     opacity_logits = logit(np.full((n,), 0.6, dtype=np.float32)).astype(np.float32)
-    log_scales = np.full((n, 3), math.log(0.08), dtype=np.float32)
+    log_scales = np.full((n, 3), math.log(0.02), dtype=np.float32)
     return means3d, features_dc, opacity_logits, log_scales
 
 
@@ -298,7 +298,7 @@ def main():
     parser.add_argument("--adam-beta2", type=float, default=0.99)
     parser.add_argument("--stage-color-steps", type=int, default=0)
     parser.add_argument("--stage-means-steps", type=int, default=0)
-    parser.add_argument("--n", type=int, default=4096)
+    parser.add_argument("--n", type=int, default=4096*2*4)
     parser.add_argument("--width", type=int, default=256)
     parser.add_argument("--height", type=int, default=256)
     parser.add_argument("--debug-scales", action="store_true")
@@ -315,7 +315,7 @@ def main():
     viewmatrix_np, projmatrix_np, eye_np = build_look_at_camera(fovx, fovy)
 
     means3d_np, features_dc_np, opacity_logits_np, log_scales_np = init_gaussians_grid(args.n)
-    sh_degree = 1
+    sh_degree = 2
     rest_coeffs = (sh_degree + 1) ** 2 - 1
     features_rest_np = np.zeros((args.n, rest_coeffs, 3), dtype=np.float32)
     rotations_np = np.zeros((args.n, 4), dtype=np.float32)
