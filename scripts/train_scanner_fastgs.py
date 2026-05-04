@@ -714,7 +714,7 @@ def densify_and_prune_fastgs(
     to_remove = int(np.sum(prune_mask))
     remove_budget = int(args.prune_budget_factor * to_remove)
     actual_removed = 0
-    if remove_budget > 0 and pruning_score.size > 0:
+    if not args.no_prune_gaussians and remove_budget > 0 and pruning_score.size > 0:
         weights = np.zeros_like(pruning_score, dtype=np.float32)
         weights[:] = 1.0 / (1.0e-6 + (1.0 - pruning_score))
         candidate_ids = np.flatnonzero(prune_mask)
@@ -753,6 +753,7 @@ def final_prune_fastgs(
     score_thresh: float,
     min_gaussians: int,
     optimizer_policy: ScannerFastGSOptimizerPolicy | None = None,
+    dry_run: bool = False,
 ) -> dict[str, int]:
     current = capture_model_np(model)
     opacity_mask = current["opacities"] < min_opacity
@@ -782,7 +783,10 @@ def final_prune_fastgs(
     else:
         actual_prune_mask = prune_mask
     actual_remove = int(np.sum(actual_prune_mask))
-    prune_points(model, state, actual_prune_mask, optimizer_policy=optimizer_policy)
+    if dry_run:
+        actual_remove = 0
+    else:
+        prune_points(model, state, actual_prune_mask, optimizer_policy=optimizer_policy)
     return {
         "total": total,
         "opacity_hits": int(np.sum(opacity_mask)),
@@ -796,7 +800,7 @@ def final_prune_fastgs(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="/Users/yangdunfu/Downloads/2026_03_01_16_36_14")
-    parser.add_argument("--steps", type=int, default=30000)
+    parser.add_argument("--steps", type=int, default=2000)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--save-every", type=int, default=500)
     parser.add_argument("--width", type=int, default=480)
@@ -847,6 +851,7 @@ def main():
     parser.add_argument("--max-screen-size", type=float, default=20.0)
     parser.add_argument("--max-world-scale-factor", type=float, default=0.1)
     parser.add_argument("--prune-budget-factor", type=float, default=0.5)
+    parser.add_argument("--no-prune-gaussians", action="store_true", help="Temporarily skip all Gaussian removal while keeping densification enabled.")
     args = parser.parse_args()
 
     ext = import_extension()
@@ -1084,6 +1089,7 @@ def main():
                 pruning_score,
                 args.final_prune_score_thresh,
                 args.final_prune_min_gaussians,
+                dry_run=args.no_prune_gaussians,
             )
             after = int(model.means3d.shape[0])
             print(
