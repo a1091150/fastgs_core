@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import cv2
 import mlx.core as mx
 import numpy as np
 from mlx.optimizers import Adam
@@ -20,6 +21,7 @@ from train_scanner_fixed import (
     render_chw,
     save_as_spz,
     save_side_by_side,
+    to_hwc_numpy,
 )
 
 mx.set_cache_limit(limit=(1 << 31))
@@ -658,6 +660,58 @@ def reset_opacity_logits(
         optimizer_policy.replace_state_np("opacity_logits", current["opacity_logits"])
 
 
+def save_step_preview(
+    ext,
+    model: ScannerTrainModel,
+    cameras: list[TrainCamera],
+    targets: list[mx.array],
+    background: mx.array,
+    sh_degree: int,
+    eval_idx: int,
+    out_path: Path,
+) -> None:
+    n = len(cameras)
+    if n < 8:
+        pred_eval = render_chw(
+            ext=ext,
+            means3d=model.means3d,
+            features_dc=model.features_dc,
+            features_rest=model.features_rest,
+            opacities=model.get_opacities,
+            scales=model.get_scales,
+            rotations=model.get_rotations,
+            camera=cameras[eval_idx],
+            background=background,
+            sh_degree=sh_degree,
+        )
+        save_side_by_side(targets[eval_idx], pred_eval, out_path)
+        return
+
+    sampled_indices = [min(n - 1, int(math.floor(k * n / 8))) for k in range(1, 9)]
+    tiles = [np.clip(to_hwc_numpy(targets[0]), 0.0, 1.0)]
+    for sampled_idx in sampled_indices:
+        pred = render_chw(
+            ext=ext,
+            means3d=model.means3d,
+            features_dc=model.features_dc,
+            features_rest=model.features_rest,
+            opacities=model.get_opacities,
+            scales=model.get_scales,
+            rotations=model.get_rotations,
+            camera=cameras[sampled_idx],
+            background=background,
+            sh_degree=sh_degree,
+        )
+        tiles.append(np.clip(to_hwc_numpy(pred), 0.0, 1.0))
+
+    rows = [np.concatenate(tiles[row * 3 : (row + 1) * 3], axis=1) for row in range(3)]
+    grid = np.concatenate(rows, axis=0)
+    grid_bgr = (grid[:, :, ::-1] * 255.0).astype(np.uint8)
+    ok = cv2.imwrite(str(out_path), grid_bgr)
+    if not ok:
+        raise RuntimeError(f"Failed to write image: {out_path}")
+
+
 def densify_and_prune_fastgs(
     model: ScannerTrainModel,
     state: FastGSDensificationState,
@@ -1125,20 +1179,17 @@ def main():
             )
 
         if step % args.save_every == 0 or step == args.steps:
-            pred_eval = render_chw(
+            out_img = out_dir / f"step_{step:05d}.png"
+            save_step_preview(
                 ext=ext,
-                means3d=model.means3d,
-                features_dc=model.features_dc,
-                features_rest=model.features_rest,
-                opacities=model.get_opacities,
-                scales=model.get_scales,
-                rotations=model.get_rotations,
-                camera=cameras[eval_idx],
+                model=model,
+                cameras=cameras,
+                targets=targets,
                 background=base_bg,
                 sh_degree=active_sh_degree,
+                eval_idx=eval_idx,
+                out_path=out_img,
             )
-            out_img = out_dir / f"step_{step:05d}.png"
-            save_side_by_side(targets[eval_idx], pred_eval, out_img)
 
     for cam_idx, (camera, target_chw) in enumerate(zip(cameras, targets)):
         pred_camera = render_chw(
