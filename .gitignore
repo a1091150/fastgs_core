@@ -10,7 +10,7 @@ training/**/*.mp4
 __pycache__/
 *.py[cod]
 *$py.class
-*.png
+training/**/*.png
 # C extensions
 *.so
 *.npz

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="FastGS(3DGS) with MLX and Metal for 3D Gaussian Splatting training and rendering on Apple platforms."
+    >
+    <title>FastGS MLX</title>
+    <link rel="icon" type="image/png" href="./assets/icon.png">
+    <link rel="apple-touch-icon" href="./assets/icon.png">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="FastGS MLX home">
+        <span class="brand-mark">
+          <img src="./assets/icon.png" alt="" aria-hidden="true">
+        </span>
+        <span>FastGS MLX</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#demo" data-i18n="nav.demo">Demo</a>
+        <a href="#features" data-i18n="nav.features">Features</a>
+        <a href="https://github.com/a1091150/fastgs_core">GitHub</a>
+      </nav>
+      <div class="language-switcher" aria-label="Language switcher">
+        <button class="language-button is-active" type="button" data-lang-switch="en">English</button>
+        <button class="language-button" type="button" data-lang-switch="zh">中文</button>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow" data-i18n="hero.eyebrow">MLX + Metal Gaussian Splatting</p>
+          <h1 id="hero-title" data-i18n="hero.title">FastGS for Apple silicon.</h1>
+          <p class="hero-lede" data-i18n="hero.lede">
+            A compact MLX and Metal port of FastGS for 3D Gaussian Splatting
+            rendering, training, and custom extension experiments.
+          </p>
+          <div class="hero-actions" aria-label="Project links">
+            <a class="button primary" href="https://github.com/a1091150/fastgs_core" data-i18n="actions.github">View on GitHub</a>
+            <a class="button" href="https://github.com/a1091150/fastgs_core/blob/main/Readme.md">README</a>
+            <a class="button" href="https://github.com/a1091150/fastgs_core/blob/main/Readme_zhtw.md">中文 README</a>
+          </div>
+        </div>
+
+        <div class="hero-media" aria-label="FastGS MLX rendering demo">
+          <video
+            src="./assets/chair.mp4"
+            poster="./assets/chair.png"
+            autoplay
+            muted
+            loop
+            playsinline
+            controls
+          ></video>
+        </div>
+      </section>
+
+      <section id="demo" class="section" aria-labelledby="demo-title">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="demo.eyebrow">Demo</p>
+          <h2 id="demo-title" data-i18n="demo.title">From scanner input to rendered result</h2>
+          <p data-i18n="demo.copy">
+            The page uses sample captures and rendered videos to show the
+            current FastGS MLX workflow.
+          </p>
+        </div>
+
+        <div class="comparison-grid">
+          <article class="media-panel">
+            <div class="panel-label" data-i18n="panel.render">Render / Output</div>
+            <video class="sbs-right" src="./assets/chair.mp4" poster="./assets/chair.png" muted loop playsinline controls></video>
+            <div class="panel-copy">
+              <h3 data-i18n="chair.output.title">Chair rendered result</h3>
+              <p data-i18n="chair.output.copy">FastGS MLX rendering demo, used as the main video on the page.</p>
+            </div>
+          </article>
+
+          <article class="media-panel">
+            <div class="panel-label" data-i18n="panel.render">Render / Output</div>
+            <video src="./assets/output.mp4" muted loop playsinline controls></video>
+            <div class="panel-copy">
+              <h3 data-i18n="dog.output.title">Rendered result</h3>
+              <p data-i18n="dog.output.copy">A FastGS MLX rendered result video that can play directly on GitHub Pages.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="features" class="section feature-band" aria-labelledby="features-title">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="features.eyebrow">Project Focus</p>
+          <h2 id="features-title" data-i18n="features.title">Built for MLX-native 3DGS experiments</h2>
+        </div>
+
+        <ul class="feature-list">
+          <li>
+            <strong data-i18n="feature.mlx.title">MLX training and rendering</strong>
+            <span data-i18n-html="feature.mlx.copy">Ports FastGS rendering and training from PyTorch and CUDA shading language into MLX C++ and Metal shading language with OpenAI Codex collaboration, with a path toward MLX-Swift support.</span>
+          </li>
+          <li>
+            <strong data-i18n="feature.metal.title">Metal custom extensions</strong>
+            <span data-i18n-html="feature.metal.copy">Provides a basic MLX C++ template by implementing <code>MLX Primitive</code>, connecting forward rendering and backward training as a reusable example for future extensions.</span>
+          </li>
+          <li>
+            <strong data-i18n="feature.gradient.title">FastGS gradient workflow</strong>
+            <span data-i18n-html="feature.gradient.copy">3DGS relies on PyTorch <code>retain_grad()</code> to keep selected gradients, which is difficult to port to MLX. FastGS instead trains with <code>viewspace_points</code> parameters to obtain the information needed for post-training processing.</span>
+          </li>
+          <li>
+            <strong data-i18n="feature.scanner.title">Scanner dataset pipeline</strong>
+            <span data-i18n-html="feature.scanner.copy">Supports iPhone LiDAR exports, using Point Cloud and image data from 3D Scanner App for training.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section id="references" class="section" aria-labelledby="references-title">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="references.eyebrow">References</p>
+          <h2 id="references-title" data-i18n="references.title">Related projects and tools</h2>
+        </div>
+
+        <ul class="reference-list">
+          <li>
+            <a href="https://fastgs.github.io/" target="_blank" rel="noopener noreferrer">
+              <strong>FastGS</strong>
+              <span data-i18n="references.fastgs">Training 3D Gaussian Splatting in 100 seconds.</span>
+            </a>
+          </li>
+          <li>
+            <a href="https://3dscannerapp.com/" target="_blank" rel="noopener noreferrer">
+              <strong>3D Scanner App</strong>
+              <span data-i18n="references.scanner">Capture iPhone LiDAR point clouds and images for training datasets.</span>
+            </a>
+          </li>
+          <li>
+            <a href="https://github.com/ml-explore/mlx" target="_blank" rel="noopener noreferrer">
+              <strong>MLX</strong>
+              <span data-i18n="references.mlx">Apple's array framework for machine learning on Apple silicon.</span>
+            </a>
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>FastGS MLX</span>
+      <span data-i18n="footer.copy">MLX, Metal, and 3D Gaussian Splatting on Apple platforms.</span>
+      <span data-i18n="footer.status">Still under development.</span>
+    </footer>
+    <script src="./script.js"></script>
+  </body>
+</html>
