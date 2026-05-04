@@ -86,7 +86,7 @@ train-scanner-fastgs:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29' --final-prune-min-opacity 0.03 --final-prune-score-thresh 0.95 --final-prune-min-gaussians 128
 
 train-scanner-fastgs-no-prune:
-	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29 --final-prune-min-opacity 0.03 --final-prune-score-thresh 0.95 --final-prune-min-gaussians 128 --no-prune-gaussians'
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29 --final-prune-min-opacity 0.03 --final-prune-score-thresh 0.95 --final-prune-min-gaussians 128 --no-prune-gaussians --reset-optimizer'
 
 train-scanner-fastgs-smoke:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14 --steps 200 --save-every 100 --log-every 10 --max-frames 24 --densify-from-step 50 --densification-interval 50 --densify-until-step 200 --final-prune-start 100000 --final-prune-end 100000'

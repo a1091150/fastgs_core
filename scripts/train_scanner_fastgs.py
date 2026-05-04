@@ -712,6 +712,24 @@ def save_step_preview(
         raise RuntimeError(f"Failed to write image: {out_path}")
 
 
+def make_optimizer_policy(args) -> ScannerFastGSOptimizerPolicy:
+    return ScannerFastGSOptimizerPolicy(
+        OptimizerPolicyConfig(
+            means_lr=args.lr_means,
+            dc_lr=args.lr_colors,
+            sh_lr=args.lr_colors,
+            opacity_lr=args.lr_opacity,
+            scaling_lr=args.lr_scales,
+            rotation_lr=args.lr_rotations,
+            position_lr_init=args.lr_means,
+            position_lr_final=1.6e-6,
+            position_lr_delay_mult=0.01,
+            position_lr_max_steps=args.steps,
+            betas=(args.adam_beta1, args.adam_beta2),
+        )
+    )
+
+
 def densify_and_prune_fastgs(
     model: ScannerTrainModel,
     state: FastGSDensificationState,
@@ -856,7 +874,7 @@ def main():
     parser.add_argument("--data", type=str, default="/Users/yangdunfu/Downloads/2026_03_01_16_36_14")
     parser.add_argument("--steps", type=int, default=2000)
     parser.add_argument("--log-every", type=int, default=10)
-    parser.add_argument("--save-every", type=int, default=500)
+    parser.add_argument("--save-every", type=int, default=100)
     parser.add_argument("--width", type=int, default=480)
     parser.add_argument("--height", type=int, default=360)
     parser.add_argument("--max-frames", type=int, default=120)
@@ -906,6 +924,8 @@ def main():
     parser.add_argument("--max-world-scale-factor", type=float, default=0.1)
     parser.add_argument("--prune-budget-factor", type=float, default=0.5)
     parser.add_argument("--no-prune-gaussians", action="store_true", help="Temporarily skip all Gaussian removal while keeping densification enabled.")
+    parser.add_argument("--reset-optimizer", action="store_true", help="Reset the learning-rate schedule every --reset-optimizer-interval steps.")
+    parser.add_argument("--reset-optimizer-interval", type=int, default=201)
     args = parser.parse_args()
 
     ext = import_extension()
@@ -930,21 +950,7 @@ def main():
 
     model = init_model(points, colors, args.sh_degree)
     dens_state = make_densification_state(points.shape[0])
-    optimizer_policy = ScannerFastGSOptimizerPolicy(
-        OptimizerPolicyConfig(
-            means_lr=args.lr_means,
-            dc_lr=args.lr_colors,
-            sh_lr=args.lr_colors,
-            opacity_lr=args.lr_opacity,
-            scaling_lr=args.lr_scales,
-            rotation_lr=args.lr_rotations,
-            position_lr_init=args.lr_means,
-            position_lr_final=1.6e-6,
-            position_lr_delay_mult=0.01,
-            position_lr_max_steps=args.steps,
-            betas=(args.adam_beta1, args.adam_beta2),
-        )
-    )
+    optimizer_policy = make_optimizer_policy(args)
     gaussian_ops = ScannerGaussianOps(optimizer_policy=optimizer_policy)
     scene_extent = compute_scene_extent(points)
 
@@ -965,6 +971,7 @@ def main():
     losses = []
     eval_idx = 0
     active_sh_degree = 0
+    optimizer_lr_reset_step = 0
     viewpoint_stack = list(range(len(cameras)))
 
     def loss_fn(means3d, features_dc, features_rest, opacity_logits, log_scales, rotations, viewspace_points, camera, target_chw, bg, use_l1, sh_degree):
@@ -1025,7 +1032,8 @@ def main():
     grad_fn = mx.value_and_grad(loss_fn, argnums=(0, 1, 2, 3, 4, 5, 6))
 
     for step in range(1, args.steps + 1):
-        xyz_lr = optimizer_policy.update_learning_rate(step)
+        lr_step = step - optimizer_lr_reset_step
+        xyz_lr = optimizer_policy.update_learning_rate(lr_step)
         if step % 1000 == 0:
             active_sh_degree = min(active_sh_degree + 1, args.sh_degree)
 
@@ -1066,6 +1074,10 @@ def main():
             grad_map["rotations"] = d_rotations
 
         optimizer_policy.apply_gradients(model, grad_map, step)
+
+        if args.reset_optimizer and args.reset_optimizer_interval > 0 and step % args.reset_optimizer_interval == 0:
+            optimizer_lr_reset_step = step
+            print(f"[fastgs] step={step:05d} reset learning-rate schedule")
 
         mx.eval(loss, d_viewspace, model.means3d)
         curr_loss = float(loss.item())
