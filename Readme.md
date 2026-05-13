@@ -21,6 +21,7 @@ The project is still under development.
 ## Environment Setup
 
 - Install Xcode from the App Store.
+- In XCode -> Settings -> Component -> Other Components, check Metal Toolchain is installed.
 - Install CMake with `brew install cmake`.
 - Install Conda. The `Makefile` assumes a Conda environment by default.
 
