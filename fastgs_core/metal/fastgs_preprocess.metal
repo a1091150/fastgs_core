@@ -189,9 +189,9 @@ inline float3 compute_cov2d(const float3 mean,
       0.0f, 0.0f, 0.0f);
 
   float3x3 w = float3x3(
-      viewmatrix[0], viewmatrix[1], viewmatrix[2],
-      viewmatrix[4], viewmatrix[5], viewmatrix[6],
-      viewmatrix[8], viewmatrix[9], viewmatrix[10]);
+      viewmatrix[0], viewmatrix[4], viewmatrix[8],
+      viewmatrix[1], viewmatrix[5], viewmatrix[9],
+      viewmatrix[2], viewmatrix[6], viewmatrix[10]);
 
   float3x3 t_mat = w * j;
   float3x3 vrk = float3x3(

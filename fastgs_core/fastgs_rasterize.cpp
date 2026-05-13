@@ -47,11 +47,12 @@ std::vector<mx::array> fastgs_rasterize(const RasterizeInput& input) {
   const int num_pixels = input.params.image_width * input.params.image_height;
   const int sample_size =
       input.params.bucket_sum * input.params.block_x * input.params.block_y;
+  const int sampled_ar_size = input.params.num_channels * sample_size;
 
   std::vector<mx::Shape> output_shapes = {
       {sample_size},
       {sample_size},
-      {input.params.num_channels, sample_size},
+      {sampled_ar_size},
       {num_pixels},
       {num_pixels},
       {input.params.num_tiles},

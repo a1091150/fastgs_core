@@ -6,7 +6,7 @@ CONDA_BASE := $(shell conda info --base 2>/dev/null)
 CLASS ?=
 FORCE ?= 0
 
-.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel train-scanner-fixed train-scanner-fastgs train-scanner-fastgs-no-prune train-scanner-fastgs-smoke train-scanner-fastgs-bbox clean
+.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel train-scanner-fixed train-scanner-fastgs train-scanner-fastgs2 train-scanner-fastgs2-base train-scanner-fastgs2-smoke train-scanner-fastgs-no-prune train-scanner-fastgs-smoke train-scanner-fastgs-bbox clean
 
 help:
 	@printf "Targets:\n"
@@ -23,6 +23,9 @@ help:
 	@printf "  make pip-wheel         Build wheel/sdist via python -m build.\n"
 	@printf "  make train-scanner-fixed Run scripts/train_scanner_fixed.py with the active conda python.\n"
 	@printf "  make train-scanner-fastgs Run scripts/train_scanner_fastgs.py with FastGS-style densify/prune.\n"
+	@printf "  make train-scanner-fastgs2 Run self-contained scanner FastGS2 training.\n"
+	@printf "  make train-scanner-fastgs2-base Run scanner FastGS2 with FastGS train_base-style 30k params.\n"
+	@printf "  make train-scanner-fastgs2-smoke Short smoke run for train_scanner_fastgs2.py.\n"
 	@printf "  make train-scanner-fastgs-no-prune Temporary FastGS run that never removes Gaussians.\n"
 	@printf "  make train-scanner-fastgs-smoke Short smoke run for train_scanner_fastgs.py.\n"
 	@printf "  make train-scanner-fastgs-bbox FastGS training with bbox extra-point seeding.\n"
@@ -84,6 +87,15 @@ train-scanner-fixed-bbox:
 
 train-scanner-fastgs:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29' --final-prune-min-opacity 0.03 --final-prune-score-thresh 0.95 --final-prune-min-gaussians 128
+
+train-scanner-fastgs2:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs2.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29 --final-prune-min-opacity 0.03 --final-prune-score-thresh 0.95 --final-prune-min-gaussians 128'
+
+train-scanner-fastgs2-base:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs2.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29 --steps 30000 --save-every 30000 --log-every 10 --lr-means 0.00016 --lr-colors 0.0025 --lr-opacity 0.025 --lr-scales 0.005 --lr-rotations 0.001 --densify-from-step 500 --densify-until-step 15000 --densification-interval 500 --opacity-reset-interval 3000 --grad-thresh 0.0002 --grad-abs-thresh 0.0012 --dense 0.001 --loss-thresh 0.1 --final-prune-min-opacity 0.1 --final-prune-start 15000 --final-prune-end 30000 --final-prune-interval 3000 --final-prune-score-thresh 0.9 --final-prune-min-gaussians 64'
+
+train-scanner-fastgs2-smoke:
+	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs2.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29 --steps 200 --save-every 100 --log-every 10 --densify-from-step 50 --densification-interval 50 --densify-until-step 200 --final-prune-start 100000 --final-prune-end 100000'
 
 train-scanner-fastgs-no-prune:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fastgs.py --data /Users/yangdunfu/Downloads/2026_05_04_16_51_29 --final-prune-min-opacity 0.03 --final-prune-score-thresh 0.95 --final-prune-min-gaussians 128 --no-prune-gaussians --reset-optimizer'

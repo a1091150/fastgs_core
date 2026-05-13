@@ -1,31 +1,613 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import math
+import os
+import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import cv2
 import mlx.core as mx
+import mlx.nn as nn
 import numpy as np
+from PIL import Image
 from mlx.optimizers import Adam
 
-from train_scanner_fixed import (
-    ScannerTrainModel,
-    TrainCamera,
-    import_extension,
-    init_model,
-    logit,
-    prepare_dataset,
-    render_chw,
-    save_as_spz,
-    save_side_by_side,
-    to_chw_mx,
-    to_hwc_numpy,
-)
-
 mx.set_cache_limit(limit=(1 << 31))
+
+try:
+    import spz
+except Exception:
+    spz = None
+
+
+def import_extension():
+    try:
+        from fastgs_core import _fastgs_core as ext
+        return ext
+    except Exception:
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        sys.path.insert(0, os.path.join(repo_root, "build"))
+        import _fastgs_core as ext
+        return ext
+
+
+@dataclass
+class ScannerFrame:
+    index: int
+    image_path: Path
+    json_path: Path
+    frame: dict | None = None
+
+
+@dataclass
+class TrainCamera:
+    viewmatrix: mx.array
+    projmatrix: mx.array
+    campos: mx.array
+    image_width: int
+    image_height: int
+    tan_fovx: float
+    tan_fovy: float
+
+
+
+def to_hwc_numpy(chw: mx.array) -> np.ndarray:
+    mx.eval(chw)
+    arr = np.array(chw)
+    if arr.ndim != 3 or arr.shape[0] != 3:
+        raise RuntimeError(f"Expected CHW with C=3, got {arr.shape}")
+    return np.transpose(arr, (1, 2, 0))
+
+
+def to_chw_mx(out_color: mx.array, h: int, w: int) -> mx.array:
+    shape = tuple(out_color.shape)
+    if len(shape) == 1 and shape[0] == h * w * 3:
+        return mx.transpose(mx.reshape(out_color, (h, w, 3)), (2, 0, 1))
+    if len(shape) == 2 and shape == (h * w, 3):
+        return mx.transpose(mx.reshape(out_color, (h, w, 3)), (2, 0, 1))
+    if len(shape) == 3 and shape == (3, h, w):
+        return out_color
+    if len(shape) == 2 and shape == (3, h * w):
+        return mx.reshape(out_color, (3, h, w))
+    if len(shape) == 3 and shape == (h, w, 3):
+        return mx.transpose(out_color, (2, 0, 1))
+    raise RuntimeError(f"Unexpected out_color shape: {shape}")
+
+
+def logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, 1.0e-6, 1.0 - 1.0e-6)
+    return np.log(p / (1.0 - p))
+
+
+def quaternions_wxyz_to_rotation_matrices(quats: np.ndarray) -> np.ndarray:
+    q = np.asarray(quats, dtype=np.float32)
+    norms = np.linalg.norm(q, axis=1, keepdims=True)
+    q = q / np.clip(norms, 1.0e-8, None)
+
+    w = q[:, 0]
+    x = q[:, 1]
+    y = q[:, 2]
+    z = q[:, 3]
+
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    wx = w * x
+    wy = w * y
+    wz = w * z
+
+    rot = np.empty((q.shape[0], 3, 3), dtype=np.float32)
+    rot[:, 0, 0] = 1.0 - 2.0 * (yy + zz)
+    rot[:, 0, 1] = 2.0 * (xy - wz)
+    rot[:, 0, 2] = 2.0 * (xz + wy)
+    rot[:, 1, 0] = 2.0 * (xy + wz)
+    rot[:, 1, 1] = 1.0 - 2.0 * (xx + zz)
+    rot[:, 1, 2] = 2.0 * (yz - wx)
+    rot[:, 2, 0] = 2.0 * (xz - wy)
+    rot[:, 2, 1] = 2.0 * (yz + wx)
+    rot[:, 2, 2] = 1.0 - 2.0 * (xx + yy)
+    return rot
+
+
+def rotation_matrices_to_quaternions_wxyz(rot: np.ndarray) -> np.ndarray:
+    r = np.asarray(rot, dtype=np.float32)
+    q = np.empty((r.shape[0], 4), dtype=np.float32)
+
+    trace = r[:, 0, 0] + r[:, 1, 1] + r[:, 2, 2]
+    mask = trace > 0.0
+
+    if np.any(mask):
+        s = np.sqrt(trace[mask] + 1.0) * 2.0
+        q[mask, 0] = 0.25 * s
+        q[mask, 1] = (r[mask, 2, 1] - r[mask, 1, 2]) / s
+        q[mask, 2] = (r[mask, 0, 2] - r[mask, 2, 0]) / s
+        q[mask, 3] = (r[mask, 1, 0] - r[mask, 0, 1]) / s
+
+    mask_x = (~mask) & (r[:, 0, 0] > r[:, 1, 1]) & (r[:, 0, 0] > r[:, 2, 2])
+    if np.any(mask_x):
+        s = np.sqrt(1.0 + r[mask_x, 0, 0] - r[mask_x, 1, 1] - r[mask_x, 2, 2]) * 2.0
+        q[mask_x, 0] = (r[mask_x, 2, 1] - r[mask_x, 1, 2]) / s
+        q[mask_x, 1] = 0.25 * s
+        q[mask_x, 2] = (r[mask_x, 0, 1] + r[mask_x, 1, 0]) / s
+        q[mask_x, 3] = (r[mask_x, 0, 2] + r[mask_x, 2, 0]) / s
+
+    mask_y = (~mask) & (~mask_x) & (r[:, 1, 1] > r[:, 2, 2])
+    if np.any(mask_y):
+        s = np.sqrt(1.0 + r[mask_y, 1, 1] - r[mask_y, 0, 0] - r[mask_y, 2, 2]) * 2.0
+        q[mask_y, 0] = (r[mask_y, 0, 2] - r[mask_y, 2, 0]) / s
+        q[mask_y, 1] = (r[mask_y, 0, 1] + r[mask_y, 1, 0]) / s
+        q[mask_y, 2] = 0.25 * s
+        q[mask_y, 3] = (r[mask_y, 1, 2] + r[mask_y, 2, 1]) / s
+
+    mask_z = (~mask) & (~mask_x) & (~mask_y)
+    if np.any(mask_z):
+        s = np.sqrt(1.0 + r[mask_z, 2, 2] - r[mask_z, 0, 0] - r[mask_z, 1, 1]) * 2.0
+        q[mask_z, 0] = (r[mask_z, 1, 0] - r[mask_z, 0, 1]) / s
+        q[mask_z, 1] = (r[mask_z, 0, 2] + r[mask_z, 2, 0]) / s
+        q[mask_z, 2] = (r[mask_z, 1, 2] + r[mask_z, 2, 1]) / s
+        q[mask_z, 3] = 0.25 * s
+
+    q /= np.clip(np.linalg.norm(q, axis=1, keepdims=True), 1.0e-8, None)
+    return q
+
+
+def load_ply_positions_colors(path: Path) -> tuple[np.ndarray, np.ndarray | None]:
+    try:
+        from plyfile import PlyData
+    except ImportError as exc:
+        raise ImportError(
+            "Reading dataset point clouds requires the 'plyfile' package at runtime."
+        ) from exc
+
+    ply = PlyData.read(str(path))
+    vertices = ply["vertex"]
+    points = np.stack([vertices["x"], vertices["y"], vertices["z"]], axis=1).astype(np.float32)
+
+    colors = None
+    names = vertices.data.dtype.names or ()
+    if {"red", "green", "blue"}.issubset(names):
+        colors = np.stack([vertices["red"], vertices["green"], vertices["blue"]], axis=1).astype(np.float32)
+        if colors.max() > 1.0:
+            colors = colors / 255.0
+        colors = np.clip(colors, 0.0, 1.0)
+    return points, colors
+
+
+def extract_frame_index(path: Path) -> int | None:
+    m = re.search(r"frame_(\d+)", path.stem)
+    if m is None:
+        return None
+    return int(m.group(1))
+
+
+def collect_scanner_frames(
+    dataset_dir: Path,
+    max_frames: int,
+    frame_step: int,
+    start_index: int,
+) -> list[ScannerFrame]:
+    image_files = sorted(dataset_dir.glob("frame_*.jpg"))
+    json_files = sorted(dataset_dir.glob("frame_*.json"))
+
+    image_map = {}
+    json_map = {}
+    for p in image_files:
+        idx = extract_frame_index(p)
+        if idx is not None:
+            image_map[idx] = p
+    for p in json_files:
+        idx = extract_frame_index(p)
+        if idx is not None:
+            json_map[idx] = p
+
+    common = sorted(set(image_map.keys()) & set(json_map.keys()))
+    common = [i for i in common if i >= start_index]
+    if frame_step > 1:
+        common = common[::frame_step]
+    if max_frames > 0:
+        common = common[:max_frames]
+
+    frames = [ScannerFrame(i, image_map[i], json_map[i]) for i in common]
+    if not frames:
+        raise RuntimeError(f"No scanner frame pairs found in {dataset_dir}")
+    return frames
+
+
+def load_json(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def make_axis_transform() -> tuple[np.ndarray, np.ndarray]:
+    a = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, -1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    a4 = np.eye(4, dtype=np.float32)
+    a4[:3, :3] = a
+    return a, a4
+
+
+def compute_camera_extent(camera_positions: list[np.ndarray]) -> float:
+    centers_np = np.stack(camera_positions, axis=0).astype(np.float32)
+    center = centers_np.mean(axis=0)
+    dist = np.linalg.norm(centers_np - center[None, :], axis=1)
+    radius = float(np.max(dist)) * 1.1
+    return max(radius, 1.0e-6)
+
+
+def build_camera_from_scanner_json(
+    frame: dict,
+    image_width: int,
+    image_height: int,
+    znear: float = 0.001,
+    zfar: float = 1000.0,
+) -> TrainCamera:
+    width = float(image_width)
+    height = float(image_height)
+    raw_width = float(frame.get("w", image_width))
+    raw_height = float(frame.get("h", image_height))
+    sx = width / raw_width
+    sy = height / raw_height
+
+    fx = float(frame["fl_x"]) * sx
+    fy = float(frame["fl_y"]) * sy
+    cx = float(frame["cx"]) * sx
+    cy = float(frame["cy"]) * sy
+
+    c2w = np.array(frame["transform_matrix"], dtype=np.float32)
+    r = c2w[:3, :3].astype(np.float32)
+    t = c2w[:3, 3:4].astype(np.float32)
+    r = r @ np.diag([1.0, -1.0, -1.0]).astype(np.float32)
+
+    rinv = r.T
+    tinv = (-rinv @ t).astype(np.float32)
+
+    raw_viewmat = np.eye(4, dtype=np.float32)
+    raw_viewmat[:3, :3] = rinv
+    raw_viewmat[:3, 3:4] = tinv
+
+    fovx = 2.0 * math.atan(width / (2.0 * fx))
+    fovy = 2.0 * math.atan(height / (2.0 * fy))
+
+    top = znear * math.tan(0.5 * fovy)
+    bottom = -top
+    right = znear * math.tan(0.5 * fovx)
+    left = -right
+
+    raw_projmat = np.array(
+        [
+            [2.0 * znear / (right - left), 0.0, (right + left) / (right - left), 0.0],
+            [0.0, 2.0 * znear / (top - bottom), (top + bottom) / (top - bottom), 0.0],
+            [0.0, 0.0, (zfar + znear) / (zfar - znear), -(zfar * znear) / (zfar - znear)],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    raw_full_proj = raw_projmat @ raw_viewmat
+    camera_position = t[:, 0].astype(np.float32)
+
+    return TrainCamera(
+        viewmatrix=mx.array(raw_viewmat.T, dtype=mx.float32),
+        projmatrix=mx.array(raw_full_proj.T, dtype=mx.float32),
+        campos=mx.array(camera_position[None, :], dtype=mx.float32),
+        image_width=int(image_width),
+        image_height=int(image_height),
+        tan_fovx=float(math.tan(0.5 * fovx)),
+        tan_fovy=float(math.tan(0.5 * fovy)),
+    )
+
+
+def load_target_image(path: Path, width: int, height: int) -> np.ndarray:
+    image = Image.open(path)
+    rgba = np.array(image.convert("RGBA"), dtype=np.float32) / 255.0
+    if rgba.shape[1] != width or rgba.shape[0] != height:
+        rgba = np.array(
+            Image.fromarray((rgba * 255.0).astype(np.uint8), mode="RGBA").resize(
+                (width, height), Image.Resampling.BILINEAR
+            ),
+            dtype=np.float32,
+        ) / 255.0
+    bg = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return rgba[:, :, :3] * rgba[:, :, 3:4] + bg * (1.0 - rgba[:, :, 3:4])
+
+
+def prepare_dataset(
+    dataset_dir: Path,
+    width: int,
+    height: int,
+    max_frames: int,
+    frame_step: int,
+    start_index: int,
+    max_points: int,
+    seed: int,
+    extra_points_ratio: float,
+    extra_points_mode: str,
+    extra_points_jitter_scale: float,
+) -> tuple[list[TrainCamera], list[mx.array], np.ndarray, np.ndarray, int, float]:
+    a, a4 = make_axis_transform()
+    frames = collect_scanner_frames(dataset_dir, max_frames, frame_step, start_index)
+    points, colors = load_ply_positions_colors(dataset_dir / "points.ply")
+    points = (a @ points.T).T
+
+    camera_positions = []
+    for frame in frames:
+        raw = load_json(frame.json_path)
+        with Image.open(frame.image_path) as img:
+            raw_width, raw_height = img.size
+
+        intrinsics = raw.get("intrinsics")
+        if intrinsics is None or len(intrinsics) != 9:
+            raise RuntimeError(f"Invalid intrinsics in {frame.json_path}")
+        pose = raw.get("cameraPoseARFrame")
+        if pose is None or len(pose) != 16:
+            raise RuntimeError(f"Invalid cameraPoseARFrame in {frame.json_path}")
+
+        c2w_src = np.array(pose, dtype=np.float32).reshape(4, 4)
+        c2w = (a4 @ c2w_src).astype(np.float32)
+        frame.frame = {
+            "w": int(raw_width),
+            "h": int(raw_height),
+            "file_path": frame.image_path.name,
+            "fl_x": float(intrinsics[0]),
+            "fl_y": float(intrinsics[4]),
+            "cx": float(intrinsics[2]),
+            "cy": float(intrinsics[5]),
+            "transform_matrix": c2w.tolist(),
+        }
+        camera_positions.append(c2w[:3, 3])
+
+    camera_radius = compute_camera_extent(camera_positions)
+
+    rng = np.random.default_rng(seed)
+    if max_points > 0 and points.shape[0] > max_points:
+        keep = rng.choice(points.shape[0], size=max_points, replace=False)
+        points = points[keep]
+        if colors is not None:
+            colors = colors[keep]
+
+    colors_np = colors.astype(np.float32) if colors is not None else np.full_like(points, 0.5, dtype=np.float32)
+    base_point_count = int(points.shape[0])
+    extra_points = int(round(points.shape[0] * extra_points_ratio))
+    if extra_points > 0:
+        if extra_points_mode == "surface-jitter":
+            source_idx = rng.integers(0, points.shape[0], size=extra_points)
+            bbox_min = points.min(axis=0)
+            bbox_max = points.max(axis=0)
+            diag = float(np.linalg.norm(bbox_max - bbox_min))
+            jitter_std = extra_points_jitter_scale * diag
+            jitter = rng.normal(loc=0.0, scale=jitter_std, size=(extra_points, 3)).astype(np.float32)
+            extra_xyz = points[source_idx] + jitter
+            extra_rgb = colors_np[source_idx]
+        elif extra_points_mode == "bbox":
+            bbox_min = points.min(axis=0)
+            bbox_max = points.max(axis=0)
+            extra_xyz = rng.uniform(low=bbox_min, high=bbox_max, size=(extra_points, 3)).astype(np.float32)
+            source_idx = rng.integers(0, colors_np.shape[0], size=extra_points)
+            extra_rgb = colors_np[source_idx]
+        else:
+            raise ValueError(f"Unsupported --extra-points-mode: {extra_points_mode}")
+
+        points = np.concatenate([points, extra_xyz], axis=0).astype(np.float32)
+        colors_np = np.concatenate([colors_np, extra_rgb.astype(np.float32)], axis=0)
+
+    cameras = []
+    targets = []
+    for f in frames:
+        if f.frame is None:
+            raise RuntimeError(f"Missing normalized frame metadata for {f.json_path}")
+        c2w = np.array(f.frame["transform_matrix"], dtype=np.float32)
+        norm_frame = dict(f.frame)
+        norm_frame["transform_matrix"] = c2w.tolist()
+        camera = build_camera_from_scanner_json(
+            frame=norm_frame,
+            image_width=width,
+            image_height=height,
+        )
+        target_hwc = load_target_image(f.image_path, width, height)
+        target_chw = np.transpose(target_hwc, (2, 0, 1))
+        cameras.append(camera)
+        targets.append(mx.array(target_chw, dtype=mx.float32))
+
+    return cameras, targets, points.astype(np.float32), colors_np, base_point_count, camera_radius
+
+
+class ScannerTrainModel(nn.Module):
+    def __init__(
+        self,
+        means3d: mx.array,
+        features_dc: mx.array,
+        features_rest: mx.array,
+        opacity_logits: mx.array,
+        log_scales: mx.array,
+        rotations: mx.array,
+    ):
+        super().__init__()
+        self.means3d = means3d
+        self.features_dc = features_dc
+        self.features_rest = features_rest
+        self.opacity_logits = opacity_logits
+        self.log_scales = log_scales
+        self.rotations = rotations
+
+    @property
+    def get_opacities(self) -> mx.array:
+        return mx.sigmoid(self.opacity_logits)
+
+    @property
+    def get_scales(self) -> mx.array:
+        # Trainable scales are stored in log space for optimization stability.
+        # Rendering/rasterization expects linear-space scales, so convert here.
+        return mx.exp(self.log_scales)
+
+    @property
+    def get_rotations(self) -> mx.array:
+        return self.rotations / (mx.linalg.norm(self.rotations, axis=1, keepdims=True) + 1.0e-8)
+
+
+def render_chw(
+    ext,
+    means3d: mx.array,
+    features_dc: mx.array,
+    features_rest: mx.array,
+    opacities: mx.array,
+    scales: mx.array,
+    rotations: mx.array,
+    camera: TrainCamera,
+    background: mx.array,
+    sh_degree: int,
+) -> mx.array:
+    n = means3d.shape[0]
+    inputs = {
+        "background": background,
+        "means3d": means3d,
+        "dc": features_dc,
+        "sh": features_rest,
+        "opacities": opacities,
+        "scales": scales,
+        "rotations": rotations,
+        "metric_map": mx.zeros((camera.image_width * camera.image_height,), dtype=mx.int32),
+        "viewmatrix": camera.viewmatrix,
+        "projmatrix": camera.projmatrix,
+        "campos": camera.campos,
+        "viewspace_points": mx.zeros((n, 4), dtype=mx.float32),
+    }
+    out = ext.rasterize_gaussians(
+        inputs,
+        camera.image_width,
+        camera.image_height,
+        16,
+        16,
+        camera.tan_fovx,
+        camera.tan_fovy,
+        sh_degree,
+        1.0,
+        1.0,
+        False,
+        False,
+    )
+    out_color = out["out_color"]
+    if out_color.size == 0:
+        bg = np.array(background, dtype=np.float32)
+        return mx.array(
+            np.broadcast_to(bg.reshape(3, 1, 1), (3, camera.image_height, camera.image_width)).copy(),
+            dtype=mx.float32,
+        )
+    return to_chw_mx(out_color, camera.image_height, camera.image_width)
+
+
+def save_side_by_side(target_chw: mx.array, pred_chw: mx.array, out_path: Path) -> None:
+    target_hwc = np.clip(to_hwc_numpy(target_chw), 0.0, 1.0)
+    pred_hwc = np.clip(to_hwc_numpy(pred_chw), 0.0, 1.0)
+    h = target_hwc.shape[0]
+    sep = np.zeros((h, 2, 3), dtype=np.float32)
+    vis = np.concatenate([target_hwc, sep, pred_hwc], axis=1)
+    vis_bgr = (vis[:, :, ::-1] * 255.0).astype(np.uint8)
+    ok = cv2.imwrite(str(out_path), vis_bgr)
+    if not ok:
+        raise RuntimeError(f"Failed to write image: {out_path}")
+
+
+def init_model(points: np.ndarray, colors: np.ndarray, sh_degree: int) -> ScannerTrainModel:
+    n = points.shape[0]
+    bbox_min = points.min(axis=0)
+    bbox_max = points.max(axis=0)
+    diag = float(np.linalg.norm(bbox_max - bbox_min))
+    # base_scale = max(1.0e-3, 0.01 * diag)
+    base_scale = 0.02
+
+    # Keep the trainable scale parameter in log space. Any render/rasterizer path
+    # must convert back to linear scale via exp(log_scales).
+    log_scales = np.full((n, 3), math.log(base_scale), dtype=np.float32)
+    rotations = np.zeros((n, 4), dtype=np.float32)
+    rotations[:, 0] = 1.0
+    opacity_logits = logit(np.full((n,), 0.82, dtype=np.float32)).astype(np.float32)
+
+    sh_c0 = 0.28209479177387814
+    features_dc = ((colors - 0.5) / sh_c0).astype(np.float32)
+    rest_coeffs = max(0, (sh_degree + 1) ** 2 - 1)
+    features_rest = np.zeros((n, rest_coeffs, 3), dtype=np.float32)
+
+    return ScannerTrainModel(
+        means3d=mx.array(points, dtype=mx.float32),
+        features_dc=mx.array(features_dc, dtype=mx.float32),
+        features_rest=mx.array(features_rest, dtype=mx.float32),
+        opacity_logits=mx.array(opacity_logits, dtype=mx.float32),
+        log_scales=mx.array(log_scales, dtype=mx.float32),
+        rotations=mx.array(rotations, dtype=mx.float32),
+    )
+
+
+def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> bool:
+    if spz is None:
+        print("[WARN] spz is not available; skip final.spz export")
+        return False
+
+    cloud = spz.GaussianCloud()
+    cloud.antialiased = True
+
+    # Match the legacy fastgs_mlx export path: SPZ stores the underlying
+    # log-scale tensor instead of the linear scale used for rasterization.
+    mx.eval(
+        model.means3d,
+        model.log_scales,
+        model.get_rotations,
+        model.opacity_logits,
+        model.features_dc,
+        model.features_rest,
+    )
+    means = np.array(model.means3d, dtype=np.float32)
+    means_spz = np.empty_like(means)
+    # Only care about scaniverse app preview.
+    means_spz[:, 0] = means[:, 0]
+    means_spz[:, 1] = -means[:, 2]
+    means_spz[:, 2] = means[:, 1]
+
+    scales = np.array(model.log_scales, dtype=np.float32)
+    quats = np.array(model.get_rotations, dtype=np.float32)
+    rot_mats = quaternions_wxyz_to_rotation_matrices(quats)
+    axis3 = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, -1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    rot_mats_spz = axis3 @ rot_mats @ axis3.T
+    quats_spz = rotation_matrices_to_quaternions_wxyz(rot_mats_spz)
+    opacity_logits = np.array(model.opacity_logits, dtype=np.float32)
+    features_dc = np.array(model.features_dc, dtype=np.float32)
+    features_rest = np.array(model.features_rest, dtype=np.float32)
+
+    cloud.positions = means_spz.flatten().astype(np.float32)
+    cloud.scales = scales.flatten().astype(np.float32)
+    cloud.rotations = quats_spz.flatten().astype(np.float32)
+    cloud.alphas = opacity_logits.flatten().astype(np.float32)
+    cloud.colors = features_dc.flatten().astype(np.float32)
+    cloud.sh_degree = int(sh_degree)
+    cloud.sh = features_rest.flatten().astype(np.float32)
+
+    opts = spz.PackOptions()
+    ok = spz.save_spz(cloud, opts, str(filename))
+    if not ok:
+        raise RuntimeError(f"failed to save spz to {filename}")
+    print(f"saved spz: {filename}")
+    return True
+
 
 
 @dataclass
@@ -212,12 +794,6 @@ def make_densification_state(num_points: int) -> FastGSDensificationState:
         xyz_grad_accum_abs=np.zeros((num_points, 1), dtype=np.float32),
         denom=np.zeros((num_points, 1), dtype=np.float32),
     )
-
-
-def compute_scene_extent(points: np.ndarray) -> float:
-    bbox_min = points.min(axis=0)
-    bbox_max = points.max(axis=0)
-    return max(float(np.linalg.norm(bbox_max - bbox_min)), 1.0e-6)
 
 
 def render_pkg(
@@ -477,6 +1053,7 @@ def reset_densification_buffers(state: FastGSDensificationState, num_points: int
     state.xyz_grad_accum = np.zeros((num_points, 1), dtype=np.float32)
     state.xyz_grad_accum_abs = np.zeros((num_points, 1), dtype=np.float32)
     state.denom = np.zeros((num_points, 1), dtype=np.float32)
+    state.tmp_radii = None
 
 
 def append_new_points(
@@ -544,6 +1121,8 @@ def prune_points(
 def densify_and_clone_fastgs(
     model: ScannerTrainModel,
     state: FastGSDensificationState,
+    source: dict[str, np.ndarray],
+    source_tmp_radii: np.ndarray,
     metric_mask: np.ndarray,
     clone_filter: np.ndarray,
     optimizer_policy: ScannerFastGSOptimizerPolicy | None = None,
@@ -551,18 +1130,17 @@ def densify_and_clone_fastgs(
     selected = metric_mask & clone_filter
     if not np.any(selected):
         return 0
-    current = capture_model_np(model)
     append_new_points(
         model,
         state,
         {
-            "means3d": current["means3d"][selected],
-            "features_dc": current["features_dc"][selected],
-            "features_rest": current["features_rest"][selected],
-            "opacity_logits": current["opacity_logits"][selected],
-            "log_scales": current["log_scales"][selected],
-            "rotations": current["rotations"][selected],
-            "tmp_radii": state.tmp_radii[selected],
+            "means3d": source["means3d"][selected],
+            "features_dc": source["features_dc"][selected],
+            "features_rest": source["features_rest"][selected],
+            "opacity_logits": source["opacity_logits"][selected],
+            "log_scales": source["log_scales"][selected],
+            "rotations": source["rotations"][selected],
+            "tmp_radii": source_tmp_radii[selected],
         },
         optimizer_policy=optimizer_policy,
     )
@@ -572,6 +1150,8 @@ def densify_and_clone_fastgs(
 def densify_and_split_fastgs(
     model: ScannerTrainModel,
     state: FastGSDensificationState,
+    source: dict[str, np.ndarray],
+    source_tmp_radii: np.ndarray,
     metric_mask: np.ndarray,
     split_filter: np.ndarray,
     rng: np.random.Generator,
@@ -581,11 +1161,10 @@ def densify_and_split_fastgs(
     selected = metric_mask & split_filter
     if not np.any(selected):
         return 0, 0
-    current = capture_model_np(model)
-    means = current["means3d"][selected]
-    scales = current["scales"][selected]
-    log_scales = current["log_scales"][selected]
-    rotations = current["rotations"][selected]
+    means = source["means3d"][selected]
+    scales = source["scales"][selected]
+    log_scales = source["log_scales"][selected]
+    rotations = source["rotations"][selected]
     rotmats = quat_to_rotmat_np(rotations)
 
     repeated_scales = np.repeat(scales, split_factor, axis=0)
@@ -602,23 +1181,31 @@ def densify_and_split_fastgs(
         state,
         {
             "means3d": repeated_means + offsets,
-            "features_dc": np.repeat(current["features_dc"][selected], split_factor, axis=0),
-            "features_rest": np.repeat(current["features_rest"][selected], split_factor, axis=0),
-            "opacity_logits": np.repeat(current["opacity_logits"][selected], split_factor, axis=0),
+            "features_dc": np.repeat(source["features_dc"][selected], split_factor, axis=0),
+            "features_rest": np.repeat(source["features_rest"][selected], split_factor, axis=0),
+            "opacity_logits": np.repeat(source["opacity_logits"][selected], split_factor, axis=0),
             "log_scales": new_scales.astype(np.float32),
             "rotations": np.repeat(rotations, split_factor, axis=0),
-            "tmp_radii": np.repeat(state.tmp_radii[selected], split_factor, axis=0),
+            "tmp_radii": np.repeat(source_tmp_radii[selected], split_factor, axis=0),
         },
         optimizer_policy=optimizer_policy,
     )
 
+    current_count = int(model.means3d.shape[0])
+    source_count = int(selected.shape[0])
+    selected_count = int(np.sum(selected))
+    appended_count = selected_count * split_factor
+    existing_extra = current_count - source_count - appended_count
+    if existing_extra < 0:
+        raise RuntimeError(
+            f"Invalid split state sizes: current={current_count}, source={source_count}, appended={appended_count}"
+        )
     prune_mask = np.concatenate(
-        [selected, np.zeros((int(np.sum(selected)) * split_factor,), dtype=bool)],
+        [selected, np.zeros((existing_extra + appended_count,), dtype=bool)],
         axis=0,
     )
     prune_points(model, state, prune_mask, optimizer_policy=optimizer_policy)
-    selected_count = int(np.sum(selected))
-    return selected_count, int(selected_count * split_factor)
+    return selected_count, appended_count
 
 
 def cap_opacity_logits(
@@ -715,7 +1302,7 @@ def save_step_preview(
         raise RuntimeError(f"Failed to write image: {out_path}")
 
 
-def make_optimizer_policy(args) -> ScannerFastGSOptimizerPolicy:
+def make_optimizer_policy(args, spatial_lr_scale: float) -> ScannerFastGSOptimizerPolicy:
     return ScannerFastGSOptimizerPolicy(
         OptimizerPolicyConfig(
             means_lr=args.lr_means,
@@ -728,6 +1315,7 @@ def make_optimizer_policy(args) -> ScannerFastGSOptimizerPolicy:
             position_lr_final=1.6e-6,
             position_lr_delay_mult=0.01,
             position_lr_max_steps=args.steps,
+            spatial_lr_scale=spatial_lr_scale,
             betas=(args.adam_beta1, args.adam_beta2),
         )
     )
@@ -748,6 +1336,9 @@ def densify_and_prune_fastgs(
     grads_abs = state.xyz_grad_accum_abs / denom
 
     current = capture_model_np(model)
+    source_tmp_radii = state.tmp_radii
+    if source_tmp_radii is None or source_tmp_radii.shape[0] != current["means3d"].shape[0]:
+        source_tmp_radii = np.zeros((current["means3d"].shape[0],), dtype=np.float32)
     grad_qualifiers = np.linalg.norm(grad_vars, axis=1) >= args.grad_thresh
     grad_qualifiers_abs = np.linalg.norm(grads_abs, axis=1) >= args.grad_abs_thresh
     max_scale = np.max(current["scales"], axis=1)
@@ -760,6 +1351,8 @@ def densify_and_prune_fastgs(
     cloned = densify_and_clone_fastgs(
         model,
         state,
+        current,
+        source_tmp_radii,
         metric_mask,
         clone_qualifiers & grad_qualifiers,
         optimizer_policy=optimizer_policy,
@@ -767,6 +1360,8 @@ def densify_and_prune_fastgs(
     split_sources, split_children = densify_and_split_fastgs(
         model,
         state,
+        current,
+        source_tmp_radii,
         metric_mask,
         split_qualifiers & grad_qualifiers_abs,
         rng,
@@ -775,6 +1370,12 @@ def densify_and_prune_fastgs(
     )
 
     current = capture_model_np(model)
+    if pruning_score.size < current["opacities"].shape[0]:
+        pruning_score = np.pad(
+            pruning_score,
+            (0, current["opacities"].shape[0] - pruning_score.size),
+            mode="constant",
+        )
     opacity_prune_mask = current["opacities"] < args.min_opacity
     prune_mask = opacity_prune_mask.copy()
     screen_prune_mask = np.zeros_like(prune_mask)
@@ -936,7 +1537,7 @@ def main():
     if not dataset_dir.exists():
         raise RuntimeError(f"Dataset path does not exist: {dataset_dir}")
 
-    cameras, targets, points, colors, base_point_count = prepare_dataset(
+    cameras, targets, points, colors, base_point_count, camera_radius = prepare_dataset(
         dataset_dir=dataset_dir,
         width=args.width,
         height=args.height,
@@ -953,13 +1554,13 @@ def main():
 
     model = init_model(points, colors, args.sh_degree)
     dens_state = make_densification_state(points.shape[0])
-    optimizer_policy = make_optimizer_policy(args)
+    scene_extent = camera_radius
+    optimizer_policy = make_optimizer_policy(args, scene_extent)
     gaussian_ops = ScannerGaussianOps(optimizer_policy=optimizer_policy)
-    scene_extent = compute_scene_extent(points)
 
     repo_root = Path(__file__).resolve().parent.parent
     date_dir = datetime.now().strftime("%Y%m%d_%H_%M")
-    out_dir = repo_root / "training" / "output" / "train_scanner_fastgs" / date_dir
+    out_dir = repo_root / "training" / "output" / ("train_scanner_" + "fastgs2") / date_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     out_best = out_dir / "best_step.png"
     out_spz = out_dir / "final.spz"
@@ -976,6 +1577,16 @@ def main():
     active_sh_degree = 0
     optimizer_lr_reset_step = 0
     viewpoint_stack = list(range(len(cameras)))
+    save_step_preview(
+        ext=ext,
+        model=model,
+        cameras=cameras,
+        targets=targets,
+        background=base_bg,
+        sh_degree=active_sh_degree,
+        eval_idx=eval_idx,
+        out_path=out_dir / "step_00000.png",
+    )
 
     def loss_fn(means3d, features_dc, features_rest, opacity_logits, log_scales, rotations, viewspace_points, camera, target_chw, bg, use_l1, sh_degree):
         local_model = ScannerTrainModel(
@@ -1032,7 +1643,7 @@ def main():
     for step in range(1, args.steps + 1):
         lr_step = step - optimizer_lr_reset_step
         xyz_lr = optimizer_policy.update_learning_rate(lr_step)
-        if step % 1000 == 0:
+        if args.sh_degree_interval > 0 and step % args.sh_degree_interval == 0:
             active_sh_degree = min(active_sh_degree + 1, args.sh_degree)
 
         if not viewpoint_stack:
@@ -1073,6 +1684,7 @@ def main():
 
         mx.eval(loss, d_viewspace)
         curr_loss = float(loss.item())
+        skip_optimizer_step = False
 
         if step < args.densify_until_step:
             stats_render = render_pkg(ext, model, camera, bg, active_sh_degree, get_flag=False)
@@ -1081,16 +1693,12 @@ def main():
             d_viewspace_np = np.array(d_viewspace, dtype=np.float32)
             gaussian_ops.update_densification_stats(dens_state, radii_np, d_viewspace_np)
 
-        optimizer_policy.apply_gradients(model, grad_map, step)
-
-        if args.reset_optimizer and args.reset_optimizer_interval > 0 and step % args.reset_optimizer_interval == 0:
-            optimizer_lr_reset_step = step
-            print(f"[fastgs] step={step:05d} reset learning-rate schedule")
-
-        mx.eval(model.means3d)
-
         if step < args.densify_until_step:
-            if step > args.densify_from_step and step % args.densification_interval == 0:
+            if (
+                args.densification_interval > 0
+                and step > args.densify_from_step
+                and step % args.densification_interval == 0
+            ):
                 sample_ids = sample_camera_indices(rng, len(cameras), args.densify_camera_sample)
                 importance_score, pruning_score = compute_gaussian_scores_fastgs(
                     ext=ext,
@@ -1114,6 +1722,7 @@ def main():
                     rng,
                 )
                 after = int(model.means3d.shape[0])
+                skip_optimizer_step = True
                 print(
                     f"[fastgs] step={step:05d} densify/prune points {before} -> {after} "
                     f"(metric_hits={densify_stats['metric_hits']}, "
@@ -1127,12 +1736,14 @@ def main():
                     f"prune_budget={densify_stats['prune_budget']}, actual_removed={densify_stats['actual_removed']})"
                 )
 
-            if step % args.opacity_reset_interval == 0:
+            if args.opacity_reset_interval > 0 and step % args.opacity_reset_interval == 0:
                 gaussian_ops.reset_opacity_logits(model, args.opacity_reset_value)
+                skip_optimizer_step = True
                 print(f"[fastgs] step={step:05d} reset opacity to <= {args.opacity_reset_value:.4f}")
 
         if (
-            step % args.final_prune_interval == 0
+            args.final_prune_interval > 0
+            and step % args.final_prune_interval == 0
             and step > args.final_prune_start
             and step < args.final_prune_end
         ):
@@ -1159,12 +1770,25 @@ def main():
                 dry_run=args.no_prune_gaussians,
             )
             after = int(model.means3d.shape[0])
+            if after != before:
+                skip_optimizer_step = True
             print(
                 f"[fastgs] step={step:05d} final prune points {before} -> {after} "
                 f"(opacity_hits={prune_stats['opacity_hits']}, score_hits={prune_stats['score_hits']}, "
                 f"requested_remove={prune_stats['requested_remove']}, actual_remove={prune_stats['actual_remove']}, "
                 f"kept={prune_stats['kept']})"
             )
+
+        if skip_optimizer_step:
+            print(f"[fastgs] step={step:05d} skip optimizer step after parameter topology/state update")
+        else:
+            optimizer_policy.apply_gradients(model, grad_map, step)
+
+        if args.reset_optimizer and args.reset_optimizer_interval > 0 and step % args.reset_optimizer_interval == 0:
+            optimizer_lr_reset_step = step
+            print(f"[fastgs] step={step:05d} reset learning-rate schedule")
+
+        mx.eval(model.means3d)
 
         if curr_loss < best_loss:
             best_loss = curr_loss
@@ -1221,7 +1845,7 @@ def main():
 
     save_as_spz(out_spz, model, args.sh_degree)
 
-    print("[OK] train_scanner_fastgs done")
+    print("[OK] scanner FastGS2 training done")
     print("frames:", len(cameras), "points:", int(model.means3d.shape[0]))
     print("base_points:", points.shape[0] - extra_point_count, "extra_points:", extra_point_count)
     print("best_step:", best_step, "best_loss:", f"{best_loss:.6f}")

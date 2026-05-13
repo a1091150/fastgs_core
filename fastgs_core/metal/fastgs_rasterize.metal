@@ -74,11 +74,9 @@ kernel void fastgs_render_forward_kernel(
     }
   }
 
-  if (pix_x >= params.image_width || pix_y >= params.image_height) {
-    return;
-  }
-
-  uint pix_id = pix_y * params.image_width + pix_x;
+  bool inside = pix_x < params.image_width && pix_y < params.image_height;
+  bool done = !inside;
+  uint pix_id = inside ? pix_y * params.image_width + pix_x : 0u;
   float2 pixf = float2(float(pix_x), float(pix_y));
   float t_val = 1.0f;
   uint contributor = 0u;
@@ -87,7 +85,7 @@ kernel void fastgs_render_forward_kernel(
   constexpr uint kMaxChannels = 3;
   float c_accum[kMaxChannels] = {0.0f, 0.0f, 0.0f};
 
-  for (uint idx = range.x; idx < range.y; ++idx) {
+  for (uint idx = range.x; !done && idx < range.y; ++idx) {
     if (((idx - range.x) % 32u) == 0u) {
       sampled_t[bbm * (params.block_x * params.block_y) + local_rank] = t_val;
       for (uint ch = 0; ch < min(params.num_channels, kMaxChannels); ++ch) {
@@ -115,6 +113,7 @@ kernel void fastgs_render_forward_kernel(
 
     float test_t = t_val * (1.0f - alpha);
     if (test_t < 0.0001f) {
+      done = true;
       break;
     }
 
@@ -131,12 +130,14 @@ kernel void fastgs_render_forward_kernel(
     last_contributor = contributor;
   }
 
-  final_t[pix_id] = t_val;
-  n_contrib[pix_id] = last_contributor;
-  for (uint ch = 0; ch < min(params.num_channels, kMaxChannels); ++ch) {
-    pixel_colors[ch * params.image_height * params.image_width + pix_id] = c_accum[ch];
-    out_color[ch * params.image_height * params.image_width + pix_id] =
-        c_accum[ch] + t_val * background[ch];
+  if (inside) {
+    final_t[pix_id] = t_val;
+    n_contrib[pix_id] = last_contributor;
+    for (uint ch = 0; ch < min(params.num_channels, kMaxChannels); ++ch) {
+      pixel_colors[ch * params.image_height * params.image_width + pix_id] = c_accum[ch];
+      out_color[ch * params.image_height * params.image_width + pix_id] =
+          c_accum[ch] + t_val * background[ch];
+    }
   }
 
   shared_last_contributor[local_rank] = last_contributor;

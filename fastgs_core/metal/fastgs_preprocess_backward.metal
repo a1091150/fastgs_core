@@ -125,9 +125,9 @@ kernel void fastgs_preprocess_backward_kernel(
         0.0f, params.focal_y / t.z, -(params.focal_y * t.y) / (t.z * t.z),
         0.0f, 0.0f, 0.0f);
     const float3x3 W = float3x3(
-        viewmat[0], viewmat[1], viewmat[2],
-        viewmat[4], viewmat[5], viewmat[6],
-        viewmat[8], viewmat[9], viewmat[10]);
+        viewmat[0], viewmat[4], viewmat[8],
+        viewmat[1], viewmat[5], viewmat[9],
+        viewmat[2], viewmat[6], viewmat[10]);
     const float3x3 Vrk = float3x3(
         cov3D[0], cov3D[1], cov3D[2],
         cov3D[1], cov3D[3], cov3D[4],
