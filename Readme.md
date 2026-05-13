@@ -34,7 +34,7 @@ conda create -n fastgs_core python=3.11
 2. Install the required pip packages.
 
 ```shell
-pip install mlx==0.30.0 nanobind cmake opencv-python plyfile
+pip install mlx==0.30.0 nanobind cmake opencv-python plyfile pillow
 ```
 
 3. Install `fastgs_core`.
