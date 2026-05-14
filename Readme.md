@@ -92,7 +92,7 @@ You can refer to the `Makefile`. The default Python environment is `CONDA_ENV ?=
 - `train-scanner-fastgs-bbox`: Fill with a large number of gaussians and train.
 - `train-scanner-fastgs-densify`, `train-scanner-fastgs-densify2`, `train-scanner-fastgs-densify3`: Train with different densification parameters.
 
-`train-scanner-fastgs-densify3` is currently the recommended training command.
+`train-scanner-fastgs2-base:` is currently the recommended training command.
 
 #### Scripts
 

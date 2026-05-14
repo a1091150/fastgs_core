@@ -14,6 +14,7 @@ FastGS 與 3DGS 不同，3DGS 透過 `torch.Tensor.retain_grad()` 方式保留 `
 ## 環境安裝
 
 - 從 App Store 安裝 XCode
+- 檢查 XCode -> Settings -> Component -> Other Components，檢查 Metal Toolchain 是否有安裝
 - 安裝 Cmake `brew install cmake`
 - 安裝 Conda， Makefile 內容預設使用 Conda 環境
 
@@ -25,7 +26,7 @@ conda create -n fastgs_core python=3.11
 2. 安裝需要的 pip package
 安裝 pip package：
 ```shell
-pip install mlx==0.30.0 nanobind cmake opencv-python plyfile
+pip install mlx==0.30.0 nanobind cmake opencv-python plyfile pillow
 ```
 
 3. 安裝 fastgs_core:
@@ -77,7 +78,7 @@ pip install .
 - `train-scanner-fastgs-bbox`：填充大量 gaussian 並訓練。
 - `train-scanner-fastgs-densify`, `train-scanner-fastgs-densify2`, `train-scanner-fastgs-densify3`：使用不同參數訓練
 
-目前推薦使用 `train-scanner-fastgs-densify3` 進行訓練。
+目前推薦使用 `train-scanner-fastgs2-base:` 進行訓練。
 
 
 #### Scripts
