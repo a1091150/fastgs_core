@@ -149,20 +149,26 @@ Current coverage:
 
 - frustum check
 - 3D covariance calculation
+- precomputed 3D covariance path
 - 2D covariance projection
 - conic/opacity calculation
 - tile coverage
 - precomputed color path
 - degree 0/1/2/3 SH path
+- SH color clamp flags
+- early-return culling with zero-initialized outputs
 - all current preprocess output buffers
 - parity against Python/C++ for:
   - precomputed color fixture
   - SH degree 3 fixture
+  - near-plane culling fixture
+  - precomputed 3D covariance fixture
+  - SH clamp fixture
 
 Known remaining work:
 
-- Add broader fixtures for culling, clamping, precomputed covariance, and more
-  varied camera matrices.
+- Add broader fixtures for varied camera matrices, non-identity transforms,
+  different image/tile sizes, and larger Gaussian counts.
 - Split common Metal helpers into a shared source module once a second kernel
   needs them.
 - Revisit the params representation if `template` args produce better compiled

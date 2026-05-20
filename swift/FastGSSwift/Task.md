@@ -122,6 +122,10 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [x] viewspace_points
 - [x] Compare all outputs with the existing Python/C++ implementation on the first precomputed-color fixture.
 - [x] Add SH degree 3 fixture and compare against existing Python/C++ implementation.
+- [x] Add edge parity fixtures against Python/C++ for:
+  - [x] near-plane culling and zero-initialized outputs
+  - [x] precomputed 3D covariance path
+  - [x] SH color clamp flags
 
 ### 4. Tile Prep and Binning
 

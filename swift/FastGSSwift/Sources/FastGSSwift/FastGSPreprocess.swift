@@ -223,10 +223,7 @@ public enum FastGSPreprocess {
     private static func validate(_ input: FastGSPreprocessInput, params: FastGSPreprocessParams) {
         let count = input.means3D.shape[0]
         precondition(input.means3D.shape == [count, 3], "means3D must have shape [N, 3].")
-        precondition(input.dc.shape == [count, 3], "dc must have shape [N, 3].")
         precondition(input.opacities.shape == [count], "opacities must have shape [N].")
-        precondition(input.scales.shape == [count, 3], "scales must have shape [N, 3].")
-        precondition(input.rotations.shape == [count, 4], "rotations must have shape [N, 4].")
         precondition(input.viewMatrix.shape == [4, 4], "viewMatrix must have shape [4, 4].")
         precondition(input.projectionMatrix.shape == [4, 4], "projectionMatrix must have shape [4, 4].")
         precondition(input.cameraPosition.shape == [3], "cameraPosition must have shape [3].")
@@ -235,9 +232,14 @@ public enum FastGSPreprocess {
         precondition(input.viewspacePoints.dtype == .float32, "FastGSPreprocess currently expects float32 viewspace points.")
         if params.useColorsPrecomputed {
             precondition(input.colorsPrecomputed.shape == [count, 3], "colorsPrecomputed must have shape [N, 3].")
+        } else {
+            precondition(input.dc.shape == [count, 3], "dc must have shape [N, 3].")
         }
         if params.useCov3DPrecomputed {
             precondition(input.cov3DPrecomputed.shape == [count, 6], "cov3DPrecomputed must have shape [N, 6].")
+        } else {
+            precondition(input.scales.shape == [count, 3], "scales must have shape [N, 3].")
+            precondition(input.rotations.shape == [count, 4], "rotations must have shape [N, 4].")
         }
     }
 }
