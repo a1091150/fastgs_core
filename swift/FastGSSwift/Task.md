@@ -255,9 +255,19 @@ This is a later phase after macOS forward rendering is working.
 
 ### Milestone 1: SwiftPM Proof
 
-- SwiftPM package exists.
-- Depends on `mlx-swift`.
-- Minimal `MLXFast.metalKernel` test passes.
+- [x] SwiftPM package exists.
+- [x] Depends on `mlx-swift`.
+- [x] Minimal `MLXFast.metalKernel` smoke wrapper exists.
+- [x] `swift test` passes for package loading.
+- [x] Run the Metal smoke test in an Xcode/metallib-ready environment.
+
+### Milestone 1.5: Xcode macOS Harness
+
+- [x] Xcode project exists.
+- [x] macOS app target exists.
+- [x] Xcode test target exists.
+- [x] Xcode scheme runs the MLXFast Metal smoke test.
+- [x] `xcodebuild test -project FastGSSwift.xcodeproj -scheme FastGSSwiftMac -destination 'platform=macOS'` passes.
 
 ### Milestone 2: Preprocess Port
 
