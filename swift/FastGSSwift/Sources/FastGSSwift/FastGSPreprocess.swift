@@ -291,6 +291,11 @@ private enum FastGSPreprocessKernelSource {
           return float3(shs[off], shs[off + 1], shs[off + 2]);
         }
 
+        inline float3 read_sh_coeff(const device float* shs, uint idx, int max_coeffs, uint coeff_idx) {
+          uint off = idx * uint(max_coeffs) * 3u + coeff_idx * 3u;
+          return float3(shs[off], shs[off + 1], shs[off + 2]);
+        }
+
         inline void write_packed_float2(device float* arr, uint idx, float2 val) {
           arr[2 * idx] = val.x;
           arr[2 * idx + 1] = val.y;
@@ -402,6 +407,84 @@ private enum FastGSPreprocessKernelSource {
             result = result - SH_C1 * y * read_sh_coeff(shs, idx, max_coeffs, 0u) +
                      SH_C1 * z * read_sh_coeff(shs, idx, max_coeffs, 1u) -
                      SH_C1 * x * read_sh_coeff(shs, idx, max_coeffs, 2u);
+
+            if (deg > 1) {
+              float xx = x * x;
+              float yy = y * y;
+              float zz = z * z;
+              float xy = x * y;
+              float yz = y * z;
+              float xz = x * z;
+              result += SH_C2[0] * xy * read_sh_coeff(shs, idx, max_coeffs, 3u) +
+                        SH_C2[1] * yz * read_sh_coeff(shs, idx, max_coeffs, 4u) +
+                        SH_C2[2] * (2.0f * zz - xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 5u) +
+                        SH_C2[3] * xz * read_sh_coeff(shs, idx, max_coeffs, 6u) +
+                        SH_C2[4] * (xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 7u);
+
+              if (deg > 2) {
+                result += SH_C3[0] * y * (3.0f * xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 8u) +
+                          SH_C3[1] * xy * z * read_sh_coeff(shs, idx, max_coeffs, 9u) +
+                          SH_C3[2] * y * (4.0f * zz - xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 10u) +
+                          SH_C3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * read_sh_coeff(shs, idx, max_coeffs, 11u) +
+                          SH_C3[4] * x * (4.0f * zz - xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 12u) +
+                          SH_C3[5] * z * (xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 13u) +
+                          SH_C3[6] * x * (xx - 3.0f * yy) * read_sh_coeff(shs, idx, max_coeffs, 14u);
+              }
+            }
+          }
+
+          result += 0.5f;
+          clamped[3 * idx + 0] = result.x < 0.0f;
+          clamped[3 * idx + 1] = result.y < 0.0f;
+          clamped[3 * idx + 2] = result.z < 0.0f;
+          return max(result, float3(0.0f));
+        }
+
+        inline float3 compute_color_from_sh(uint idx,
+                                            int deg,
+                                            int max_coeffs,
+                                            const constant float* means,
+                                            float3 campos,
+                                            const constant float* dc,
+                                            const device float* shs,
+                                            device bool* clamped) {
+          float3 pos = read_packed_float3(means, idx);
+          float3 dir = normalize(pos - campos);
+
+          uint base = 3 * idx;
+          float3 result = SH_C0 * float3(dc[base], dc[base + 1], dc[base + 2]);
+
+          if (deg > 0) {
+            float x = dir.x;
+            float y = dir.y;
+            float z = dir.z;
+            result = result - SH_C1 * y * read_sh_coeff(shs, idx, max_coeffs, 0u) +
+                     SH_C1 * z * read_sh_coeff(shs, idx, max_coeffs, 1u) -
+                     SH_C1 * x * read_sh_coeff(shs, idx, max_coeffs, 2u);
+
+            if (deg > 1) {
+              float xx = x * x;
+              float yy = y * y;
+              float zz = z * z;
+              float xy = x * y;
+              float yz = y * z;
+              float xz = x * z;
+              result += SH_C2[0] * xy * read_sh_coeff(shs, idx, max_coeffs, 3u) +
+                        SH_C2[1] * yz * read_sh_coeff(shs, idx, max_coeffs, 4u) +
+                        SH_C2[2] * (2.0f * zz - xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 5u) +
+                        SH_C2[3] * xz * read_sh_coeff(shs, idx, max_coeffs, 6u) +
+                        SH_C2[4] * (xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 7u);
+
+              if (deg > 2) {
+                result += SH_C3[0] * y * (3.0f * xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 8u) +
+                          SH_C3[1] * xy * z * read_sh_coeff(shs, idx, max_coeffs, 9u) +
+                          SH_C3[2] * y * (4.0f * zz - xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 10u) +
+                          SH_C3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * read_sh_coeff(shs, idx, max_coeffs, 11u) +
+                          SH_C3[4] * x * (4.0f * zz - xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 12u) +
+                          SH_C3[5] * z * (xx - yy) * read_sh_coeff(shs, idx, max_coeffs, 13u) +
+                          SH_C3[6] * x * (xx - 3.0f * yy) * read_sh_coeff(shs, idx, max_coeffs, 14u);
+              }
+            }
           }
 
           result += 0.5f;

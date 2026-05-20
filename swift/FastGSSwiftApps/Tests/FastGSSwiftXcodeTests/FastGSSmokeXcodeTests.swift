@@ -13,44 +13,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
     }
 
     func testPreprocessKernelRunsUnderXcode() {
-        let input = FastGSPreprocessInput(
-            means3D: MLXArray([Float(0), 0, 1, 0.25, -0.25, 1], [2, 3]),
-            dc: MLXArray([Float](repeating: 0, count: 6), [2, 3]),
-            sh: MLXArray([Float](), [2, 0, 3]),
-            colorsPrecomputed: MLXArray([Float(1), 0, 0, 0, 1, 0], [2, 3]),
-            opacities: MLXArray([Float(1), 1], [2]),
-            scales: MLXArray([Float(1), 1, 1, 1, 1, 1], [2, 3]),
-            rotations: MLXArray([Float(1), 0, 0, 0, 1, 0, 0, 0], [2, 4]),
-            cov3DPrecomputed: MLXArray([Float](), [0]),
-            viewMatrix: MLXArray([
-                Float(1), 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                0, 0, 0, 1,
-            ], [4, 4]),
-            projectionMatrix: MLXArray([
-                Float(1), 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                0, 0, 0, 1,
-            ], [4, 4]),
-            cameraPosition: MLXArray([Float(0), 0, 0], [3]),
-            viewspacePoints: MLXArray([Float(0), 0, 0, 7, 0, 0, 0, 9], [2, 4])
-        )
-        let params = FastGSPreprocessParams(
-            degree: 0,
-            maxSHCoefficients: 0,
-            scaleModifier: 1,
-            tanFovX: 1,
-            tanFovY: 1,
-            imageHeight: 64,
-            imageWidth: 64,
-            tileBounds: (x: 4, y: 4, z: 1),
-            multiplier: 1,
-            useColorsPrecomputed: true
-        )
-
-        let output = FastGSPreprocess.forward(input, params: params)
+        let output = FastGSPreprocessParityFixture.precomputedColorOutput()
 
         XCTAssertEqual(output.radii.shape, [2])
         XCTAssertEqual(output.xy.shape, [2, 2])
@@ -62,9 +25,41 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(output.clamped.shape, [2, 3])
         XCTAssertEqual(output.viewspacePoints.shape, [2, 4])
 
-        XCTAssertEqual(output.radii.asArray(Int32.self), [97, 102])
-        XCTAssertEqual(output.depths.asArray(Float.self), [1, 1])
-        XCTAssertEqual(output.rgb.asArray(Float.self), [1, 0, 0, 0, 1, 0])
-        XCTAssertEqual(output.viewspacePoints.asArray(Float.self), [0, 0, 1, 7, 0.25, -0.25, 1, 9])
+        XCTAssertEqual(output.radii.asArray(Int32.self), FastGSPreprocessParityFixture.expectedRadii)
+        XCTAssertEqual(output.tilesTouched.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedTilesTouched)
+        XCTAssertEqual(output.clamped.asArray(Bool.self), FastGSPreprocessParityFixture.expectedClamped)
+        assertClose(output.xy.asArray(Float.self), FastGSPreprocessParityFixture.expectedXY)
+        assertClose(output.depths.asArray(Float.self), FastGSPreprocessParityFixture.expectedDepths)
+        assertClose(output.cov3D.asArray(Float.self), FastGSPreprocessParityFixture.expectedCov3D)
+        assertClose(output.rgb.asArray(Float.self), FastGSPreprocessParityFixture.expectedRGB)
+        assertClose(output.conicOpacity.asArray(Float.self), FastGSPreprocessParityFixture.expectedConicOpacity)
+        assertClose(output.viewspacePoints.asArray(Float.self), FastGSPreprocessParityFixture.expectedViewspacePoints)
+    }
+
+    func testPreprocessSHDegree3KernelRunsUnderXcode() {
+        let output = FastGSPreprocessParityFixture.shDegree3Output()
+
+        XCTAssertEqual(output.radii.asArray(Int32.self), FastGSPreprocessParityFixture.expectedRadii)
+        XCTAssertEqual(output.tilesTouched.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedTilesTouched)
+        XCTAssertEqual(output.clamped.asArray(Bool.self), FastGSPreprocessParityFixture.expectedClamped)
+        assertClose(output.xy.asArray(Float.self), FastGSPreprocessParityFixture.expectedXY)
+        assertClose(output.depths.asArray(Float.self), FastGSPreprocessParityFixture.expectedDepths)
+        assertClose(output.cov3D.asArray(Float.self), FastGSPreprocessParityFixture.expectedCov3D)
+        assertClose(output.rgb.asArray(Float.self), FastGSPreprocessParityFixture.expectedSHDegree3RGB)
+        assertClose(output.conicOpacity.asArray(Float.self), FastGSPreprocessParityFixture.expectedConicOpacity)
+        assertClose(output.viewspacePoints.asArray(Float.self), FastGSPreprocessParityFixture.expectedViewspacePoints)
+    }
+}
+
+private func assertClose(
+    _ actual: [Float],
+    _ expected: [Float],
+    accuracy: Float = 1e-5,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertEqual(actual.count, expected.count, file: file, line: line)
+    for (index, pair) in zip(actual, expected).enumerated() {
+        XCTAssertEqual(pair.0, pair.1, accuracy: accuracy, "Mismatch at index \(index)", file: file, line: line)
     }
 }

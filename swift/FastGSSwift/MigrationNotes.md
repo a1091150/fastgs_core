@@ -40,6 +40,7 @@ During the first preprocess port, these mismatches appeared:
 
 - `means3d` was accepted as `constant float*`.
 - `viewmatrix`, `projmatrix`, and some later inputs appeared as `device float*`.
+- `shs` appeared as `device float*` when the SH color path was exercised.
 - Output arrays are `device` address space.
 
 For reusable helpers, prefer address-space overloads:
@@ -152,14 +153,16 @@ Current coverage:
 - conic/opacity calculation
 - tile coverage
 - precomputed color path
-- degree 0/1 SH path
+- degree 0/1/2/3 SH path
 - all current preprocess output buffers
+- parity against Python/C++ for:
+  - precomputed color fixture
+  - SH degree 3 fixture
 
 Known remaining work:
 
-- Restore degree 2/3 SH color evaluation.
-- Compare Swift outputs against the current Python/C++ implementation on small
-  fixtures.
+- Add broader fixtures for culling, clamping, precomputed covariance, and more
+  varied camera matrices.
 - Split common Metal helpers into a shared source module once a second kernel
   needs them.
 - Revisit the params representation if `template` args produce better compiled

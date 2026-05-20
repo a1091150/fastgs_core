@@ -104,7 +104,7 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 
 - [x] Port an initial `fastgs_preprocess.metal` forward path through `MLXFast.metalKernel`.
 - Preserve the existing math as closely as possible:
-  - [x] SH color evaluation for degree 0/1 path; degree 2/3 parity still needs restoration.
+  - [x] SH color evaluation through degree 3.
   - [x] frustum check
   - [x] 3D covariance calculation
   - [x] 2D covariance projection
@@ -120,7 +120,8 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [x] tiles_touched
   - [x] clamped
   - [x] viewspace_points
-- Compare all outputs with the existing Python/C++ implementation on small fixtures.
+- [x] Compare all outputs with the existing Python/C++ implementation on the first precomputed-color fixture.
+- [x] Add SH degree 3 fixture and compare against existing Python/C++ implementation.
 
 ### 4. Tile Prep and Binning
 
@@ -276,7 +277,7 @@ This is a later phase after macOS forward rendering is working.
 
 - [x] Preprocess forward runs in Swift.
 - [x] Xcode test runs the preprocess `MLXFast.metalKernel` on a small fixture.
-- Output matches existing implementation on small fixtures.
+- [x] Output matches existing implementation on the first precomputed-color fixture.
 
 ### Milestone 3: Full Forward Pipeline
 
