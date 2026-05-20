@@ -45,6 +45,8 @@ the macOS path is stable.
 
 ## MLXFastKernel Migration Strategy
 
+Detailed implementation notes are tracked in `MigrationNotes.md`.
+
 - Convert each `.metal` file into Swift-managed kernel source:
   - `header`: helper functions, constants, inline math, shared utility code.
   - `source`: kernel body compatible with `MLXFast.metalKernel`.
@@ -88,35 +90,36 @@ the macOS path is stable.
 
 ### 2. Kernel Source Organization
 
-- Add a kernel source module for FastGS.
+- [x] Add an initial kernel source module for FastGS.
 - Use one Swift file per migrated stage:
+  - `FastGSPreprocess.swift` currently contains the first preprocess source while the migration shape settles.
   - `PreprocessKernelSource.swift`
   - `BinningKernelSource.swift`
   - `TilePrepKernelSource.swift`
   - `RasterizeKernelSource.swift`
 - Keep common Metal helper code in a shared Swift string or builder.
-- Add a small debug option to run kernels with `verbose: true`.
+- [x] Add a small debug option to run kernels with `verbose: true`.
 
 ### 3. Preprocess Forward
 
-- Port `fastgs_preprocess.metal` first.
+- [x] Port an initial `fastgs_preprocess.metal` forward path through `MLXFast.metalKernel`.
 - Preserve the existing math as closely as possible:
-  - SH color evaluation
-  - frustum check
-  - 3D covariance calculation
-  - 2D covariance projection
-  - conic/opacity calculation
-  - tile coverage
-- Return the Swift equivalent of current preprocess outputs:
-  - radii
-  - means2d
-  - depths
-  - cov3d
-  - conic_opacity
-  - colors
-  - tiles_touched
-  - clamped
-  - viewspace_points
+  - [x] SH color evaluation for degree 0/1 path; degree 2/3 parity still needs restoration.
+  - [x] frustum check
+  - [x] 3D covariance calculation
+  - [x] 2D covariance projection
+  - [x] conic/opacity calculation
+  - [x] tile coverage
+- [x] Return the Swift equivalent of current preprocess outputs:
+  - [x] radii
+  - [x] means2d
+  - [x] depths
+  - [x] cov3d
+  - [x] conic_opacity
+  - [x] colors
+  - [x] tiles_touched
+  - [x] clamped
+  - [x] viewspace_points
 - Compare all outputs with the existing Python/C++ implementation on small fixtures.
 
 ### 4. Tile Prep and Binning
@@ -271,7 +274,8 @@ This is a later phase after macOS forward rendering is working.
 
 ### Milestone 2: Preprocess Port
 
-- Preprocess forward runs in Swift.
+- [x] Preprocess forward runs in Swift.
+- [x] Xcode test runs the preprocess `MLXFast.metalKernel` on a small fixture.
 - Output matches existing implementation on small fixtures.
 
 ### Milestone 3: Full Forward Pipeline
