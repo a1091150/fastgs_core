@@ -225,10 +225,10 @@ Planned Swift task order:
   should display the recorded forward case interactively.
 - [x] Expand from reduced 4096-point reference to larger point counts after the
   Swift path remains stable.
-- [ ] Tighten 16384-point recorded parity after investigating the current
+- [x] Tighten 16384-point recorded parity after investigating the current
   larger-scene channel-sum divergence.
 - [x] Add recorded stage summaries to localize the 16384-point divergence.
-- [ ] Fix the 16384-point preprocess color divergence in the SH/DC color path.
+- [x] Fix the 16384-point preprocess color divergence in the SH/DC color path.
 
 ## IOSurface and Real-Time Camera Plan
 

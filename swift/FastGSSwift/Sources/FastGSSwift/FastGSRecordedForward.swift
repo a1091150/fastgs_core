@@ -200,7 +200,7 @@ public struct FastGSRecordedForwardScene {
         let colors = try floatBuffer(name: "colors", descriptor: manifest.colorsBuffer, fallback: manifest.colors, expectedShape: [count, 3])
         let shC0 = Float(0.28209479177387814)
         let dc = MLXArray(colors.map { ($0 - 0.5) / shC0 }, [count, 3])
-        let sh = MLXArray.zeros([count, maxSHCoefficients - 1, 3], dtype: .float32)
+        let sh = MLXArray.zeros([count, maxSHCoefficients, 3], dtype: .float32)
         let opacities = MLXArray(Array(repeating: Float(manifest.opacity), count: count), [count])
         let scales = MLXArray(Array(repeating: Float(manifest.scale), count: count * 3), [count, 3])
         var rotations = [Float](repeating: 0, count: count * 4)

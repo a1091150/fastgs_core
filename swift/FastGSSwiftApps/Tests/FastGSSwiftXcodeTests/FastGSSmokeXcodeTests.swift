@@ -63,7 +63,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             manifestURL: recordedLargeManifestURL,
             outputPNGURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_swift.png"),
             summaryURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_swift_stage_summary.json"),
-            channelSumAccuracy: 200.0
+            channelSumAccuracy: 2e-2
         )
     }
 

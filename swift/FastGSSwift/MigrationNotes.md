@@ -389,7 +389,7 @@ the Swift side to:
 - `/private/tmp/fastgs_recorded_reference/recorded_swift_stage_summary.json`
 - `/private/tmp/fastgs_recorded_reference_16384/recorded_swift_stage_summary.json`
 
-The 16384-point summary currently localizes the divergence to preprocess color,
+The 16384-point summary previously localized a divergence to preprocess color,
 not geometry or binning:
 
 - preprocess geometry matches: `visibleCount`, `radiiSum`, `tilesTouchedSum`
@@ -400,9 +400,20 @@ not geometry or binning:
   - Python/C++ `rgbSums`: `[2159.5215, 1825.9961, 1445.8823]`
   - Swift `rgbSums`: `[2169.1870, 1835.5978, 1626.2614]`
 
-The next parity fix should therefore focus on the recorded-data SH/DC color path
-inside `FastGSPreprocess`, especially why the 4096-point case stays close while
-the 16384-point color sums diverge.
+The root cause was the recorded-data SH placeholder shape. The MLXFast Metal
+kernel reads SH rest coefficients with a full `max_sh_coeffs` row stride, so the
+recorded loader must provide `[pointCount, maxSHCoefficients, 3]` even when the
+buffer is all zero. Providing only `maxSHCoefficients - 1` coefficients per
+point made large scenes read across rows and changed preprocess RGB. After
+padding the placeholder to the full stride, the 16384-point Swift stage summary
+matches the Python/C++ reference within normal float accumulation noise:
+
+- Python/C++ `rgbSums`: `[2159.5215, 1825.9961, 1445.8823]`
+- Swift `rgbSums`: `[2159.5210, 1825.9977, 1445.8890]`
+- Python/C++ output channel sums: `[2842.2002, 2406.8960, 1899.2173]`
+- Swift output channel sums: `[2842.1997, 2406.8967, 1899.2119]`
+
+The large recorded Xcode parity test now uses `channelSumAccuracy: 2e-2`.
 
 The current mock `CVPixelBuffer` path remains useful for presentation testing,
 but it is not the next critical path.
