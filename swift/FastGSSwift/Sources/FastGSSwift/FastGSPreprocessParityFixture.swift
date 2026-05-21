@@ -59,6 +59,12 @@ public enum FastGSPreprocessParityFixture {
         tileBounds: (x: 4, y: 4, z: 1)
     )
 
+    public static let rasterizeSmokeParams = FastGSRasterizeParams(
+        imageWidth: 1,
+        imageHeight: 1,
+        numTiles: 1
+    )
+
     public static func precomputedColorInput() -> FastGSPreprocessInput {
         FastGSPreprocessInput(
             means3D: MLXArray([Float(0), 0, 1, 0.25, -0.25, 1], [2, 3]),
@@ -264,6 +270,24 @@ public enum FastGSPreprocessParityFixture {
         )
     }
 
+    public static func rasterizeSmokeOutput() -> FastGSRasterizeOutput {
+        FastGSRasterize.forward(
+            FastGSRasterizeInput(
+                ranges: MLXArray([UInt32(0), 1], [1, 2]),
+                pointList: MLXArray([UInt32(0)], [1]),
+                bucketOffsets: MLXArray([UInt32(1)], [1]),
+                means2D: MLXArray([Float(0), 0], [1, 2]),
+                colors: MLXArray([Float(0.25), 0.5, 0.75], [1, 3]),
+                conicOpacity: MLXArray([Float(1), 0, 1, 0.5], [1, 4]),
+                background: MLXArray([Float(0.1), 0.2, 0.3], [3]),
+                radii: MLXArray([Int32(1)], [1]),
+                metricMap: MLXArray([Int32(0)], [1]),
+                metricCount: MLXArray([Int32(0)], [1])
+            ),
+            params: rasterizeSmokeParams
+        )
+    }
+
     public static let expectedRadii: [Int32] = [97, 102]
     public static let expectedXY: [Float] = [
         31.5, 31.5,
@@ -400,4 +424,14 @@ public enum FastGSPreprocessParityFixture {
     public static let expectedVariedDepthBinningPointList: [UInt32] = (0..<16).flatMap { _ in
         [UInt32(1), UInt32(0)]
     }
+
+    public static let expectedRasterizeSmokeBucketToTile: [UInt32] = [0]
+    public static let expectedRasterizeSmokeSampledT: [Float] = [1] + Array(repeating: 0, count: 255)
+    public static let expectedRasterizeSmokeSampledAr: [Float] = Array(repeating: 0, count: 3 * 256)
+    public static let expectedRasterizeSmokeFinalT: [Float] = [0.5]
+    public static let expectedRasterizeSmokeNContrib: [UInt32] = [1]
+    public static let expectedRasterizeSmokeMaxContrib: [UInt32] = [1]
+    public static let expectedRasterizeSmokePixelColors: [Float] = [0.125, 0.25, 0.375]
+    public static let expectedRasterizeSmokeOutColor: [Float] = [0.175, 0.35, 0.525]
+    public static let expectedRasterizeSmokeMetricCount: [Int32] = [0]
 }

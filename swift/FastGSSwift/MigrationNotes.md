@@ -220,6 +220,44 @@ Known remaining work:
 
 - Add a larger fixture with non-square tile coverage before rasterize parity.
 
+## Rasterize Forward Status
+
+The first Swift rasterize port is in:
+
+- `Sources/FastGSSwift/FastGSRasterize.swift`
+
+Current shape:
+
+- `FastGSRasterize.forward` accepts tile ranges, sorted point list, bucket
+  offsets, means2D, colors, conic opacity, background, radii, and metric buffers.
+- The first pass supports 16x16 tiles, 3 color channels, and metric counting
+  disabled by default.
+- Outputs mirror the C++ primitive order:
+  - `bucketToTile`
+  - `sampledT`
+  - `sampledAr`
+  - `finalT`
+  - `nContrib`
+  - `maxContrib`
+  - `pixelColors`
+  - `outColor`
+  - `metricCount`
+
+Current coverage:
+
+- 1 tile / 1 Gaussian smoke fixture
+- output shapes and dtypes through the Swift API
+- transmittance/color accumulation against hand-computed expected values
+- sampled intermediates for the first bucket
+- `nContrib`, `maxContrib`, `bucketToTile`, and `metricCount`
+
+Known remaining work:
+
+- Add parity against the existing Python/C++ rasterize fixture.
+- Connect the existing preprocess + binning fixture into rasterize.
+- Enable and test metric count path.
+- Add multi-tile and multi-Gaussian rasterize fixtures before app preview.
+
 ## Suggested Porting Checklist
 
 For each existing `.metal` stage:

@@ -201,6 +201,34 @@ final class FastGSSmokeKernelTests: XCTestCase {
             bucketOffsets: FastGSPreprocessParityFixture.expectedBinningBucketOffsets
         )
     }
+
+    func testRasterizeSmokeKernel() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLXFast Metal tests require an Xcode/metallib-ready environment.")
+        }
+
+        let output = FastGSPreprocessParityFixture.rasterizeSmokeOutput()
+
+        XCTAssertEqual(output.bucketToTile.shape, [256])
+        XCTAssertEqual(output.sampledT.shape, [256])
+        XCTAssertEqual(output.sampledAr.shape, [3 * 256])
+        XCTAssertEqual(output.finalT.shape, [1])
+        XCTAssertEqual(output.nContrib.shape, [1])
+        XCTAssertEqual(output.maxContrib.shape, [1])
+        XCTAssertEqual(output.pixelColors.shape, [3, 1])
+        XCTAssertEqual(output.outColor.shape, [3, 1])
+        XCTAssertEqual(output.metricCount.shape, [1])
+
+        XCTAssertEqual(output.bucketToTile.asArray(UInt32.self), Array(repeating: UInt32(0), count: 256))
+        assertClose(output.sampledT.asArray(Float.self), FastGSPreprocessParityFixture.expectedRasterizeSmokeSampledT)
+        assertClose(output.sampledAr.asArray(Float.self), FastGSPreprocessParityFixture.expectedRasterizeSmokeSampledAr)
+        assertClose(output.finalT.asArray(Float.self), FastGSPreprocessParityFixture.expectedRasterizeSmokeFinalT)
+        XCTAssertEqual(output.nContrib.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeSmokeNContrib)
+        XCTAssertEqual(output.maxContrib.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeSmokeMaxContrib)
+        assertClose(output.pixelColors.asArray(Float.self), FastGSPreprocessParityFixture.expectedRasterizeSmokePixelColors)
+        assertClose(output.outColor.asArray(Float.self), FastGSPreprocessParityFixture.expectedRasterizeSmokeOutColor)
+        XCTAssertEqual(output.metricCount.asArray(Int32.self), FastGSPreprocessParityFixture.expectedRasterizeSmokeMetricCount)
+    }
 }
 
 private func assertBinning(

@@ -148,16 +148,20 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 
 ### 5. Rasterize Forward
 
-- Port `fastgs_rasterize.metal`.
+- [x] Add first `fastgs_rasterize.metal` forward smoke port through `MLXFast.metalKernel`.
+- [x] Add `FastGSRasterize` Swift API and output structure.
+- [x] Add a 1 tile / 1 Gaussian rasterize smoke fixture.
+- [x] Validate rasterize smoke output under Xcode.
+- Port full `fastgs_rasterize.metal` parity fixtures after the smoke path is stable.
 - Preserve:
-  - per-tile traversal
-  - transmittance accumulation
-  - color accumulation
-  - sampled intermediates needed by future backward support
-  - `n_contrib`
-  - `max_contrib`
-  - optional metric count path.
-- First output format is MLX float color array.
+  - [x] per-tile traversal in the smoke path
+  - [x] transmittance accumulation in the smoke path
+  - [x] color accumulation in the smoke path
+  - [x] sampled intermediates needed by future backward support
+  - [x] `n_contrib`
+  - [x] `max_contrib`
+  - [ ] optional metric count path
+- [x] First output format is MLX float color array.
 - Add a separate presentation conversion step later.
 
 ### 6. macOS App Preview
