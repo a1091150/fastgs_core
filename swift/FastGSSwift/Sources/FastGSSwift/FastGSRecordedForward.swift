@@ -116,6 +116,12 @@ public struct FastGSRecordedForwardManifest: Decodable {
     }
 }
 
+public struct FastGSRecordedForwardStages {
+    public var preprocess: FastGSPreprocessOutput
+    public var binning: FastGSBinningOutput
+    public var rasterize: FastGSRasterizeOutput
+}
+
 public enum FastGSRecordedForwardError: Error {
     case invalidPointCount(expected: Int, meansCount: Int, colorsCount: Int)
     case invalidCameraData(viewmatrixCount: Int, projmatrixCount: Int, camposCount: Int)
@@ -142,6 +148,10 @@ public struct FastGSRecordedForwardScene {
     }
 
     public func render(verbose: Bool = false) throws -> FastGSRasterizeOutput {
+        return try renderStages(verbose: verbose).rasterize
+    }
+
+    public func renderStages(verbose: Bool = false) throws -> FastGSRecordedForwardStages {
         try validate()
 
         let count = manifest.pointCount
@@ -151,33 +161,8 @@ public struct FastGSRecordedForwardScene {
             z: 1
         )
         let maxSHCoefficients = (manifest.shDegree + 1) * (manifest.shDegree + 1)
-        let means = MLXArray(try floatBuffer(name: "means3d", descriptor: manifest.means3dBuffer, fallback: manifest.means3d, expectedShape: [count, 3]), [count, 3])
-        let colors = try floatBuffer(name: "colors", descriptor: manifest.colorsBuffer, fallback: manifest.colors, expectedShape: [count, 3])
-        let shC0 = Float(0.28209479177387814)
-        let dc = MLXArray(colors.map { ($0 - 0.5) / shC0 }, [count, 3])
-        let sh = MLXArray.zeros([count, maxSHCoefficients - 1, 3], dtype: .float32)
-        let opacities = MLXArray(Array(repeating: Float(manifest.opacity), count: count), [count])
-        let scales = MLXArray(Array(repeating: Float(manifest.scale), count: count * 3), [count, 3])
-        var rotations = [Float](repeating: 0, count: count * 4)
-        for index in 0..<count {
-            rotations[index * 4] = 1
-        }
-
         let preprocess = FastGSPreprocess.forward(
-            FastGSPreprocessInput(
-                means3D: means,
-                dc: dc,
-                sh: sh,
-                colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
-                opacities: opacities,
-                scales: scales,
-                rotations: MLXArray(rotations, [count, 4]),
-                cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
-                viewMatrix: MLXArray(manifest.viewmatrix.map(Float.init), [4, 4]),
-                projectionMatrix: MLXArray(manifest.projmatrix.map(Float.init), [4, 4]),
-                cameraPosition: MLXArray(Array(manifest.campos.prefix(3)).map(Float.init), [3]),
-                viewspacePoints: MLXArray.zeros([count, 4], dtype: .float32)
-            ),
+            try preprocessInput(count: count, maxSHCoefficients: maxSHCoefficients),
             params: FastGSPreprocessParams(
                 degree: manifest.shDegree,
                 maxSHCoefficients: maxSHCoefficients,
@@ -196,7 +181,7 @@ public struct FastGSRecordedForwardScene {
             params: FastGSBinningParams(multiplier: 1, tileBounds: tileBounds),
             verbose: verbose
         )
-        return FastGSRasterize.forward(
+        let rasterize = FastGSRasterize.forward(
             preprocessOutput: preprocess,
             binningOutput: binning,
             background: MLXArray(manifest.background.map(Float.init), [3]),
@@ -206,6 +191,36 @@ public struct FastGSRecordedForwardScene {
                 numTiles: tileBounds.x * tileBounds.y
             ),
             verbose: verbose
+        )
+        return FastGSRecordedForwardStages(preprocess: preprocess, binning: binning, rasterize: rasterize)
+    }
+
+    private func preprocessInput(count: Int, maxSHCoefficients: Int) throws -> FastGSPreprocessInput {
+        let means = MLXArray(try floatBuffer(name: "means3d", descriptor: manifest.means3dBuffer, fallback: manifest.means3d, expectedShape: [count, 3]), [count, 3])
+        let colors = try floatBuffer(name: "colors", descriptor: manifest.colorsBuffer, fallback: manifest.colors, expectedShape: [count, 3])
+        let shC0 = Float(0.28209479177387814)
+        let dc = MLXArray(colors.map { ($0 - 0.5) / shC0 }, [count, 3])
+        let sh = MLXArray.zeros([count, maxSHCoefficients - 1, 3], dtype: .float32)
+        let opacities = MLXArray(Array(repeating: Float(manifest.opacity), count: count), [count])
+        let scales = MLXArray(Array(repeating: Float(manifest.scale), count: count * 3), [count, 3])
+        var rotations = [Float](repeating: 0, count: count * 4)
+        for index in 0..<count {
+            rotations[index * 4] = 1
+        }
+
+        return FastGSPreprocessInput(
+            means3D: means,
+            dc: dc,
+            sh: sh,
+            colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
+            opacities: opacities,
+            scales: scales,
+            rotations: MLXArray(rotations, [count, 4]),
+            cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
+            viewMatrix: MLXArray(manifest.viewmatrix.map(Float.init), [4, 4]),
+            projectionMatrix: MLXArray(manifest.projmatrix.map(Float.init), [4, 4]),
+            cameraPosition: MLXArray(Array(manifest.campos.prefix(3)).map(Float.init), [3]),
+            viewspacePoints: MLXArray.zeros([count, 4], dtype: .float32)
         )
     }
 

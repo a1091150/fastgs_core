@@ -77,6 +77,188 @@ def sample_pixels(chw: np.ndarray, ids: list[int]) -> list[float]:
     return out
 
 
+def samples_flat(values: np.ndarray, ids: list[int]) -> list[float]:
+    flat = values.reshape(-1)
+    return [float(flat[pixel_id]) for pixel_id in ids if pixel_id < flat.shape[0]]
+
+
+def samples_chw_flat(values: np.ndarray, ids: list[int], channels: int = 3) -> list[float]:
+    flat = values.reshape(channels, -1)
+    return [float(flat[channel, pixel_id]) for channel in range(channels) for pixel_id in ids if pixel_id < flat.shape[1]]
+
+
+def array_prefix(values: np.ndarray, count: int = 16) -> list:
+    return values.reshape(-1)[:count].tolist()
+
+
+def stage_summaries(
+    ext,
+    model,
+    camera,
+    background: mx.array,
+    rotations: mx.array,
+    sh_degree: int,
+    sample_ids: list[int],
+) -> dict:
+    n = int(model.means3d.shape[0])
+    block_x = 16
+    block_y = 16
+    tiles_x = (camera.image_width + block_x - 1) // block_x
+    tiles_y = (camera.image_height + block_y - 1) // block_y
+    num_tiles = tiles_x * tiles_y
+    inputs = {
+        "means3d": model.means3d,
+        "dc": model.features_dc,
+        "sh": model.features_rest,
+        "colors_precomp": mx.zeros((0, 3), dtype=mx.float32),
+        "opacities": mx.sigmoid(model.opacity_logits),
+        "scales": mx.exp(model.log_scales),
+        "quats": rotations,
+        "cov3d_precomp": mx.zeros((0,), dtype=mx.float32),
+        "viewmat": camera.viewmatrix,
+        "projmat": camera.projmatrix,
+        "cam_pos": camera.campos,
+        "viewspace_points": mx.zeros((n, 4), dtype=mx.float32),
+    }
+    pre = ext.preprocess_forward(
+        inputs,
+        camera.image_width,
+        camera.image_height,
+        block_x,
+        block_y,
+        camera.tan_fovx,
+        camera.tan_fovy,
+        sh_degree,
+        1.0,
+        1.0,
+        False,
+    )
+    mx.eval(
+        pre["radii"],
+        pre["xys"],
+        pre["depths"],
+        pre["rgb"],
+        pre["conic_opacity"],
+        pre["tiles_touched"],
+    )
+    point_offsets = mx.cumsum(pre["tiles_touched"], reverse=False, inclusive=True)
+    mx.eval(point_offsets)
+    point_offsets_np = np.array(point_offsets, dtype=np.uint32)
+    num_rendered = int(point_offsets_np[-1]) if point_offsets_np.size else 0
+    binning = ext.binning_forward(
+        pre["xys"],
+        pre["depths"],
+        point_offsets,
+        pre["conic_opacity"],
+        pre["tiles_touched"],
+        1.0,
+        tiles_x,
+        tiles_y,
+        1,
+        num_rendered,
+    )
+    sorted_indices = mx.argsort(binning["point_list_keys_unsorted"])
+    point_list_keys = mx.take(binning["point_list_keys_unsorted"], sorted_indices)
+    point_list = mx.take(binning["point_list_unsorted"], sorted_indices)
+    tile = ext.tile_prep_forward(point_list_keys, num_rendered, num_tiles)
+    bucket_offsets = mx.cumsum(tile["bucket_count"], reverse=False, inclusive=True)
+    mx.eval(
+        binning["point_list_keys_unsorted"],
+        binning["point_list_unsorted"],
+        point_list_keys,
+        point_list,
+        tile["ranges"],
+        tile["bucket_count"],
+        bucket_offsets,
+    )
+    bucket_offsets_np = np.array(bucket_offsets, dtype=np.uint32)
+    bucket_sum = int(bucket_offsets_np[-1]) if bucket_offsets_np.size else 0
+    rast = ext.rasterize_forward(
+        tile["ranges"],
+        point_list,
+        bucket_offsets,
+        pre["xys"],
+        pre["rgb"],
+        pre["conic_opacity"],
+        background,
+        pre["radii"],
+        mx.zeros((camera.image_width * camera.image_height,), dtype=mx.int32),
+        mx.zeros((n,), dtype=mx.int32),
+        pre["viewspace_points"],
+        camera.image_width,
+        camera.image_height,
+        block_x,
+        block_y,
+        3,
+        num_tiles,
+        bucket_sum,
+        False,
+    )
+    mx.eval(
+        rast["bucket_to_tile"],
+        rast["final_t"],
+        rast["n_contrib"],
+        rast["max_contrib"],
+        rast["pixel_colors"],
+        rast["out_color"],
+    )
+
+    radii = np.array(pre["radii"], dtype=np.int32)
+    tiles_touched = np.array(pre["tiles_touched"], dtype=np.uint32)
+    depths = np.array(pre["depths"], dtype=np.float32)
+    xys = np.array(pre["xys"], dtype=np.float32)
+    rgb = np.array(pre["rgb"], dtype=np.float32)
+    conic = np.array(pre["conic_opacity"], dtype=np.float32)
+    keys = np.array(point_list_keys, dtype=np.uint64)
+    plist = np.array(point_list, dtype=np.uint32)
+    ranges = np.array(tile["ranges"], dtype=np.uint32)
+    bucket_count = np.array(tile["bucket_count"], dtype=np.uint32)
+    out = np.array(rast["out_color"], dtype=np.float32)
+    pixels = np.array(rast["pixel_colors"], dtype=np.float32)
+    final_t = np.array(rast["final_t"], dtype=np.float32)
+    n_contrib = np.array(rast["n_contrib"], dtype=np.uint32)
+    max_contrib = np.array(rast["max_contrib"], dtype=np.uint32)
+
+    visible = radii > 0
+    return {
+        "preprocess": {
+            "visibleCount": int(visible.sum()),
+            "radiiSum": int(radii.sum()),
+            "tilesTouchedSum": int(tiles_touched.sum()),
+            "depthSumVisible": float(depths[visible].sum()),
+            "xysSumVisible": [float(xys[visible, axis].sum()) for axis in range(2)],
+            "rgbSums": [float(rgb[:, channel].sum()) for channel in range(3)],
+            "conicOpacitySums": [float(conic[:, channel].sum()) for channel in range(4)],
+            "radiiPrefix": array_prefix(radii),
+            "tilesTouchedPrefix": array_prefix(tiles_touched),
+        },
+        "binning": {
+            "numRendered": num_rendered,
+            "pointListKeyPrefix": array_prefix(keys),
+            "pointListPrefix": array_prefix(plist),
+            "pointListKeyChecksum": int(keys[: min(keys.size, 4096)].sum() & np.uint64(0xFFFFFFFFFFFFFFFF)),
+            "pointListChecksum": int(plist[: min(plist.size, 4096)].sum()),
+        },
+        "tile": {
+            "bucketSum": bucket_sum,
+            "bucketCountSum": int(bucket_count.sum()),
+            "bucketCountPrefix": array_prefix(bucket_count),
+            "bucketOffsetPrefix": array_prefix(bucket_offsets_np),
+            "rangesPrefix": array_prefix(ranges, 32),
+        },
+        "rasterize": {
+            "outColorSums": [float(out[channel].sum()) for channel in range(3)],
+            "pixelColorSums": [float(pixels[channel].sum()) for channel in range(3)],
+            "finalTSum": float(final_t.sum()),
+            "nContribSum": int(n_contrib.sum()),
+            "maxContribSum": int(max_contrib.sum()),
+            "outSamples": samples_chw_flat(out, sample_ids),
+            "finalTSamples": samples_flat(final_t, sample_ids),
+            "nContribSamples": [int(v) for v in np.array(n_contrib.reshape(-1)[sample_ids], dtype=np.uint32)],
+        },
+    }
+
+
 def array_payload(array: mx.array) -> list[float]:
     return np.array(array, dtype=np.float32).reshape(-1).tolist()
 
@@ -157,6 +339,7 @@ def main() -> None:
         (args.height // 2) * args.width + (args.width // 2),
         args.width * args.height - 1,
     ]
+    summaries = stage_summaries(ext, model, cameras[eval_index], background, rotations, args.sh_degree, sample_ids)
     camera = cameras[eval_index]
     manifest = {
         "dataset": str(args.dataset_dir),
@@ -183,6 +366,7 @@ def main() -> None:
         "samplePixelIds": sample_ids,
         "predSamples": sample_pixels(pred_np, sample_ids),
         "targetSamples": sample_pixels(target_np, sample_ids),
+        "stageSummaries": summaries,
         "predPng": str(pred_png),
         "targetPng": str(target_png),
         "sideBySidePng": str(sbs_png),

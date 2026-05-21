@@ -227,6 +227,8 @@ Planned Swift task order:
   Swift path remains stable.
 - [ ] Tighten 16384-point recorded parity after investigating the current
   larger-scene channel-sum divergence.
+- [x] Add recorded stage summaries to localize the 16384-point divergence.
+- [ ] Fix the 16384-point preprocess color divergence in the SH/DC color path.
 
 ## IOSurface and Real-Time Camera Plan
 

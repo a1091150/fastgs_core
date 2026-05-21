@@ -53,7 +53,8 @@ final class FastGSSmokeXcodeTests: XCTestCase {
     func testRecordedScannerForwardRunsUnderXcode() throws {
         try assertRecordedForward(
             manifestURL: recordedManifestURL,
-            outputPNGURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_swift.png")
+            outputPNGURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_swift.png"),
+            summaryURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_swift_stage_summary.json")
         )
     }
 
@@ -61,6 +62,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         try assertRecordedForward(
             manifestURL: recordedLargeManifestURL,
             outputPNGURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_swift.png"),
+            summaryURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_swift_stage_summary.json"),
             channelSumAccuracy: 200.0
         )
     }
@@ -68,6 +70,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
     private func assertRecordedForward(
         manifestURL: URL,
         outputPNGURL: URL,
+        summaryURL: URL,
         channelSumAccuracy: Float = 1.0,
         sampleAccuracy: Float = 2e-2
     ) throws {
@@ -77,7 +80,8 @@ final class FastGSSmokeXcodeTests: XCTestCase {
 
         let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
         let manifest = scene.manifest
-        let output = try scene.render()
+        let stages = try scene.renderStages()
+        let output = stages.rasterize
         let outColor = output.outColor.asArray(Float.self)
 
         assertClose(
@@ -97,6 +101,10 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             height: manifest.height,
             to: outputPNGURL
         )
+
+        let summary = recordedStageSummary(stages, sampleIDs: manifest.samplePixelIds)
+        let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: summaryURL)
     }
 
     func testCameraFrameBridgeReadsBGRAUnderXcode() throws {
@@ -493,6 +501,74 @@ private func samples(_ values: [Float], ids: [Int], channels: Int) -> [Float] {
     let count = values.count / channels
     return (0..<channels).flatMap { channel in
         ids.map { values[channel * count + $0] }
+    }
+}
+
+private func recordedStageSummary(_ stages: FastGSRecordedForwardStages, sampleIDs: [Int]) -> [String: Any] {
+    let radii = stages.preprocess.radii.asArray(Int32.self)
+    let xy = stages.preprocess.xy.asArray(Float.self)
+    let depths = stages.preprocess.depths.asArray(Float.self)
+    let rgb = stages.preprocess.rgb.asArray(Float.self)
+    let conic = stages.preprocess.conicOpacity.asArray(Float.self)
+    let tilesTouched = stages.preprocess.tilesTouched.asArray(UInt32.self)
+    let visibleIndices = radii.indices.filter { radii[$0] > 0 }
+    let pointListKeys = stages.binning.pointListKeys.asArray(UInt64.self)
+    let pointList = stages.binning.pointList.asArray(UInt32.self)
+    let bucketCount = stages.binning.bucketCount.asArray(UInt32.self)
+    let bucketOffsets = stages.binning.bucketOffsets.asArray(UInt32.self)
+    let ranges = stages.binning.ranges.asArray(UInt32.self)
+    let outColor = stages.rasterize.outColor.asArray(Float.self)
+    let pixelColors = stages.rasterize.pixelColors.asArray(Float.self)
+    let finalT = stages.rasterize.finalT.asArray(Float.self)
+    let nContrib = stages.rasterize.nContrib.asArray(UInt32.self)
+    let maxContrib = stages.rasterize.maxContrib.asArray(UInt32.self)
+
+    return [
+        "preprocess": [
+            "visibleCount": visibleIndices.count,
+            "radiiSum": radii.reduce(0, +),
+            "tilesTouchedSum": tilesTouched.reduce(UInt32(0), +),
+            "depthSumVisible": visibleIndices.reduce(Float(0)) { $0 + depths[$1] },
+            "xysSumVisible": [
+                visibleIndices.reduce(Float(0)) { $0 + xy[$1 * 2] },
+                visibleIndices.reduce(Float(0)) { $0 + xy[$1 * 2 + 1] },
+            ],
+            "rgbSums": rowMajorColumnSums(rgb, columns: 3),
+            "conicOpacitySums": rowMajorColumnSums(conic, columns: 4),
+            "radiiPrefix": Array(radii.prefix(16)),
+            "tilesTouchedPrefix": Array(tilesTouched.prefix(16)),
+        ],
+        "binning": [
+            "numRendered": Int(stages.binning.pointOffsets.asArray(UInt32.self).last ?? 0),
+            "pointListKeyPrefix": Array(pointListKeys.prefix(16)).map(String.init),
+            "pointListPrefix": Array(pointList.prefix(16)),
+            "pointListKeyChecksum": String(pointListKeys.prefix(4096).reduce(UInt64(0)) { $0 &+ $1 }),
+            "pointListChecksum": pointList.prefix(4096).reduce(UInt64(0)) { $0 + UInt64($1) },
+        ],
+        "tile": [
+            "bucketSum": Int(bucketOffsets.last ?? 0),
+            "bucketCountSum": bucketCount.reduce(UInt32(0), +),
+            "bucketCountPrefix": Array(bucketCount.prefix(16)),
+            "bucketOffsetPrefix": Array(bucketOffsets.prefix(16)),
+            "rangesPrefix": Array(ranges.prefix(32)),
+        ],
+        "rasterize": [
+            "outColorSums": channelSums(outColor, channels: 3),
+            "pixelColorSums": channelSums(pixelColors, channels: 3),
+            "finalTSum": finalT.reduce(0, +),
+            "nContribSum": nContrib.reduce(UInt32(0), +),
+            "maxContribSum": maxContrib.reduce(UInt32(0), +),
+            "outSamples": samples(outColor, ids: sampleIDs, channels: 3),
+            "finalTSamples": sampleIDs.map { finalT[$0] },
+            "nContribSamples": sampleIDs.map { nContrib[$0] },
+        ],
+    ]
+}
+
+private func rowMajorColumnSums(_ values: [Float], columns: Int) -> [Float] {
+    let rows = values.count / columns
+    return (0..<columns).map { column in
+        (0..<rows).reduce(Float(0)) { $0 + values[$1 * columns + column] }
     }
 }
 

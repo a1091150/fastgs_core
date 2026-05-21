@@ -382,6 +382,28 @@ This should be tightened after isolating whether the divergence starts in
 preprocess coverage, binning order, rasterize traversal, or accumulated
 transmittance.
 
+Stage summaries are now emitted by the Python reference generator under
+`stageSummaries` in `recorded_manifest.json`, and the Xcode recorded tests write
+the Swift side to:
+
+- `/private/tmp/fastgs_recorded_reference/recorded_swift_stage_summary.json`
+- `/private/tmp/fastgs_recorded_reference_16384/recorded_swift_stage_summary.json`
+
+The 16384-point summary currently localizes the divergence to preprocess color,
+not geometry or binning:
+
+- preprocess geometry matches: `visibleCount`, `radiiSum`, `tilesTouchedSum`
+- binning matches: `numRendered`, point-list checksums, bucket sums
+- rasterize traversal matches: `nContribSum`, `maxContribSum`, and nearly
+  identical `finalTSum`
+- preprocess color differs:
+  - Python/C++ `rgbSums`: `[2159.5215, 1825.9961, 1445.8823]`
+  - Swift `rgbSums`: `[2169.1870, 1835.5978, 1626.2614]`
+
+The next parity fix should therefore focus on the recorded-data SH/DC color path
+inside `FastGSPreprocess`, especially why the 4096-point case stays close while
+the 16384-point color sums diverge.
+
 The current mock `CVPixelBuffer` path remains useful for presentation testing,
 but it is not the next critical path.
 
