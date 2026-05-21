@@ -343,6 +343,53 @@ final class FastGSSmokeKernelTests: XCTestCase {
         XCTAssertEqual(bytes[3], 255)
         XCTAssertEqual(bytes[4 * (80 * 48 - 1) + 3], 255)
     }
+
+    func testRasterizeBackwardSkeleton() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLXFast Metal tests require an Xcode/metallib-ready environment.")
+        }
+
+        let preprocess = FastGSPreprocessParityFixture.rasterizeLargeE2EPreprocessOutput()
+        let binning = FastGSPreprocessParityFixture.rasterizeLargeE2EBinningOutput()
+        let rasterize = FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()
+        let cotangents = FastGSRasterizeCotangents.outColorOnes(like: rasterize)
+        let background = MLXArray([Float(0.025), 0.03, 0.04], [3])
+        let output = FastGSRasterizeBackward.forward(
+            preprocessOutput: preprocess,
+            binningOutput: binning,
+            rasterizeOutput: rasterize,
+            cotangents: cotangents,
+            background: background,
+            params: FastGSPreprocessParityFixture.rasterizeLargeE2EParams
+        )
+
+        assertRasterizeBackwardSkeleton(preprocess: preprocess, binning: binning, background: background, output: output)
+    }
+}
+
+private func assertRasterizeBackwardSkeleton(
+    preprocess: FastGSPreprocessOutput,
+    binning: FastGSBinningOutput,
+    background: MLXArray,
+    output: FastGSRasterizeBackwardOutput,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    let params = FastGSPreprocessParityFixture.rasterizeLargeE2EParams
+    XCTAssertEqual(output.ranges.shape, binning.ranges.shape, file: file, line: line)
+    XCTAssertEqual(output.pointList.shape, binning.pointList.shape, file: file, line: line)
+    XCTAssertEqual(output.bucketOffsets.shape, binning.bucketOffsets.shape, file: file, line: line)
+    XCTAssertEqual(output.means2D.shape, preprocess.xy.shape, file: file, line: line)
+    XCTAssertEqual(output.colors.shape, preprocess.rgb.shape, file: file, line: line)
+    XCTAssertEqual(output.conicOpacity.shape, preprocess.conicOpacity.shape, file: file, line: line)
+    XCTAssertEqual(output.background.shape, background.shape, file: file, line: line)
+    XCTAssertEqual(output.radii.shape, preprocess.radii.shape, file: file, line: line)
+    XCTAssertEqual(output.metricMap.shape, [params.imageWidth * params.imageHeight], file: file, line: line)
+    XCTAssertEqual(output.metricCount.shape, preprocess.radii.shape, file: file, line: line)
+    XCTAssertEqual(output.means2D.dtype, .float32, file: file, line: line)
+    XCTAssertEqual(output.colors.dtype, .float32, file: file, line: line)
+    XCTAssertEqual(output.conicOpacity.dtype, .float32, file: file, line: line)
+    XCTAssertEqual(output.background.dtype, .float32, file: file, line: line)
 }
 
 private func assertBinning(
