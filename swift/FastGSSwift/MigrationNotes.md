@@ -301,8 +301,37 @@ Known remaining work:
 - Add a full-image exact rasterize parity fixture when the output surface gets
   larger and more varied.
 - Enable and test metric count path.
-- Extend the CVPixelBuffer bridge from copy-based texture creation to a
-  lifetime-safe `MLXArray` path for camera-driven forward rendering.
+- Add recorded scanner dataset forward parity before attempting live camera
+  capture.
+- Later, extend the CVPixelBuffer bridge from copy-based texture creation to a
+  lifetime-safe `MLXArray` path if real-time camera-driven forward rendering
+  becomes necessary.
+
+## Recorded Scanner Data Plan
+
+Live camera capture is intentionally deferred. The immediate migration target is
+forward rendering from recorded scanner data, matching the existing Python/C++
+workflow where data is captured first and then rendered or trained.
+
+The root `Makefile` currently references these recorded datasets:
+
+- `/Users/yangdunfu/Downloads/2026_03_01_16_36_14`
+- `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`
+
+Useful reference commands from the root `Makefile`:
+
+- `make test-scanner`
+- `make train-scanner-fixed`
+- `make train-scanner-fastgs-smoke`
+- `make train-scanner-fastgs2-smoke`
+- `make train-scanner-fastgs2`
+
+Next Swift migration work should inspect that dataset format, load one selected
+recorded frame and its camera/point-cloud inputs, generate a Python/C++ forward
+reference for the same frame, and then compare Swift
+`preprocess -> binning -> rasterize` outputs against that recorded-data
+reference. The current mock `CVPixelBuffer` path remains useful for presentation
+testing, but it is not the next critical path.
 
 ## CVPixelBuffer Bridge Status
 
@@ -338,7 +367,7 @@ The macOS preview app now also has a mock camera-frame path. The toolbar camera
 button creates an IOSurface-compatible BGRA `CVPixelBuffer`, converts it through
 `FastGSCameraFrameBridge.texture(fromBGRA:device:)`, and displays the resulting
 texture in the same `MTKView` used by the FastGS render preview. This keeps the
-camera presentation path testable before adding live capture.
+camera presentation path testable without committing to live capture yet.
 
 ## macOS Preview Status
 

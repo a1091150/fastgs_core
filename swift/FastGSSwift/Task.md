@@ -183,11 +183,48 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 - [x] Display output using a SwiftUI-backed preview.
 - [x] Display output through an `MTKView`-backed Metal texture preview.
 - [x] Add a basic reload control.
-- Add basic camera controls after the static render path is stable.
+- Do not prioritize live camera controls yet; recorded scanner data forward
+  parity is the next validation step.
+
+## Recorded Scanner Data Forward Plan
+
+This is the next phase after the static fixture forward path is stable. Most
+FastGS flows render and train from recorded captures, so Swift should first
+prove it can consume real recorded data before attempting real-time capture.
+
+Reference data paths currently used by the root `Makefile`:
+
+- `/Users/yangdunfu/Downloads/2026_03_01_16_36_14`
+- `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`
+
+Relevant existing Python/C++ targets:
+
+- `make test-scanner`
+- `make train-scanner-fixed`
+- `make train-scanner-fastgs-smoke`
+- `make train-scanner-fastgs2-smoke`
+- `make train-scanner-fastgs2`
+
+Planned Swift task order:
+
+- [ ] Inspect the recorded scanner dataset format and identify the minimal
+  frame/camera/point-cloud files needed for forward-only rendering.
+- [ ] Add a small Swift loader for recorded scanner metadata and one selected
+  frame, keeping it separate from live camera capture.
+- [ ] Export a Python/C++ reference for one recorded frame using the existing
+  `test-scanner` or `train-scanner-*` path.
+- [ ] Feed the same recorded frame inputs into Swift `FastGSPreprocess ->
+  FastGSBinning -> FastGSRasterize`.
+- [ ] Compare Swift output against the recorded-data Python/C++ reference using
+  summary values and sampled pixels first.
+- [ ] Render a recorded-data Swift preview image through the existing
+  `MTLTexture` / PNG export path.
 
 ## IOSurface and Real-Time Camera Plan
 
-This is a later phase after macOS forward rendering is working.
+This is a later phase after recorded-data forward rendering is working. Keep
+the current mock `CVPixelBuffer` bridge as infrastructure, but do not build live
+capture yet.
 
 - Camera input usually arrives as `CVPixelBuffer`.
 - `CVPixelBuffer` can expose an `IOSurface`.
@@ -220,8 +257,8 @@ This is a later phase after macOS forward rendering is working.
 - Treat that presentation kernel separately from the FastGS math migration.
 - Next bridge step: decide the ownership model for wrapping a locked
   `CVPixelBuffer` base address as an `MLXArray` without unlocking too early.
-- Next app step: feed a live camera `CVPixelBuffer` into the macOS or iOS
-  `MTKView` preview path.
+- Future app step: feed a live camera `CVPixelBuffer` into the macOS or iOS
+  `MTKView` preview path after recorded-data forward parity is useful.
 
 ## Backward and Training Plan
 
