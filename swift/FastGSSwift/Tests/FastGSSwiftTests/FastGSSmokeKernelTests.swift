@@ -1,4 +1,5 @@
 import FastGSSwift
+import CoreVideo
 import Metal
 import MLX
 import XCTest
@@ -44,6 +45,23 @@ final class FastGSSmokeKernelTests: XCTestCase {
         XCTAssertEqual(texture.width, 2)
         XCTAssertEqual(texture.height, 1)
         XCTAssertEqual(texture.pixelFormat, .rgba8Unorm)
+    }
+
+    func testCameraFrameBridgeReadsBGRA() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("CVPixelBuffer bridge tests run in the Apple/Xcode environment.")
+        }
+
+        let pixelBuffer = try makeBGRA32PixelBuffer(width: 2, height: 1)
+        let frame = try FastGSCameraFrameBridge.lockBGRAFrame(pixelBuffer)
+
+        XCTAssertEqual(frame.width, 2)
+        XCTAssertEqual(frame.height, 1)
+        XCTAssertGreaterThanOrEqual(frame.bytesPerRow, 8)
+        XCTAssertEqual(frame.rgbaBytes, [
+            30, 20, 10, 255,
+            70, 60, 50, 128,
+        ])
     }
 
     func testDoubleKernel() throws {
@@ -464,6 +482,50 @@ private func samples(_ values: [Float], ids: [Int], channels: Int) -> [Float] {
     return (0..<channels).flatMap { channel in
         ids.map { values[channel * count + $0] }
     }
+}
+
+private func makeBGRA32PixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+    let attributes: [CFString: Any] = [
+        kCVPixelBufferIOSurfacePropertiesKey: [:],
+    ]
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        kCVPixelFormatType_32BGRA,
+        attributes as CFDictionary,
+        &pixelBuffer
+    )
+    XCTAssertEqual(status, kCVReturnSuccess)
+
+    let buffer = try XCTUnwrap(pixelBuffer)
+    CVPixelBufferLockBaseAddress(buffer, [])
+    defer {
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+    }
+
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+    let baseAddress = try XCTUnwrap(CVPixelBufferGetBaseAddress(buffer))
+    let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+    let pixels: [UInt8] = [
+        10, 20, 30, 255,
+        50, 60, 70, 128,
+    ]
+
+    for row in 0..<height {
+        let rowStart = row * bytesPerRow
+        for column in 0..<width {
+            let source = (row * width + column) * 4
+            let destination = rowStart + column * 4
+            bytes[destination + 0] = pixels[source + 0]
+            bytes[destination + 1] = pixels[source + 1]
+            bytes[destination + 2] = pixels[source + 2]
+            bytes[destination + 3] = pixels[source + 3]
+        }
+    }
+
+    return buffer
 }
 
 private func assertClose(
