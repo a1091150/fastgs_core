@@ -334,6 +334,12 @@ intentionally copies into `[UInt8]`; the next step is choosing a safe lifetime
 model before exposing the locked base address to
 `MLXArray(rawPointer:shape:dtype:finalizer:)`.
 
+The macOS preview app now also has a mock camera-frame path. The toolbar camera
+button creates an IOSurface-compatible BGRA `CVPixelBuffer`, converts it through
+`FastGSCameraFrameBridge.texture(fromBGRA:device:)`, and displays the resulting
+texture in the same `MTKView` used by the FastGS render preview. This keeps the
+camera presentation path testable before adding live capture.
+
 ## macOS Preview Status
 
 The Xcode macOS app now renders the larger static fixture through the SwiftPM

@@ -1,5 +1,6 @@
 import FastGSSwift
 import CoreImage
+import CoreVideo
 import Metal
 import MetalKit
 import SwiftUI
@@ -20,6 +21,7 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var fallbackImage: CGImage?
     @Published var status = "Ready"
     @Published var renderSize = "80 x 48"
+    @Published var previewAspectRatio = 80.0 / 48.0
     @Published var isRendering = false
     let device = MTLCreateSystemDefaultDevice()
 
@@ -55,9 +57,49 @@ private final class RenderPreviewModel: ObservableObject {
 
                 texture = rendered.0
                 fallbackImage = rendered.1
+                renderSize = "80 x 48"
+                previewAspectRatio = 80.0 / 48.0
                 status = "Rendered with Swift MLXFast texture"
             } catch {
                 status = "Render failed: \(error)"
+            }
+            isRendering = false
+        }
+    }
+
+    func renderMockCameraFrame() {
+        guard !isRendering else {
+            return
+        }
+
+        isRendering = true
+        status = "Rendering mock camera frame..."
+
+        Task {
+            do {
+                guard let device else {
+                    status = "Camera frame failed: no Metal device"
+                    isRendering = false
+                    return
+                }
+
+                let rendered = try await Task.detached(priority: .userInitiated) {
+                    let width = 160
+                    let height = 96
+                    let pixelBuffer = try makeMockCameraPixelBuffer(width: width, height: height)
+                    guard let texture = try FastGSCameraFrameBridge.texture(fromBGRA: pixelBuffer, device: device) else {
+                        throw RenderPreviewError.textureCreationFailed
+                    }
+                    return (texture, width, height)
+                }.value
+
+                texture = rendered.0
+                fallbackImage = nil
+                renderSize = "\(rendered.1) x \(rendered.2)"
+                previewAspectRatio = Double(rendered.1) / Double(rendered.2)
+                status = "Rendered mock CVPixelBuffer texture"
+            } catch {
+                status = "Camera frame failed: \(error)"
             }
             isRendering = false
         }
@@ -66,6 +108,8 @@ private final class RenderPreviewModel: ObservableObject {
 
 private enum RenderPreviewError: Error {
     case textureCreationFailed
+    case pixelBufferCreationFailed(CVReturn)
+    case missingPixelBufferBaseAddress
 }
 
 private struct RenderPreviewView: View {
@@ -95,6 +139,14 @@ private struct RenderPreviewView: View {
             Spacer()
 
             Button {
+                model.renderMockCameraFrame()
+            } label: {
+                Image(systemName: "camera.viewfinder")
+            }
+            .disabled(model.isRendering)
+            .help("Render mock camera frame")
+
+            Button {
                 model.render()
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -112,7 +164,7 @@ private struct RenderPreviewView: View {
 
             if let texture = model.texture, let device = model.device {
                 MetalTexturePreview(texture: texture, device: device)
-                    .aspectRatio(80.0 / 48.0, contentMode: .fit)
+                    .aspectRatio(model.previewAspectRatio, contentMode: .fit)
                     .padding(24)
             } else if let image = model.fallbackImage {
                 Image(decorative: image, scale: 1)
@@ -125,6 +177,50 @@ private struct RenderPreviewView: View {
             }
         }
     }
+}
+
+private func makeMockCameraPixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+    let attributes: [CFString: Any] = [
+        kCVPixelBufferIOSurfacePropertiesKey: [:],
+    ]
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        kCVPixelFormatType_32BGRA,
+        attributes as CFDictionary,
+        &pixelBuffer
+    )
+    guard status == kCVReturnSuccess, let pixelBuffer else {
+        throw RenderPreviewError.pixelBufferCreationFailed(status)
+    }
+
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    defer {
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+    }
+
+    guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+        throw RenderPreviewError.missingPixelBufferBaseAddress
+    }
+
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+    let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+    for y in 0..<height {
+        for x in 0..<width {
+            let offset = y * bytesPerRow + x * 4
+            let checker = ((x / 16) + (y / 16)).isMultiple(of: 2)
+            let horizontal = UInt8((x * 255) / max(width - 1, 1))
+            let vertical = UInt8((y * 255) / max(height - 1, 1))
+            bytes[offset + 0] = checker ? 48 : 180
+            bytes[offset + 1] = vertical
+            bytes[offset + 2] = horizontal
+            bytes[offset + 3] = 255
+        }
+    }
+
+    return pixelBuffer
 }
 
 private struct MetalTexturePreview: NSViewRepresentable {
