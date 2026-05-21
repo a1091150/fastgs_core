@@ -129,20 +129,103 @@ final class FastGSSmokeKernelTests: XCTestCase {
 
         let output = FastGSPreprocessParityFixture.binningOutput()
 
-        XCTAssertEqual(output.pointOffsets.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningPointOffsets)
-        XCTAssertEqual(
-            output.pointListKeysUnsorted.asArray(UInt64.self),
-            FastGSPreprocessParityFixture.expectedBinningPointListKeysUnsorted
+        assertBinning(
+            output,
+            pointOffsets: FastGSPreprocessParityFixture.expectedBinningPointOffsets,
+            pointListKeysUnsorted: FastGSPreprocessParityFixture.expectedBinningPointListKeysUnsorted,
+            pointListUnsorted: FastGSPreprocessParityFixture.expectedBinningPointListUnsorted,
+            pointListKeys: FastGSPreprocessParityFixture.expectedBinningPointListKeys,
+            pointList: nil,
+            ranges: FastGSPreprocessParityFixture.expectedBinningRanges,
+            bucketCount: FastGSPreprocessParityFixture.expectedBinningBucketCount,
+            bucketOffsets: FastGSPreprocessParityFixture.expectedBinningBucketOffsets
         )
-        XCTAssertEqual(
-            output.pointListUnsorted.asArray(UInt32.self),
-            FastGSPreprocessParityFixture.expectedBinningPointListUnsorted
-        )
-        XCTAssertEqual(output.pointListKeys.asArray(UInt64.self), FastGSPreprocessParityFixture.expectedBinningPointListKeys)
-        XCTAssertEqual(output.ranges.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningRanges)
-        XCTAssertEqual(output.bucketCount.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningBucketCount)
-        XCTAssertEqual(output.bucketOffsets.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningBucketOffsets)
     }
+
+    func testBinningCullingKernel() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLXFast Metal tests require an Xcode/metallib-ready environment.")
+        }
+
+        let output = FastGSPreprocessParityFixture.cullingBinningOutput()
+
+        assertBinning(
+            output,
+            pointOffsets: FastGSPreprocessParityFixture.expectedCullingBinningPointOffsets,
+            pointListKeysUnsorted: FastGSPreprocessParityFixture.expectedCullingBinningPointListKeysUnsorted,
+            pointListUnsorted: FastGSPreprocessParityFixture.expectedCullingBinningPointListUnsorted,
+            pointListKeys: FastGSPreprocessParityFixture.expectedCullingBinningPointListKeys,
+            pointList: FastGSPreprocessParityFixture.expectedCullingBinningPointListUnsorted,
+            ranges: FastGSPreprocessParityFixture.expectedCullingBinningRanges,
+            bucketCount: FastGSPreprocessParityFixture.expectedBinningBucketCount,
+            bucketOffsets: FastGSPreprocessParityFixture.expectedBinningBucketOffsets
+        )
+    }
+
+    func testBinningAllCulledKernel() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLXFast Metal tests require an Xcode/metallib-ready environment.")
+        }
+
+        let output = FastGSPreprocessParityFixture.allCulledBinningOutput()
+
+        assertBinning(
+            output,
+            pointOffsets: FastGSPreprocessParityFixture.expectedAllCulledBinningPointOffsets,
+            pointListKeysUnsorted: [],
+            pointListUnsorted: [],
+            pointListKeys: [],
+            pointList: [],
+            ranges: FastGSPreprocessParityFixture.expectedAllCulledBinningRanges,
+            bucketCount: FastGSPreprocessParityFixture.expectedAllCulledBinningBucketCount,
+            bucketOffsets: FastGSPreprocessParityFixture.expectedAllCulledBinningBucketOffsets
+        )
+    }
+
+    func testBinningVariedDepthKernel() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLXFast Metal tests require an Xcode/metallib-ready environment.")
+        }
+
+        let output = FastGSPreprocessParityFixture.variedDepthBinningOutput()
+
+        assertBinning(
+            output,
+            pointOffsets: FastGSPreprocessParityFixture.expectedVariedDepthBinningPointOffsets,
+            pointListKeysUnsorted: FastGSPreprocessParityFixture.expectedVariedDepthBinningPointListKeysUnsorted,
+            pointListUnsorted: FastGSPreprocessParityFixture.expectedVariedDepthBinningPointListUnsorted,
+            pointListKeys: FastGSPreprocessParityFixture.expectedVariedDepthBinningPointListKeys,
+            pointList: FastGSPreprocessParityFixture.expectedVariedDepthBinningPointList,
+            ranges: FastGSPreprocessParityFixture.expectedBinningRanges,
+            bucketCount: FastGSPreprocessParityFixture.expectedBinningBucketCount,
+            bucketOffsets: FastGSPreprocessParityFixture.expectedBinningBucketOffsets
+        )
+    }
+}
+
+private func assertBinning(
+    _ output: FastGSBinningOutput,
+    pointOffsets: [UInt32],
+    pointListKeysUnsorted: [UInt64],
+    pointListUnsorted: [UInt32],
+    pointListKeys: [UInt64],
+    pointList: [UInt32]?,
+    ranges: [UInt32],
+    bucketCount: [UInt32],
+    bucketOffsets: [UInt32],
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertEqual(output.pointOffsets.asArray(UInt32.self), pointOffsets, file: file, line: line)
+    XCTAssertEqual(output.pointListKeysUnsorted.asArray(UInt64.self), pointListKeysUnsorted, file: file, line: line)
+    XCTAssertEqual(output.pointListUnsorted.asArray(UInt32.self), pointListUnsorted, file: file, line: line)
+    XCTAssertEqual(output.pointListKeys.asArray(UInt64.self), pointListKeys, file: file, line: line)
+    if let pointList {
+        XCTAssertEqual(output.pointList.asArray(UInt32.self), pointList, file: file, line: line)
+    }
+    XCTAssertEqual(output.ranges.asArray(UInt32.self), ranges, file: file, line: line)
+    XCTAssertEqual(output.bucketCount.asArray(UInt32.self), bucketCount, file: file, line: line)
+    XCTAssertEqual(output.bucketOffsets.asArray(UInt32.self), bucketOffsets, file: file, line: line)
 }
 
 private func assertClose(

@@ -199,6 +199,11 @@ Current coverage:
 - tile ranges
 - bucket count and bucket offsets
 - parity for the first precomputed-color preprocess fixture
+- partial culling fixture where only one gaussian emits duplicated keys
+- all-culled fixture where `numRendered == 0` returns empty point lists and
+  zeroed tile ranges/buckets
+- varied depth fixture proving sorted point list order follows the packed
+  `Float` depth bits
 
 Porting notes:
 
@@ -213,9 +218,6 @@ Porting notes:
 
 Known remaining work:
 
-- Add a zero-rendered/culling binning fixture.
-- Add varied depth ordering so sorted point list ordering is tested with
-  non-equal depth keys.
 - Add a larger fixture with non-square tile coverage before rasterize parity.
 
 ## Suggested Porting Checklist

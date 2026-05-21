@@ -150,6 +150,12 @@ public enum FastGSPreprocessParityFixture {
         return input
     }
 
+    public static func allCulledInput() -> FastGSPreprocessInput {
+        var input = precomputedColorInput()
+        input.means3D = MLXArray([Float(0), 0, 0.1, 0.25, -0.25, 0.1], [2, 3])
+        return input
+    }
+
     public static func cov3DPrecomputedInput() -> FastGSPreprocessInput {
         FastGSPreprocessInput(
             means3D: MLXArray([Float(0), 0, 1, 0.25, -0.25, 1], [2, 3]),
@@ -219,6 +225,10 @@ public enum FastGSPreprocessParityFixture {
         FastGSPreprocess.forward(cullingInput(), params: precomputedColorParams)
     }
 
+    public static func allCulledOutput() -> FastGSPreprocessOutput {
+        FastGSPreprocess.forward(allCulledInput(), params: precomputedColorParams)
+    }
+
     public static func cov3DPrecomputedOutput() -> FastGSPreprocessOutput {
         FastGSPreprocess.forward(cov3DPrecomputedInput(), params: cov3DPrecomputedParams)
     }
@@ -229,6 +239,29 @@ public enum FastGSPreprocessParityFixture {
 
     public static func binningOutput() -> FastGSBinningOutput {
         FastGSBinning.forward(preprocessOutput: precomputedColorOutput(), params: binningParams)
+    }
+
+    public static func cullingBinningOutput() -> FastGSBinningOutput {
+        FastGSBinning.forward(preprocessOutput: cullingOutput(), params: binningParams)
+    }
+
+    public static func allCulledBinningOutput() -> FastGSBinningOutput {
+        FastGSBinning.forward(preprocessOutput: allCulledOutput(), params: binningParams)
+    }
+
+    public static func variedDepthBinningOutput() -> FastGSBinningOutput {
+        FastGSBinning.forward(
+            FastGSBinningInput(
+                xy: MLXArray([Float(31.5), 31.5, 31.5, 31.5], [2, 2]),
+                depths: MLXArray([Float(1.1), 0.9], [2]),
+                conicOpacity: MLXArray([
+                    Float(0.0009762764093466103), 0, 0.0009762764093466103, 1,
+                    0.0009762764093466103, 0, 0.0009762764093466103, 1,
+                ], [2, 4]),
+                tilesTouched: MLXArray([UInt32(16), 16], [2])
+            ),
+            params: binningParams
+        )
     }
 
     public static let expectedRadii: [Int32] = [97, 102]
@@ -328,4 +361,43 @@ public enum FastGSPreprocessParityFixture {
     }
     public static let expectedBinningBucketCount: [UInt32] = Array(repeating: 1, count: 16)
     public static let expectedBinningBucketOffsets: [UInt32] = (1...16).map(UInt32.init)
+
+    public static let expectedCullingBinningPointOffsets: [UInt32] = [0, 16]
+    public static let expectedCullingBinningPointListKeysUnsorted: [UInt64] =
+        expectedBinningUnsortedTileOrder.map { tile in
+            (UInt64(tile) << 32) | expectedBinningDepthBits
+        }
+    public static let expectedCullingBinningPointListUnsorted: [UInt32] = Array(repeating: 1, count: 16)
+    public static let expectedCullingBinningPointListKeys: [UInt64] = (0..<16).map { tile in
+        (UInt64(tile) << 32) | expectedBinningDepthBits
+    }
+    public static let expectedCullingBinningRanges: [UInt32] = (0..<16).flatMap { tile in
+        [UInt32(tile), UInt32(tile + 1)]
+    }
+
+    public static let expectedAllCulledBinningPointOffsets: [UInt32] = [0, 0]
+    public static let expectedAllCulledBinningRanges: [UInt32] = Array(repeating: 0, count: 32)
+    public static let expectedAllCulledBinningBucketCount: [UInt32] = Array(repeating: 0, count: 16)
+    public static let expectedAllCulledBinningBucketOffsets: [UInt32] = Array(repeating: 0, count: 16)
+
+    private static let expectedVariedDepthFirstBits = UInt64(Float(1.1).bitPattern)
+    private static let expectedVariedDepthSecondBits = UInt64(Float(0.9).bitPattern)
+    public static let expectedVariedDepthBinningPointOffsets: [UInt32] = [16, 32]
+    public static let expectedVariedDepthBinningPointListKeysUnsorted: [UInt64] =
+        expectedBinningUnsortedTileOrder.map { tile in
+            (UInt64(tile) << 32) | expectedVariedDepthFirstBits
+        } + expectedBinningUnsortedTileOrder.map { tile in
+            (UInt64(tile) << 32) | expectedVariedDepthSecondBits
+        }
+    public static let expectedVariedDepthBinningPointListUnsorted: [UInt32] =
+        Array(repeating: UInt32(0), count: 16) + Array(repeating: UInt32(1), count: 16)
+    public static let expectedVariedDepthBinningPointListKeys: [UInt64] = (0..<16).flatMap { tile in
+        [
+            (UInt64(tile) << 32) | expectedVariedDepthSecondBits,
+            (UInt64(tile) << 32) | expectedVariedDepthFirstBits,
+        ]
+    }
+    public static let expectedVariedDepthBinningPointList: [UInt32] = (0..<16).flatMap { _ in
+        [UInt32(1), UInt32(0)]
+    }
 }

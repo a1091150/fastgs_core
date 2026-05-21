@@ -134,6 +134,7 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 - [x] Use MLX built-in ops for prefix-sum, argsort, and take.
 - [x] Port tile range preparation and bucket count through `MLXFast.metalKernel`.
 - [x] Add first binning parity fixture from the precomputed-color preprocess output.
+- [x] Add binning edge fixtures for partial culling, all-culled zero-rendered output, and varied depth sorting.
 - Prefer MLX built-in ops for prefix-sum/sort if they can replace custom parallel code cleanly.
 - Keep custom `MLXFast.metalKernel` only where the existing algorithm depends on bespoke Metal behavior.
 - Validate:
@@ -141,8 +142,8 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [x] sorted tile ranges
   - [x] bucket offsets
   - [x] point list ordering for the first fixture
-  - [ ] culling/zero-rendered binning path
-  - [ ] varied depth ordering
+  - [x] culling/zero-rendered binning path
+  - [x] varied depth ordering
   - [ ] larger tile coverage with non-square spans
 
 ### 5. Rasterize Forward
