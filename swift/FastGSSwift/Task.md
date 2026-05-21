@@ -129,14 +129,21 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 
 ### 4. Tile Prep and Binning
 
-- Port tile range preparation and binning after preprocess is stable.
+- [x] Add initial Swift binning API and output structure.
+- [x] Port `fastgs_duplicate_with_keys_kernel` through `MLXFast.metalKernel`.
+- [x] Use MLX built-in ops for prefix-sum, argsort, and take.
+- [x] Port tile range preparation and bucket count through `MLXFast.metalKernel`.
+- [x] Add first binning parity fixture from the precomputed-color preprocess output.
 - Prefer MLX built-in ops for prefix-sum/sort if they can replace custom parallel code cleanly.
 - Keep custom `MLXFast.metalKernel` only where the existing algorithm depends on bespoke Metal behavior.
 - Validate:
-  - duplicated keys
-  - sorted tile ranges
-  - bucket offsets
-  - point list ordering.
+  - [x] duplicated keys
+  - [x] sorted tile ranges
+  - [x] bucket offsets
+  - [x] point list ordering for the first fixture
+  - [ ] culling/zero-rendered binning path
+  - [ ] varied depth ordering
+  - [ ] larger tile coverage with non-square spans
 
 ### 5. Rasterize Forward
 

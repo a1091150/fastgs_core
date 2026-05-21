@@ -174,6 +174,50 @@ Known remaining work:
 - Revisit the params representation if `template` args produce better compiled
   kernels for stable options.
 
+## Binning and Tile Prep Status
+
+The first Swift binning port is in:
+
+- `Sources/FastGSSwift/FastGSBinning.swift`
+
+Current shape:
+
+- `FastGSBinning.forward` accepts preprocess-style `xy`, `depths`,
+  `conicOpacity`, and `tilesTouched`.
+- `tilesTouched` is prefix-summed with MLX `cumsum`.
+- `fastgs_duplicate_with_keys_kernel` is ported through `MLXFast.metalKernel`.
+- `argSort` and `take` are handled by MLX built-in ops, matching the C++
+  binding pipeline.
+- Tile range identification and per-tile bucket counts are ported as small
+  `MLXFast.metalKernel` stages.
+- `bucketOffsets` is prefix-summed with MLX `cumsum`.
+
+Current coverage:
+
+- duplicated unsorted keys and point list
+- sorted keys
+- tile ranges
+- bucket count and bucket offsets
+- parity for the first precomputed-color preprocess fixture
+
+Porting notes:
+
+- The duplicated key packs `tile_id << 32` with the `Float` depth bit pattern,
+  matching the original Metal `as_type<uint>(depth)`. Swift fixtures must use
+  `Float(1).bitPattern`, not `1.0.bitPattern`, which is a `Double`.
+- The first fixture traverses tiles in column-major order before sorting because
+  the original kernel flips into the `is_y` path when the y span is smaller
+  than the x span.
+- `conicOpacity` appeared as a `device float*` input under MLXFast, so the
+  packed float helpers need both `constant` and `device` overloads here too.
+
+Known remaining work:
+
+- Add a zero-rendered/culling binning fixture.
+- Add varied depth ordering so sorted point list ordering is tested with
+  non-equal depth keys.
+- Add a larger fixture with non-square tile coverage before rasterize parity.
+
 ## Suggested Porting Checklist
 
 For each existing `.metal` stage:

@@ -91,6 +91,24 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         assertClose(output.conicOpacity.asArray(Float.self), FastGSPreprocessParityFixture.expectedConicOpacity)
         assertClose(output.viewspacePoints.asArray(Float.self), FastGSPreprocessParityFixture.expectedViewspacePoints)
     }
+
+    func testBinningKernelRunsUnderXcode() {
+        let output = FastGSPreprocessParityFixture.binningOutput()
+
+        XCTAssertEqual(output.pointOffsets.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningPointOffsets)
+        XCTAssertEqual(
+            output.pointListKeysUnsorted.asArray(UInt64.self),
+            FastGSPreprocessParityFixture.expectedBinningPointListKeysUnsorted
+        )
+        XCTAssertEqual(
+            output.pointListUnsorted.asArray(UInt32.self),
+            FastGSPreprocessParityFixture.expectedBinningPointListUnsorted
+        )
+        XCTAssertEqual(output.pointListKeys.asArray(UInt64.self), FastGSPreprocessParityFixture.expectedBinningPointListKeys)
+        XCTAssertEqual(output.ranges.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningRanges)
+        XCTAssertEqual(output.bucketCount.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningBucketCount)
+        XCTAssertEqual(output.bucketOffsets.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedBinningBucketOffsets)
+    }
 }
 
 private func assertClose(

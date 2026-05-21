@@ -54,6 +54,11 @@ public enum FastGSPreprocessParityFixture {
         useColorsPrecomputed: false
     )
 
+    public static let binningParams = FastGSBinningParams(
+        multiplier: 1,
+        tileBounds: (x: 4, y: 4, z: 1)
+    )
+
     public static func precomputedColorInput() -> FastGSPreprocessInput {
         FastGSPreprocessInput(
             means3D: MLXArray([Float(0), 0, 1, 0.25, -0.25, 1], [2, 3]),
@@ -222,6 +227,10 @@ public enum FastGSPreprocessParityFixture {
         FastGSPreprocess.forward(shClampInput(), params: shClampParams)
     }
 
+    public static func binningOutput() -> FastGSBinningOutput {
+        FastGSBinning.forward(preprocessOutput: precomputedColorOutput(), params: binningParams)
+    }
+
     public static let expectedRadii: [Int32] = [97, 102]
     public static let expectedXY: [Float] = [
         31.5, 31.5,
@@ -295,4 +304,28 @@ public enum FastGSPreprocessParityFixture {
         true, true, false,
         false, false, true,
     ]
+
+    public static let expectedBinningPointOffsets: [UInt32] = [16, 32]
+    private static let expectedBinningDepthBits = UInt64(Float(1).bitPattern)
+    private static let expectedBinningUnsortedTileOrder = [
+        0, 4, 8, 12,
+        1, 5, 9, 13,
+        2, 6, 10, 14,
+        3, 7, 11, 15,
+    ]
+    public static let expectedBinningPointListKeysUnsorted: [UInt64] = (0..<2).flatMap { _ in
+        expectedBinningUnsortedTileOrder.map { tile in
+            (UInt64(tile) << 32) | expectedBinningDepthBits
+        }
+    }
+    public static let expectedBinningPointListUnsorted: [UInt32] =
+        Array(repeating: UInt32(0), count: 16) + Array(repeating: UInt32(1), count: 16)
+    public static let expectedBinningPointListKeys: [UInt64] = (0..<16).flatMap { tile in
+        Array(repeating: (UInt64(tile) << 32) | expectedBinningDepthBits, count: 2)
+    }
+    public static let expectedBinningRanges: [UInt32] = (0..<16).flatMap { tile in
+        [UInt32(tile * 2), UInt32(tile * 2 + 2)]
+    }
+    public static let expectedBinningBucketCount: [UInt32] = Array(repeating: 1, count: 16)
+    public static let expectedBinningBucketOffsets: [UInt32] = (1...16).map(UInt32.init)
 }
