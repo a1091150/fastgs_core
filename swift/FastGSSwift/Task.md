@@ -144,7 +144,7 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [x] point list ordering for the first fixture
   - [x] culling/zero-rendered binning path
   - [x] varied depth ordering
-  - [ ] larger tile coverage with non-square spans
+  - [x] larger tile coverage with non-square spans
 
 ### 5. Rasterize Forward
 
@@ -154,6 +154,7 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 - [x] Validate rasterize smoke output under Xcode.
 - [x] Connect the first preprocess -> binning -> rasterize fixture.
 - [x] Compare E2E rasterize output summaries and sampled pixels against the existing Python/C++ implementation.
+- [x] Add larger 80x48, 5 Gaussian, 5x3 tile E2E fixture with non-square tile spans.
 - Port full `fastgs_rasterize.metal` parity fixtures after the smoke path is stable.
 - Preserve:
   - [x] per-tile traversal in the smoke path
@@ -169,7 +170,7 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [ ] full-image exact parity fixture instead of summary/sample checks
   - [ ] metric count path
   - [ ] multi-scene and larger Gaussian fixtures
-  - [ ] non-square larger tile coverage carried from binning
+  - [ ] app preview image export from Swift output instead of Python/C++ reference output
 
 ### 6. macOS App Preview
 

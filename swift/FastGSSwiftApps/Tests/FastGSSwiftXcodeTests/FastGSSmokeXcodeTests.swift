@@ -185,6 +185,14 @@ final class FastGSSmokeXcodeTests: XCTestCase {
 
         assertRasterizeE2E(output)
     }
+
+    func testRasterizeLargeE2EKernelRunsUnderXcode() {
+        let preprocess = FastGSPreprocessParityFixture.rasterizeLargeE2EPreprocessOutput()
+        let binning = FastGSPreprocessParityFixture.rasterizeLargeE2EBinningOutput()
+        let output = FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()
+
+        assertRasterizeLargeE2E(preprocess: preprocess, binning: binning, output: output)
+    }
 }
 
 private func assertBinning(
@@ -268,6 +276,59 @@ private func assertRasterizeE2E(
     XCTAssertEqual(
         FastGSPreprocessParityFixture.expectedRasterizeE2ESampleIDs.map { output.nContrib.asArray(UInt32.self)[$0] },
         FastGSPreprocessParityFixture.expectedRasterizeE2ENContribSamples,
+        file: file,
+        line: line
+    )
+}
+
+private func assertRasterizeLargeE2E(
+    preprocess: FastGSPreprocessOutput,
+    binning: FastGSBinningOutput,
+    output: FastGSRasterizeOutput,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertEqual(preprocess.radii.asArray(Int32.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2ERadii, file: file, line: line)
+    XCTAssertEqual(preprocess.tilesTouched.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2ETilesTouched, file: file, line: line)
+    assertClose(preprocess.xy.asArray(Float.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EXY, accuracy: 1e-5, file: file, line: line)
+    assertClose(preprocess.depths.asArray(Float.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EDepths, accuracy: 1e-5, file: file, line: line)
+
+    XCTAssertEqual(binning.pointOffsets.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EPointOffsets, file: file, line: line)
+    XCTAssertEqual(binning.ranges.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2ERanges, file: file, line: line)
+    XCTAssertEqual(binning.bucketCount.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EBucketCount, file: file, line: line)
+    XCTAssertEqual(binning.bucketOffsets.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EBucketOffsets, file: file, line: line)
+
+    XCTAssertEqual(output.bucketToTile.shape, [15 * 256], file: file, line: line)
+    XCTAssertEqual(output.sampledT.shape, [15 * 256], file: file, line: line)
+    XCTAssertEqual(output.sampledAr.shape, [3 * 15 * 256], file: file, line: line)
+    XCTAssertEqual(output.finalT.shape, [80 * 48], file: file, line: line)
+    XCTAssertEqual(output.nContrib.shape, [80 * 48], file: file, line: line)
+    XCTAssertEqual(output.maxContrib.shape, [15], file: file, line: line)
+    XCTAssertEqual(output.pixelColors.shape, [3, 80 * 48], file: file, line: line)
+    XCTAssertEqual(output.outColor.shape, [3, 80 * 48], file: file, line: line)
+
+    let bucketToTile = output.bucketToTile.asArray(UInt32.self)
+    XCTAssertEqual(Array(bucketToTile.prefix(15)), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EBucketToTilePrefix, file: file, line: line)
+    XCTAssertEqual(Array(bucketToTile.dropFirst(15)), Array(repeating: UInt32(0), count: bucketToTile.count - 15), file: file, line: line)
+    assertClose(Array(output.sampledT.asArray(Float.self).prefix(48)), FastGSPreprocessParityFixture.expectedRasterizeLargeE2ESampledTPrefix, file: file, line: line)
+    assertClose(Array(output.sampledAr.asArray(Float.self).prefix(24)), FastGSPreprocessParityFixture.expectedRasterizeLargeE2ESampledArPrefix, file: file, line: line)
+
+    let outColor = output.outColor.asArray(Float.self)
+    let pixelColors = output.pixelColors.asArray(Float.self)
+    assertClose(channelSums(outColor, channels: 3), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EOutColorSums, accuracy: 2e-2, file: file, line: line)
+    assertClose(channelSums(pixelColors, channels: 3), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EPixelColorSums, accuracy: 2e-2, file: file, line: line)
+    XCTAssertEqual(output.nContrib.asArray(UInt32.self).reduce(0, +), FastGSPreprocessParityFixture.expectedRasterizeLargeE2ENContribSum, file: file, line: line)
+    XCTAssertEqual(output.maxContrib.asArray(UInt32.self), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EMaxContrib, file: file, line: line)
+    XCTAssertEqual(output.metricCount.asArray(Int32.self), [0, 0, 0, 0, 0], file: file, line: line)
+
+    let finalT = output.finalT.asArray(Float.self)
+    XCTAssertEqual(finalT.reduce(0, +), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EFinalTSum, accuracy: 2e-3, file: file, line: line)
+    assertClose(samples(outColor, ids: FastGSPreprocessParityFixture.expectedRasterizeLargeE2ESampleIDs, channels: 3), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EOutColorSamples, accuracy: 1e-5, file: file, line: line)
+    assertClose(samples(pixelColors, ids: FastGSPreprocessParityFixture.expectedRasterizeLargeE2ESampleIDs, channels: 3), FastGSPreprocessParityFixture.expectedRasterizeLargeE2EPixelColorSamples, accuracy: 1e-5, file: file, line: line)
+    assertClose(FastGSPreprocessParityFixture.expectedRasterizeLargeE2ESampleIDs.map { finalT[$0] }, FastGSPreprocessParityFixture.expectedRasterizeLargeE2EFinalTSamples, accuracy: 1e-5, file: file, line: line)
+    XCTAssertEqual(
+        FastGSPreprocessParityFixture.expectedRasterizeLargeE2ESampleIDs.map { output.nContrib.asArray(UInt32.self)[$0] },
+        FastGSPreprocessParityFixture.expectedRasterizeLargeE2ENContribSamples,
         file: file,
         line: line
     )

@@ -39,8 +39,11 @@ space. The handwritten C++ Metal kernels use signatures such as
 During the first preprocess port, these mismatches appeared:
 
 - `means3d` was accepted as `constant float*`.
+- In the larger 5-Gaussian fixture, `means3d` appeared as `device float*`.
 - `viewmatrix`, `projmatrix`, and some later inputs appeared as `device float*`.
 - `shs` appeared as `device float*` when the SH color path was exercised.
+- Empty SH buffers can appear as `constant float*`, even when `means3d` and
+  `dc` appear as `device float*`, so SH helpers need mixed overloads too.
 - Output arrays are `device` address space.
 
 For reusable helpers, prefer address-space overloads:
@@ -56,7 +59,9 @@ inline float3 read_packed_float3(const device float* arr, uint idx) {
 ```
 
 The same pattern is needed for matrix helpers and any helper that accepts input
-arrays.
+arrays. For helpers that combine multiple inputs, such as `in_frustum` and
+`compute_color_from_sh`, add overloads for the input combinations that Xcode
+Metal validation exposes. SwiftPM compilation alone will not catch these.
 
 ## Runtime Params
 
@@ -248,6 +253,7 @@ Current coverage:
 - 1 tile / 1 Gaussian smoke fixture
 - first preprocess -> binning -> rasterize fixture using the same
   precomputed-color scene as the Python/C++ reference path
+- larger 80x48 fixture with 5 Gaussians, 5x3 tiles, and non-square tile spans
 - output shapes and dtypes through the Swift API
 - transmittance/color accumulation against hand-computed expected values
 - sampled intermediates for the first bucket
@@ -257,6 +263,8 @@ Current coverage:
   - per-channel `pixelColors` sums
   - sampled `outColor`, `pixelColors`, `finalT`, and `nContrib` at selected pixels
   - `bucketToTile`, `sampledT`, `sampledAr`, and per-tile `maxContrib`
+  - preprocess radii/xy/depth/tile-count values and binning ranges/buckets for
+    the larger fixture
 
 Reference generation note:
 
@@ -265,13 +273,15 @@ Reference generation note:
   tile_prep_forward -> cumsum -> rasterize_forward`, then recording summary
   values and a few stable sample pixels. This keeps the Swift fixture small
   while still exercising the full first forward path.
+- The larger fixture also writes a Python/C++ reference preview image to
+  `/private/tmp/fastgs_large_rasterize_ref.png` for visual inspection.
 
 Known remaining work:
 
 - Add a full-image exact rasterize parity fixture when the output surface gets
   larger and more varied.
 - Enable and test metric count path.
-- Add multi-tile and multi-Gaussian rasterize fixtures before app preview.
+- Add image export from the Swift output path before app preview.
 
 ## Suggested Porting Checklist
 

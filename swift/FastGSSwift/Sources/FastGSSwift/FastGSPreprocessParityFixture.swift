@@ -71,6 +71,30 @@ public enum FastGSPreprocessParityFixture {
         numTiles: 16
     )
 
+    public static let rasterizeLargeE2EPreprocessParams = FastGSPreprocessParams(
+        degree: 0,
+        maxSHCoefficients: 0,
+        scaleModifier: 1,
+        tanFovX: 1,
+        tanFovY: 1,
+        imageHeight: 48,
+        imageWidth: 80,
+        tileBounds: (x: 5, y: 3, z: 1),
+        multiplier: 1,
+        useColorsPrecomputed: true
+    )
+
+    public static let rasterizeLargeE2EBinningParams = FastGSBinningParams(
+        multiplier: 1,
+        tileBounds: (x: 5, y: 3, z: 1)
+    )
+
+    public static let rasterizeLargeE2EParams = FastGSRasterizeParams(
+        imageWidth: 80,
+        imageHeight: 48,
+        numTiles: 15
+    )
+
     public static func precomputedColorInput() -> FastGSPreprocessInput {
         FastGSPreprocessInput(
             means3D: MLXArray([Float(0), 0, 1, 0.25, -0.25, 1], [2, 3]),
@@ -225,6 +249,57 @@ public enum FastGSPreprocessParityFixture {
         )
     }
 
+    public static func rasterizeLargeE2EInput() -> FastGSPreprocessInput {
+        FastGSPreprocessInput(
+            means3D: MLXArray([
+                Float(-0.62), -0.45, 1,
+                -0.25, 0.25, 1.15,
+                0.20, -0.10, 0.92,
+                0.55, 0.38, 1.25,
+                0.05, 0.62, 1.45,
+            ], [5, 3]),
+            dc: MLXArray([Float](repeating: 0, count: 15), [5, 3]),
+            sh: MLXArray([Float](), [5, 0, 3]),
+            colorsPrecomputed: MLXArray([
+                Float(1), 0.16, 0.08,
+                0.10, 0.72, 1,
+                1, 0.95, 0.18,
+                0.22, 1, 0.28,
+                0.88, 0.24, 1,
+            ], [5, 3]),
+            opacities: MLXArray([Float(0.82), 0.76, 0.68, 0.72, 0.58], [5]),
+            scales: MLXArray([
+                Float(0.18), 0.28, 0.16,
+                0.26, 0.18, 0.18,
+                0.20, 0.20, 0.20,
+                0.30, 0.16, 0.18,
+                0.18, 0.22, 0.24,
+            ], [5, 3]),
+            rotations: MLXArray([
+                Float(1), 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+            ], [5, 4]),
+            cov3DPrecomputed: MLXArray([Float](), [0]),
+            viewMatrix: MLXArray([
+                Float(1), 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 1,
+            ], [4, 4]),
+            projectionMatrix: MLXArray([
+                Float(1), 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 1,
+            ], [4, 4]),
+            cameraPosition: MLXArray([Float(0), 0, 0], [3]),
+            viewspacePoints: MLXArray([Float](repeating: 0, count: 20), [5, 4])
+        )
+    }
+
     public static func precomputedColorOutput() -> FastGSPreprocessOutput {
         FastGSPreprocess.forward(precomputedColorInput(), params: precomputedColorParams)
     }
@@ -300,6 +375,26 @@ public enum FastGSPreprocessParityFixture {
             binningOutput: binningOutput(),
             background: MLXArray([Float(0.1), 0.2, 0.3], [3]),
             params: rasterizeE2EParams
+        )
+    }
+
+    public static func rasterizeLargeE2EPreprocessOutput() -> FastGSPreprocessOutput {
+        FastGSPreprocess.forward(rasterizeLargeE2EInput(), params: rasterizeLargeE2EPreprocessParams)
+    }
+
+    public static func rasterizeLargeE2EBinningOutput() -> FastGSBinningOutput {
+        FastGSBinning.forward(
+            preprocessOutput: rasterizeLargeE2EPreprocessOutput(),
+            params: rasterizeLargeE2EBinningParams
+        )
+    }
+
+    public static func rasterizeLargeE2EOutput() -> FastGSRasterizeOutput {
+        FastGSRasterize.forward(
+            preprocessOutput: rasterizeLargeE2EPreprocessOutput(),
+            binningOutput: rasterizeLargeE2EBinningOutput(),
+            background: MLXArray([Float(0.025), 0.03, 0.04], [3]),
+            params: rasterizeLargeE2EParams
         )
     }
 
@@ -491,4 +586,88 @@ public enum FastGSPreprocessParityFixture {
         0.397653728723526,
     ]
     public static let expectedRasterizeE2ENContribSamples: [UInt32] = [2, 2, 2, 2, 2]
+
+    public static let expectedRasterizeLargeE2ERadii: [Int32] = [26, 28, 27, 30, 16]
+    public static let expectedRasterizeLargeE2EXY: [Float] = [
+        14.700002670288086, 12.70000171661377,
+        29.5, 29.5,
+        47.499996185302734, 21.100000381469727,
+        61.5, 32.6199951171875,
+        41.5, 38.37999725341797,
+    ]
+    public static let expectedRasterizeLargeE2EDepths: [Float] = [
+        1,
+        1.149999976158142,
+        0.9200000166893005,
+        1.25,
+        1.4500000476837158,
+    ]
+    public static let expectedRasterizeLargeE2ETilesTouched: [UInt32] = [8, 8, 12, 8, 6]
+    public static let expectedRasterizeLargeE2EPointOffsets: [UInt32] = [8, 16, 28, 36, 42]
+    public static let expectedRasterizeLargeE2EBucketCount: [UInt32] = Array(repeating: 1, count: 15)
+    public static let expectedRasterizeLargeE2EBucketOffsets: [UInt32] = (1...15).map(UInt32.init)
+    public static let expectedRasterizeLargeE2ERanges: [UInt32] = [
+        0, 1,
+        1, 3,
+        3, 5,
+        5, 6,
+        6, 7,
+        7, 9,
+        9, 14,
+        14, 19,
+        19, 23,
+        23, 25,
+        25, 27,
+        27, 32,
+        32, 36,
+        36, 40,
+        40, 42,
+    ]
+    public static let expectedRasterizeLargeE2EBucketToTilePrefix: [UInt32] = (0..<15).map(UInt32.init)
+    public static let expectedRasterizeLargeE2ESampledTPrefix: [Float] = Array(repeating: 1, count: 48)
+    public static let expectedRasterizeLargeE2ESampledArPrefix: [Float] = Array(repeating: 0, count: 24)
+    public static let expectedRasterizeLargeE2EOutColorSums: [Float] = [
+        650.3896484375,
+        583.2952880859375,
+        433.6844177246094,
+    ]
+    public static let expectedRasterizeLargeE2EPixelColorSums: [Float] = [
+        575.0086669921875,
+        492.838134765625,
+        313.074951171875,
+    ]
+    public static let expectedRasterizeLargeE2EFinalTSum: Float = 3015.23779296875
+    public static let expectedRasterizeLargeE2ENContribSum: UInt32 = 7413
+    public static let expectedRasterizeLargeE2EMaxContrib: [UInt32] = [
+        1, 2, 2, 1, 1,
+        2, 5, 5, 4, 2,
+        2, 5, 4, 4, 2,
+    ]
+    public static let expectedRasterizeLargeE2ESampleIDs: [Int] = [
+        0,
+        7 + 5 * 80,
+        24 + 14 * 80,
+        40 + 24 * 80,
+        63 + 32 * 80,
+        80 * 48 - 1,
+    ]
+    public static let expectedRasterizeLargeE2EOutColorSamples: [Float] = [
+        0.06861342489719391, 0.33779704570770264, 0.4515840709209442, 0.4359814524650574, 0.17473644018173218, 0.02500000037252903,
+        0.035815123468637466, 0.07170627266168594, 0.09307552129030228, 0.472820520401001, 0.7106344699859619, 0.029999999329447746,
+        0.04178926721215248, 0.052832696586847305, 0.05828540027141571, 0.18335802853107452, 0.20697271823883057, 0.03999999910593033,
+    ]
+    public static let expectedRasterizeLargeE2EPixelColorSamples: [Float] = [
+        0.04473171755671501, 0.3208174705505371, 0.43752211332321167, 0.4235699772834778, 0.16729961335659027, 0,
+        0.007157074753195047, 0.051330793648958206, 0.0762011855840683, 0.45792675018310547, 0.7017102837562561, 0,
+        0.0035785373765975237, 0.025665396824479103, 0.035786282271146774, 0.163499653339386, 0.19507381319999695, 0,
+    ]
+    public static let expectedRasterizeLargeE2EFinalTSamples: [Float] = [
+        0.9552682638168335,
+        0.6791825294494629,
+        0.5624779462814331,
+        0.4964592456817627,
+        0.2974728047847748,
+        1,
+    ]
+    public static let expectedRasterizeLargeE2ENContribSamples: [UInt32] = [1, 1, 2, 3, 3, 0]
 }
