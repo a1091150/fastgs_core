@@ -2,6 +2,12 @@ import Foundation
 import MLX
 
 public struct FastGSRecordedForwardManifest: Decodable {
+    public struct Float32Buffer: Decodable {
+        public var path: String
+        public var dtype: String
+        public var shape: [Int]
+    }
+
     public var width: Int
     public var height: Int
     public var pointCount: Int
@@ -16,9 +22,33 @@ public struct FastGSRecordedForwardManifest: Decodable {
     public var campos: [Double]
     public var means3d: [Double]
     public var colors: [Double]
+    public var means3dBuffer: Float32Buffer?
+    public var colorsBuffer: Float32Buffer?
     public var predChannelSums: [Double]
     public var samplePixelIds: [Int]
     public var predSamples: [Double]
+
+    private enum CodingKeys: String, CodingKey {
+        case width
+        case height
+        case pointCount
+        case shDegree
+        case scale
+        case opacity
+        case tanFovX
+        case tanFovY
+        case background
+        case viewmatrix
+        case projmatrix
+        case campos
+        case means3d
+        case colors
+        case means3dBuffer
+        case colorsBuffer
+        case predChannelSums
+        case samplePixelIds
+        case predSamples
+    }
 
     public init(
         width: Int,
@@ -35,6 +65,8 @@ public struct FastGSRecordedForwardManifest: Decodable {
         campos: [Double],
         means3d: [Double],
         colors: [Double],
+        means3dBuffer: Float32Buffer? = nil,
+        colorsBuffer: Float32Buffer? = nil,
         predChannelSums: [Double],
         samplePixelIds: [Int],
         predSamples: [Double]
@@ -53,9 +85,34 @@ public struct FastGSRecordedForwardManifest: Decodable {
         self.campos = campos
         self.means3d = means3d
         self.colors = colors
+        self.means3dBuffer = means3dBuffer
+        self.colorsBuffer = colorsBuffer
         self.predChannelSums = predChannelSums
         self.samplePixelIds = samplePixelIds
         self.predSamples = predSamples
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        width = try container.decode(Int.self, forKey: .width)
+        height = try container.decode(Int.self, forKey: .height)
+        pointCount = try container.decode(Int.self, forKey: .pointCount)
+        shDegree = try container.decode(Int.self, forKey: .shDegree)
+        scale = try container.decode(Double.self, forKey: .scale)
+        opacity = try container.decode(Double.self, forKey: .opacity)
+        tanFovX = try container.decode(Double.self, forKey: .tanFovX)
+        tanFovY = try container.decode(Double.self, forKey: .tanFovY)
+        background = try container.decode([Double].self, forKey: .background)
+        viewmatrix = try container.decode([Double].self, forKey: .viewmatrix)
+        projmatrix = try container.decode([Double].self, forKey: .projmatrix)
+        campos = try container.decode([Double].self, forKey: .campos)
+        means3d = try container.decodeIfPresent([Double].self, forKey: .means3d) ?? []
+        colors = try container.decodeIfPresent([Double].self, forKey: .colors) ?? []
+        means3dBuffer = try container.decodeIfPresent(Float32Buffer.self, forKey: .means3dBuffer)
+        colorsBuffer = try container.decodeIfPresent(Float32Buffer.self, forKey: .colorsBuffer)
+        predChannelSums = try container.decode([Double].self, forKey: .predChannelSums)
+        samplePixelIds = try container.decode([Int].self, forKey: .samplePixelIds)
+        predSamples = try container.decode([Double].self, forKey: .predSamples)
     }
 }
 
@@ -63,13 +120,17 @@ public enum FastGSRecordedForwardError: Error {
     case invalidPointCount(expected: Int, meansCount: Int, colorsCount: Int)
     case invalidCameraData(viewmatrixCount: Int, projmatrixCount: Int, camposCount: Int)
     case invalidBackground(count: Int)
+    case invalidBuffer(name: String, dtype: String, shape: [Int], expectedShape: [Int])
+    case invalidBufferByteCount(name: String, expected: Int, actual: Int)
 }
 
 public struct FastGSRecordedForwardScene {
     public var manifest: FastGSRecordedForwardManifest
+    public var manifestDirectory: URL?
 
     public init(manifest: FastGSRecordedForwardManifest) {
         self.manifest = manifest
+        self.manifestDirectory = nil
     }
 
     public init(manifestURL: URL) throws {
@@ -77,6 +138,7 @@ public struct FastGSRecordedForwardScene {
             FastGSRecordedForwardManifest.self,
             from: Data(contentsOf: manifestURL)
         )
+        self.manifestDirectory = manifestURL.deletingLastPathComponent()
     }
 
     public func render(verbose: Bool = false) throws -> FastGSRasterizeOutput {
@@ -89,8 +151,8 @@ public struct FastGSRecordedForwardScene {
             z: 1
         )
         let maxSHCoefficients = (manifest.shDegree + 1) * (manifest.shDegree + 1)
-        let means = MLXArray(manifest.means3d.map(Float.init), [count, 3])
-        let colors = manifest.colors.map(Float.init)
+        let means = MLXArray(try floatBuffer(name: "means3d", descriptor: manifest.means3dBuffer, fallback: manifest.means3d, expectedShape: [count, 3]), [count, 3])
+        let colors = try floatBuffer(name: "colors", descriptor: manifest.colorsBuffer, fallback: manifest.colors, expectedShape: [count, 3])
         let shC0 = Float(0.28209479177387814)
         let dc = MLXArray(colors.map { ($0 - 0.5) / shC0 }, [count, 3])
         let sh = MLXArray.zeros([count, maxSHCoefficients - 1, 3], dtype: .float32)
@@ -149,11 +211,13 @@ public struct FastGSRecordedForwardScene {
 
     private func validate() throws {
         let count = manifest.pointCount
-        guard manifest.means3d.count == count * 3, manifest.colors.count == count * 3 else {
+        let meansCount = manifest.means3dBuffer == nil ? manifest.means3d.count : manifest.means3dBuffer?.shape.reduce(1, *) ?? 0
+        let colorsCount = manifest.colorsBuffer == nil ? manifest.colors.count : manifest.colorsBuffer?.shape.reduce(1, *) ?? 0
+        guard meansCount == count * 3, colorsCount == count * 3 else {
             throw FastGSRecordedForwardError.invalidPointCount(
                 expected: count,
-                meansCount: manifest.means3d.count,
-                colorsCount: manifest.colors.count
+                meansCount: meansCount,
+                colorsCount: colorsCount
             )
         }
         guard manifest.viewmatrix.count == 16, manifest.projmatrix.count == 16, manifest.campos.count >= 3 else {
@@ -165,6 +229,37 @@ public struct FastGSRecordedForwardScene {
         }
         guard manifest.background.count == 3 else {
             throw FastGSRecordedForwardError.invalidBackground(count: manifest.background.count)
+        }
+    }
+
+    private func floatBuffer(
+        name: String,
+        descriptor: FastGSRecordedForwardManifest.Float32Buffer?,
+        fallback: [Double],
+        expectedShape: [Int]
+    ) throws -> [Float] {
+        guard let descriptor else {
+            return fallback.map(Float.init)
+        }
+        guard descriptor.dtype == "float32", descriptor.shape == expectedShape else {
+            throw FastGSRecordedForwardError.invalidBuffer(
+                name: name,
+                dtype: descriptor.dtype,
+                shape: descriptor.shape,
+                expectedShape: expectedShape
+            )
+        }
+        let url = descriptor.path.hasPrefix("/")
+            ? URL(fileURLWithPath: descriptor.path)
+            : (manifestDirectory ?? URL(fileURLWithPath: ".")).appendingPathComponent(descriptor.path)
+        let data = try Data(contentsOf: url)
+        let expectedCount = expectedShape.reduce(1, *)
+        let expectedByteCount = expectedCount * MemoryLayout<Float>.stride
+        guard data.count == expectedByteCount else {
+            throw FastGSRecordedForwardError.invalidBufferByteCount(name: name, expected: expectedByteCount, actual: data.count)
+        }
+        return data.withUnsafeBytes { rawBuffer in
+            Array(rawBuffer.bindMemory(to: Float.self))
         }
     }
 }

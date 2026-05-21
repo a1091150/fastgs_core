@@ -211,6 +211,8 @@ Planned Swift task order:
   160x120, 4096-point forward case.
 - [x] Store the recorded reference generator under
   `swift/FastGSSwiftTools/generate_recorded_reference.py`.
+- [x] Store large recorded arrays as binary float32 buffers referenced from the
+  manifest instead of inline JSON lists.
 - [x] Add a small Swift loader for recorded scanner metadata and one selected
   frame, keeping it separate from live camera capture.
 - [x] Feed the same recorded frame inputs into Swift `FastGSPreprocess ->

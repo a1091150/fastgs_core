@@ -330,9 +330,21 @@ scanner dataset, renders a 160x120 frame with at most 4096 points through the
 existing Python/C++ extension, and writes:
 
 - `/private/tmp/fastgs_recorded_reference/recorded_manifest.json`
+- `/private/tmp/fastgs_recorded_reference/recorded_means3d.f32`
+- `/private/tmp/fastgs_recorded_reference/recorded_colors.f32`
 - `/private/tmp/fastgs_recorded_reference/recorded_pred.png`
 - `/private/tmp/fastgs_recorded_reference/recorded_target.png`
 - `/private/tmp/fastgs_recorded_reference/recorded_sbs.png`
+
+The manifest keeps small metadata and reference summaries in JSON, while large
+point arrays are binary little-endian float32 buffers. This keeps the reference
+format practical for larger recorded point counts. The current buffer entries
+are:
+
+```json
+"means3dBuffer": {"path": "recorded_means3d.f32", "dtype": "float32", "shape": [4096, 3]},
+"colorsBuffer": {"path": "recorded_colors.f32", "dtype": "float32", "shape": [4096, 3]}
+```
 
 The Xcode test `testRecordedScannerForwardRunsUnderXcode` loads that manifest,
 runs the same inputs through Swift `preprocess -> binning -> rasterize`, compares

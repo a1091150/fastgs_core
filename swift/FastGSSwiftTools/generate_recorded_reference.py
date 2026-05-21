@@ -65,6 +65,16 @@ def array_payload(array: mx.array) -> list[float]:
     return np.array(array, dtype=np.float32).reshape(-1).tolist()
 
 
+def write_f32_buffer(values: np.ndarray, path: Path) -> dict:
+    arr = np.ascontiguousarray(values, dtype=np.float32)
+    arr.reshape(-1).tofile(path)
+    return {
+        "path": path.name,
+        "dtype": "float32",
+        "shape": list(arr.shape),
+    }
+
+
 def main() -> None:
     if not DATASET_DIR.exists():
         raise RuntimeError(f"missing dataset: {DATASET_DIR}")
@@ -113,9 +123,13 @@ def main() -> None:
     target_png = OUT_DIR / "recorded_target.png"
     sbs_png = OUT_DIR / "recorded_sbs.png"
     manifest_path = OUT_DIR / "recorded_manifest.json"
+    means3d_path = OUT_DIR / "recorded_means3d.f32"
+    colors_path = OUT_DIR / "recorded_colors.f32"
     save_chw_png(pred, pred_png)
     save_chw_png(target, target_png)
     save_side_by_side(target, pred, sbs_png)
+    means3d_buffer = write_f32_buffer(points, means3d_path)
+    colors_buffer = write_f32_buffer(colors, colors_path)
 
     pred_np = np.array(pred, dtype=np.float32)
     target_np = np.array(target, dtype=np.float32)
@@ -145,8 +159,8 @@ def main() -> None:
         "viewmatrix": array_payload(camera.viewmatrix),
         "projmatrix": array_payload(camera.projmatrix),
         "campos": array_payload(camera.campos),
-        "means3d": points.astype(np.float32).reshape(-1).tolist(),
-        "colors": colors.astype(np.float32).reshape(-1).tolist(),
+        "means3dBuffer": means3d_buffer,
+        "colorsBuffer": colors_buffer,
         "predChannelSums": channel_sums(pred_np),
         "targetChannelSums": channel_sums(target_np),
         "samplePixelIds": sample_ids,
@@ -163,6 +177,8 @@ def main() -> None:
     print("pred:", pred_png)
     print("target:", target_png)
     print("sbs:", sbs_png)
+    print("means3d:", means3d_path)
+    print("colors:", colors_path)
     print("points:", points.shape[0], "frames:", len(cameras))
     print("predChannelSums:", manifest["predChannelSums"])
 
