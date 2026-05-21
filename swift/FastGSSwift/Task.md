@@ -306,10 +306,9 @@ capture yet.
     means, DC/SH colors, opacity, scale, rotation, or precomputed covariance
 - Port backward kernels behind explicit Swift APIs first:
   - [x] `FastGSRasterizeBackward.forward(...)` API and MLXFast dispatch skeleton
+  - [x] full `fastgs_render_backward_kernel` math port smoke-tested under Xcode
   - [ ] `FastGSPreprocessBackward.forward(...)`
 - Rasterize backward remaining work:
-  - [ ] port full `fastgs_render_backward_kernel` math from Metal to
-    `MLXFast.metalKernel`
   - [ ] compare `dL_dmeans2d`, `dL_dcolors`, `dL_dconicOpacity`, and
     `dL_dviewspacePoints` against Python/C++ reference
   - [ ] wire rasterize backward output into preprocess backward once both

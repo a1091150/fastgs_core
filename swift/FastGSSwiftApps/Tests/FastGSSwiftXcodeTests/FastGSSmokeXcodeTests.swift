@@ -404,7 +404,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(bytes[4 * (80 * 48 - 1) + 3], 255)
     }
 
-    func testRasterizeBackwardSkeletonRunsUnderXcode() {
+    func testRasterizeBackwardKernelRunsUnderXcode() {
         let preprocess = FastGSPreprocessParityFixture.rasterizeLargeE2EPreprocessOutput()
         let binning = FastGSPreprocessParityFixture.rasterizeLargeE2EBinningOutput()
         let rasterize = FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()
@@ -441,11 +441,15 @@ private func assertRasterizeBackwardSkeleton(
     XCTAssertEqual(output.background.shape, background.shape, file: file, line: line)
     XCTAssertEqual(output.radii.shape, preprocess.radii.shape, file: file, line: line)
     XCTAssertEqual(output.metricMap.shape, [params.imageWidth * params.imageHeight], file: file, line: line)
-    XCTAssertEqual(output.metricCount.shape, preprocess.radii.shape, file: file, line: line)
+    XCTAssertEqual(output.viewspacePoints.shape, preprocess.viewspacePoints.shape, file: file, line: line)
     XCTAssertEqual(output.means2D.dtype, .float32, file: file, line: line)
     XCTAssertEqual(output.colors.dtype, .float32, file: file, line: line)
     XCTAssertEqual(output.conicOpacity.dtype, .float32, file: file, line: line)
     XCTAssertEqual(output.background.dtype, .float32, file: file, line: line)
+    XCTAssertEqual(output.viewspacePoints.dtype, .float32, file: file, line: line)
+    XCTAssertTrue(output.colors.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
+    XCTAssertTrue(output.conicOpacity.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
+    XCTAssertTrue(output.viewspacePoints.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
 }
 
 private func assertBinning(
