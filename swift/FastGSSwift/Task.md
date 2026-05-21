@@ -277,24 +277,56 @@ capture yet.
 
 ## Backward and Training Plan
 
-- Backward support is not part of the first milestone.
-- After forward parity is stable, add Swift `CustomFunction` wrappers:
+- Backward support starts after the recorded forward path is stable.
+- Current Swift forward status: the existing `FastGSPreprocess ->
+  FastGSBinning -> FastGSRasterize` path does not call `stopGradient` yet.
+  That is acceptable for preview/parity, but a training path should not let
+  gradients flow through binning, sorting, tile ranges, bucket offsets, radii,
+  metric buffers, or other discrete orchestration arrays.
+- Keep the preview/inference entry point simple, and add a separate
+  training/autograd entry point before exposing backward:
+
+  ```swift
+  public enum FastGSForwardGraphMode {
+      case inference
+      case training
+  }
+  ```
+
+- Match the existing C++/Python binding's gradient boundaries:
+  - stop `pointOffsets = cumsum(tilesTouched)`
+  - stop binning inputs used only for discrete scheduling:
+    `xys`, `depths`, `conicOpacity`, and `tilesTouched`
+  - stop duplicated keys/lists, sorted keys/lists, tile ranges, bucket counts,
+    and bucket offsets
+  - stop raster-only scheduling buffers such as `radii` and `metricMap`
+  - do not stop gradient-critical render values passed into rasterize:
+    `means2D`, `colors`, `conicOpacity`, and `viewspacePoints`
+  - do not stop original trainable Gaussian parameters before preprocess:
+    means, DC/SH colors, opacity, scale, rotation, or precomputed covariance
+- Port backward kernels behind explicit Swift APIs first:
+  - [ ] `FastGSRasterizeBackward.forward(...)`
+  - [ ] `FastGSPreprocessBackward.forward(...)`
+- Validate those explicit backward APIs with fixed upstream gradients before
+  wrapping them in autograd.
+- After explicit backward parity is stable, add Swift `CustomFunction` wrappers:
 
   ```swift
   let render = CustomFunction {
       Forward { inputs in
-          ...
+          // call MLXFast.metalKernel-based preprocess/binning/rasterize
       }
       VJP { primals, cotangents in
-          ...
+          // call MLXFast.metalKernel-based rasterize/preprocess backward
       }
   }
   ```
 
-- Port backward kernels in this order:
-  - rasterize backward
-  - preprocess backward
-- Keep forward intermediates available as `MLXArray` outputs so VJP can consume them.
+- The `CustomFunction` should define the autograd contract; the math inside
+  `Forward` and `VJP` should still use `MLXFast.metalKernel` rather than a
+  separate C++ primitive runtime.
+- Keep forward intermediates available as `MLXArray` outputs so VJP can consume
+  them.
 - Validate gradients against the existing implementation before attempting training from Swift.
 
 ## Test Plan

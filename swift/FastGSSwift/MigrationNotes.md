@@ -418,6 +418,51 @@ The large recorded Xcode parity test now uses `channelSumAccuracy: 2e-2`.
 The current mock `CVPixelBuffer` path remains useful for presentation testing,
 but it is not the next critical path.
 
+## Stop Gradient and Backward Plan
+
+The current Swift forward path is preview/parity oriented and does not yet call
+`stopGradient`. The existing C++ binding does use `mx::stop_gradient` around
+non-differentiable scheduling work, so the Swift training path should add the
+same graph boundaries before backward is exposed.
+
+Keep two mental models separate:
+
+- `MLXFast.metalKernel` is the GPU implementation mechanism.
+- `CustomFunction` is the autograd contract that decides what tensors are saved
+  from forward and how VJP calls the backward kernels.
+
+The first Swift training wrapper should stop gradients for orchestration arrays:
+
+- `pointOffsets = cumsum(tilesTouched)`
+- binning-only views of `xys`, `depths`, `conicOpacity`, and `tilesTouched`
+- duplicated point-list keys and indices
+- sorted point-list keys and indices
+- tile ranges, bucket counts, and bucket offsets
+- raster scheduling inputs such as `radii` and `metricMap`
+
+Do not stop the values that rasterize backward needs in order to propagate
+gradients:
+
+- `means2D` / `xys`
+- `colors` / `rgbs`
+- `conicOpacity`
+- `viewspacePoints`
+- original trainable Gaussian inputs before preprocess, such as means, colors,
+  opacity, scale, rotation, and precomputed covariance
+
+The safer implementation order is:
+
+1. Add explicit Swift APIs for the backward kernels using `MLXFast.metalKernel`.
+   Start with rasterize backward, then preprocess backward.
+2. Test those APIs with fixed upstream gradients and compare against the current
+   Python/C++ implementation.
+3. Add a Swift `CustomFunction` wrapper whose forward closure calls the existing
+   MLXFast forward kernels and whose VJP closure calls the explicit backward
+   APIs.
+
+This keeps the Metal port debuggable: a wrong gradient can be isolated to the
+backward kernel before the autograd wrapper is involved.
+
 Swift migration reference generators are kept in `swift/FastGSSwiftTools/`:
 
 - `fastgs_preprocess_edge_refs.py`
