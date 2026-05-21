@@ -161,18 +161,28 @@ public enum FastGSPreprocess {
         validate(input, params: params)
 
         let count = input.means3D.shape[0]
+        let dc = nonEmpty(input.dc, fallbackShape: [max(count, 1), 3], stream: stream)
+        let sh = nonEmpty(
+            input.sh,
+            fallbackShape: [max(count, 1), max(params.maxSHCoefficients, 1), 3],
+            stream: stream
+        )
+        let colorsPrecomputed = nonEmpty(input.colorsPrecomputed, fallbackShape: [max(count, 1), 3], stream: stream)
+        let scales = nonEmpty(input.scales, fallbackShape: [max(count, 1), 3], stream: stream)
+        let rotations = nonEmpty(input.rotations, fallbackShape: [max(count, 1), 4], stream: stream)
+        let cov3DPrecomputed = nonEmpty(input.cov3DPrecomputed, fallbackShape: [max(count, 1), 6], stream: stream)
         let threadGroupSize = max(1, min(256, count))
         let outputs = kernel(
             [
                 params.kernelArray,
                 input.means3D,
-                input.dc,
-                input.sh,
-                input.colorsPrecomputed,
+                dc,
+                sh,
+                colorsPrecomputed,
                 input.opacities,
-                input.scales,
-                input.rotations,
-                input.cov3DPrecomputed,
+                scales,
+                rotations,
+                cov3DPrecomputed,
                 input.viewMatrix,
                 input.projectionMatrix,
                 input.cameraPosition,
@@ -218,6 +228,18 @@ public enum FastGSPreprocess {
             clamped: outputs[7],
             viewspacePoints: outputs[8]
         )
+    }
+
+    private static func nonEmpty(
+        _ array: MLXArray,
+        fallbackShape: [Int],
+        stream: StreamOrDevice
+    ) -> MLXArray {
+        let elementCount = array.shape.reduce(1, *)
+        if elementCount > 0 {
+            return array
+        }
+        return MLXArray.zeros(fallbackShape, dtype: .float32, stream: stream)
     }
 
     private static func validate(_ input: FastGSPreprocessInput, params: FastGSPreprocessParams) {

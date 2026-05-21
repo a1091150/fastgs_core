@@ -63,6 +63,20 @@ arrays. For helpers that combine multiple inputs, such as `in_frustum` and
 `compute_color_from_sh`, add overloads for the input combinations that Xcode
 Metal validation exposes. SwiftPM compilation alone will not catch these.
 
+Do not pass zero-size arrays into `MLXFast.metalKernel` for named inputs, even
+when the current runtime flags mean that input is unused. With Metal API
+validation enabled, MLX may skip binding the zero-size buffer while the generated
+custom kernel still declares the argument, causing errors such as:
+
+```text
+missing Buffer binding at index 4 for shs[0]
+```
+
+The preprocess Swift wrapper now replaces empty optional inputs (`dc`, `sh`,
+`colorsPrecomputed`, `scales`, `rotations`, and `cov3DPrecomputed`) with small
+non-empty dummy buffers before dispatch. The real input validation still applies
+for whichever path is active.
+
 ## Runtime Params
 
 The C++ primitive preprocess kernel used a packed `PreprocessKernelParams`
@@ -287,6 +301,20 @@ Known remaining work:
 - Enable and test metric count path.
 - Add a Metal texture or CVPixelBuffer presentation bridge for the macOS app
   preview.
+
+## macOS Preview Status
+
+The Xcode macOS app now renders the larger static fixture through the SwiftPM
+package and displays the result with SwiftUI:
+
+- app entry: `swift/FastGSSwiftApps/Apps/FastGSSwiftMac/FastGSSwiftMacApp.swift`
+- render source: `FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()`
+- presentation bridge: `FastGSImageExport.cgImage(rasterizeOutput:width:height:)`
+
+This is intentionally still a static preview. It proves the Swift package,
+MLXFast kernels, channel-major `outColor`, and SwiftUI presentation path can be
+connected inside an app target before adding camera input or interactive camera
+controls.
 
 ## Suggested Porting Checklist
 

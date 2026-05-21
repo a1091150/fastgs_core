@@ -74,6 +74,51 @@ public enum FastGSImageExport {
         precondition(rgbaBytes.count == width * height * 4, "rgbaBytes must contain width * height * 4 bytes.")
 
         #if canImport(CoreGraphics) && canImport(ImageIO) && canImport(UniformTypeIdentifiers)
+        let image = try cgImage(rgbaBytes: rgbaBytes, width: width, height: height)
+        guard let destination = CGImageDestinationCreateWithURL(
+            url as CFURL,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw FastGSImageExportError.cannotCreateDestination
+        }
+
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw FastGSImageExportError.cannotFinalizeDestination
+        }
+        return url
+        #else
+        throw FastGSImageExportError.pngUnavailable
+        #endif
+    }
+
+    #if canImport(CoreGraphics)
+    public static func cgImage(
+        outColor: MLXArray,
+        width: Int,
+        height: Int
+    ) throws -> CGImage {
+        try cgImage(rgbaBytes: rgbaBytes(outColor: outColor, width: width, height: height), width: width, height: height)
+    }
+
+    public static func cgImage(
+        rasterizeOutput: FastGSRasterizeOutput,
+        width: Int,
+        height: Int
+    ) throws -> CGImage {
+        try cgImage(outColor: rasterizeOutput.outColor, width: width, height: height)
+    }
+
+    public static func cgImage(
+        rgbaBytes: [UInt8],
+        width: Int,
+        height: Int
+    ) throws -> CGImage {
+        precondition(width > 0 && height > 0, "width and height must be positive.")
+        precondition(rgbaBytes.count == width * height * 4, "rgbaBytes must contain width * height * 4 bytes.")
+
         let data = Data(rgbaBytes)
         guard let provider = CGDataProvider(data: data as CFData) else {
             throw FastGSImageExportError.cannotCreateDataProvider
@@ -93,24 +138,9 @@ public enum FastGSImageExport {
         ) else {
             throw FastGSImageExportError.cannotCreateImage
         }
-        guard let destination = CGImageDestinationCreateWithURL(
-            url as CFURL,
-            UTType.png.identifier as CFString,
-            1,
-            nil
-        ) else {
-            throw FastGSImageExportError.cannotCreateDestination
-        }
-
-        CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination) else {
-            throw FastGSImageExportError.cannotFinalizeDestination
-        }
-        return url
-        #else
-        throw FastGSImageExportError.pngUnavailable
-        #endif
+        return image
     }
+    #endif
 
     private static func byte(_ value: Float) -> UInt8 {
         let clamped = min(max(value, 0), 1)

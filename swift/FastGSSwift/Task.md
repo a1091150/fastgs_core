@@ -176,10 +176,11 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 
 ### 6. macOS App Preview
 
-- Add a macOS app target through Xcode.
-- Load a small static Gaussian fixture.
-- Render through the SwiftPM package.
-- Display output using a simple MetalKit or SwiftUI-backed preview.
+- [x] Add a macOS app target through Xcode.
+- [x] Load the large static Gaussian fixture.
+- [x] Render through the SwiftPM package.
+- [x] Display output using a SwiftUI-backed preview.
+- [x] Add a basic reload control.
 - Add basic camera controls after the static render path is stable.
 
 ## IOSurface and Real-Time Camera Plan
