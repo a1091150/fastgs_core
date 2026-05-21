@@ -329,6 +329,35 @@ capture yet.
   them.
 - Validate gradients against the existing implementation before attempting training from Swift.
 
+### Optimizer Plan
+
+- Optimizer state should live on the Swift side, matching the Python MLX model
+  where the optimizer updates `MLXArray` parameters after gradients are
+  computed.
+- Use `submodules/mlx-swift/Source/MLXOptimizers/Optimizers.swift` as the
+  primary Swift reference for:
+  - per-parameter optimizer state
+  - tree-shaped parameter updates
+  - SGD/Adam-style update formulas
+  - `innerState()` / `eval()` behavior for optimizer state arrays
+- Do not require FastGSSwift to use `MLXOptimizers` directly if its `Module`
+  and `ModuleParameters` shape is awkward for Gaussian splat data. It is
+  acceptable to write a FastGS-specific optimizer wrapper that keeps typed
+  Gaussian parameter groups and optimizer state explicitly.
+- First optimizer target:
+  - [ ] add a small typed parameter container for trainable Gaussian arrays
+  - [ ] add an Adam-style update step for means, colors/SH, opacity, scale, and
+    rotation
+  - [ ] support per-field learning rates because FastGS training usually does
+    not update all Gaussian fields with the same schedule
+  - [ ] keep optimizer state as `MLXArray` buffers so updates remain on device
+  - [ ] test one synthetic gradient step before connecting to real backward
+- Later optimizer work:
+  - [ ] checkpoint parameter arrays and optimizer state
+  - [ ] support densify/prune state migration when Gaussian count changes
+  - [ ] add recorded-data loss and training smoke loop after backward parity
+    exists
+
 ## Test Plan
 
 ### Kernel Tests

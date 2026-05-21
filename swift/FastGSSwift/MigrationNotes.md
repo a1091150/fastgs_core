@@ -463,6 +463,30 @@ The safer implementation order is:
 This keeps the Metal port debuggable: a wrong gradient can be isolated to the
 backward kernel before the autograd wrapper is involved.
 
+## Optimizer Notes
+
+`submodules/mlx-swift/Source/MLXOptimizers/Optimizers.swift` is the closest
+Swift-side reference for training updates. Its design mirrors Python MLX: the
+optimizer owns state, receives gradients, and returns updated `MLXArray`
+parameters. `OptimizerBase` stores per-parameter state in a tree matching the
+model parameters, while concrete optimizers such as SGD and Adam implement the
+single-parameter update formula.
+
+FastGSSwift does not need to depend on that exact API if Gaussian splat
+parameters are easier to manage as typed arrays instead of `MLXNN.Module`
+parameters. A FastGS-specific optimizer can still copy the important parts:
+
+- keep first/second moment state as `MLXArray`
+- update each trainable field on device
+- expose `innerState()` or equivalent evaluation hooks for optimizer buffers
+- support per-field learning rates for means, colors/SH, opacity, scale, and
+  rotation
+- plan for state migration when Gaussian densify/prune changes the point count
+
+The first optimizer smoke test should not wait for full training. Use synthetic
+gradients to prove one Adam-style update changes typed Gaussian parameter arrays
+and keeps optimizer state shape-compatible.
+
 Swift migration reference generators are kept in `swift/FastGSSwiftTools/`:
 
 - `fastgs_preprocess_edge_refs.py`
