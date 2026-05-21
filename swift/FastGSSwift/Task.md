@@ -229,6 +229,9 @@ Planned Swift task order:
   larger-scene channel-sum divergence.
 - [x] Add recorded stage summaries to localize the 16384-point divergence.
 - [x] Fix the 16384-point preprocess color divergence in the SH/DC color path.
+- [x] Add a repeatable `make test-swift-recorded-forward` flow that regenerates
+  recorded references, runs the Xcode recorded tests, and compares Python/C++
+  vs Swift stage summaries.
 
 ## IOSurface and Real-Time Camera Plan
 

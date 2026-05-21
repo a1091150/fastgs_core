@@ -424,6 +424,23 @@ Swift migration reference generators are kept in `swift/FastGSSwiftTools/`:
 - `fastgs_e2e_rasterize_ref.py`
 - `fastgs_large_rasterize_ref.py`
 - `generate_recorded_reference.py`
+- `compare_recorded_stage_summary.py`
+
+The recorded Swift forward parity flow can now be run from the repository root:
+
+```bash
+make test-swift-recorded-forward
+```
+
+This regenerates the 4096-point and 16384-point Python/C++ recorded references,
+runs the macOS Xcode tests that write `recorded_swift.png` and
+`recorded_swift_stage_summary.json`, then compares each Swift stage summary
+against the manifest `stageSummaries`. Integer prefixes and checksums must match
+exactly; float summaries use a `5e-2` absolute tolerance plus relative tolerance
+for large accumulated sums. The output also prints the Python reference PNG,
+side-by-side PNG, and Swift PNG paths for quick visual inspection. The Xcode
+step uses an isolated DerivedData folder at `/private/tmp/fastgs_swift_xcode_derived`
+so stale default Xcode build products do not affect the automation.
 
 ## CVPixelBuffer Bridge Status
 
