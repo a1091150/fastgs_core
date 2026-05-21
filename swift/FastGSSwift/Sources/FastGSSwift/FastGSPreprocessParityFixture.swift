@@ -65,6 +65,12 @@ public enum FastGSPreprocessParityFixture {
         numTiles: 1
     )
 
+    public static let rasterizeE2EParams = FastGSRasterizeParams(
+        imageWidth: 64,
+        imageHeight: 64,
+        numTiles: 16
+    )
+
     public static func precomputedColorInput() -> FastGSPreprocessInput {
         FastGSPreprocessInput(
             means3D: MLXArray([Float(0), 0, 1, 0.25, -0.25, 1], [2, 3]),
@@ -288,6 +294,15 @@ public enum FastGSPreprocessParityFixture {
         )
     }
 
+    public static func rasterizeE2EOutput() -> FastGSRasterizeOutput {
+        FastGSRasterize.forward(
+            preprocessOutput: precomputedColorOutput(),
+            binningOutput: binningOutput(),
+            background: MLXArray([Float(0.1), 0.2, 0.3], [3]),
+            params: rasterizeE2EParams
+        )
+    }
+
     public static let expectedRadii: [Int32] = [97, 102]
     public static let expectedXY: [Float] = [
         31.5, 31.5,
@@ -434,4 +449,46 @@ public enum FastGSPreprocessParityFixture {
     public static let expectedRasterizeSmokePixelColors: [Float] = [0.125, 0.25, 0.375]
     public static let expectedRasterizeSmokeOutColor: [Float] = [0.175, 0.35, 0.525]
     public static let expectedRasterizeSmokeMetricCount: [Int32] = [0]
+
+    public static let expectedRasterizeE2EBucketToTilePrefix: [UInt32] = (0..<16).map(UInt32.init)
+    public static let expectedRasterizeE2ESampledTPrefix: [Float] = Array(repeating: 1, count: 32)
+    public static let expectedRasterizeE2ESampledArPrefix: [Float] = Array(repeating: 0, count: 12)
+    public static let expectedRasterizeE2EOutColorSums: [Float] = [
+        3037.8857421875,
+        784.2421875,
+        117.37377166748047,
+    ]
+    public static let expectedRasterizeE2EPixelColorSums: [Float] = [
+        2998.760986328125,
+        705.9930419921875,
+        0,
+    ]
+    public static let expectedRasterizeE2EFinalTSum: Float = 391.24591064453125
+    public static let expectedRasterizeE2ENContribSum: UInt32 = 8192
+    public static let expectedRasterizeE2EMaxContrib: [UInt32] = Array(repeating: 2, count: 16)
+    public static let expectedRasterizeE2ESampleIDs: [Int] = [
+        0,
+        31 + 31 * 64,
+        32 + 32 * 64,
+        39 + 23 * 64,
+        63 + 63 * 64,
+    ]
+    public static let expectedRasterizeE2EOutColorSamples: [Float] = [
+        0.419337660074234, 0.9900542497634888, 0.9900542497634888, 0.939261794090271, 0.419337660074234,
+        0.302304744720459, 0.0095659289509058, 0.0095659289509058, 0.06031261011958122, 0.302304744720459,
+        0.1192961260676384, 0.0001627731107873842, 0.0001627731107873842, 0.00018239683413412422, 0.1192961260676384,
+    ]
+    public static let expectedRasterizeE2EPixelColorSamples: [Float] = [
+        0.3795722723007202, 0.9900000095367432, 0.9900000095367432, 0.9392009973526001, 0.3795722723007202,
+        0.2227739840745926, 0.009457413107156754, 0.009457413107156754, 0.06019101291894913, 0.2227739840745926,
+        0, 0, 0, 0, 0,
+    ]
+    public static let expectedRasterizeE2EFinalTSamples: [Float] = [
+        0.397653728723526,
+        0.0005425770068541169,
+        0.0005425770068541169,
+        0.0006079894374124706,
+        0.397653728723526,
+    ]
+    public static let expectedRasterizeE2ENContribSamples: [UInt32] = [2, 2, 2, 2, 2]
 }

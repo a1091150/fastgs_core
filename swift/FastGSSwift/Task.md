@@ -152,6 +152,8 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 - [x] Add `FastGSRasterize` Swift API and output structure.
 - [x] Add a 1 tile / 1 Gaussian rasterize smoke fixture.
 - [x] Validate rasterize smoke output under Xcode.
+- [x] Connect the first preprocess -> binning -> rasterize fixture.
+- [x] Compare E2E rasterize output summaries and sampled pixels against the existing Python/C++ implementation.
 - Port full `fastgs_rasterize.metal` parity fixtures after the smoke path is stable.
 - Preserve:
   - [x] per-tile traversal in the smoke path
@@ -163,6 +165,11 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [ ] optional metric count path
 - [x] First output format is MLX float color array.
 - Add a separate presentation conversion step later.
+- Remaining rasterize expansion:
+  - [ ] full-image exact parity fixture instead of summary/sample checks
+  - [ ] metric count path
+  - [ ] multi-scene and larger Gaussian fixtures
+  - [ ] non-square larger tile coverage carried from binning
 
 ### 6. macOS App Preview
 
