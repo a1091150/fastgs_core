@@ -496,6 +496,12 @@ MLXFast kernels, channel-major `outColor`, and Metal presentation path can be
 connected inside an app target before adding camera input, IOSurface wrapping,
 or interactive camera controls.
 
+The recorded scanner preview uses the same app surface as an inspection view:
+left pane loads the manifest `targetPng`, and right pane renders the same
+manifest through Swift `FastGSRecordedForwardScene`. Numeric parity remains the
+job of `make test-swift-recorded-forward`; the app view is for quickly spotting
+camera, orientation, and color differences.
+
 ## Suggested Porting Checklist
 
 For each existing `.metal` stage:

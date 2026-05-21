@@ -1,4 +1,5 @@
 import FastGSSwift
+import AppKit
 import CoreImage
 import CoreVideo
 import Metal
@@ -20,9 +21,11 @@ private final class RenderPreviewModel: ObservableObject {
     private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
     @Published var texture: MTLTexture?
     @Published var fallbackImage: CGImage?
+    @Published var targetImage: CGImage?
     @Published var status = "Ready"
     @Published var renderSize = "80 x 48"
     @Published var previewAspectRatio = 80.0 / 48.0
+    @Published var previewMode: RenderPreviewMode = .single
     @Published var isRendering = false
     let device = MTLCreateSystemDefaultDevice()
 
@@ -58,8 +61,10 @@ private final class RenderPreviewModel: ObservableObject {
 
                 texture = rendered.0
                 fallbackImage = rendered.1
+                targetImage = nil
                 renderSize = "80 x 48"
                 previewAspectRatio = 80.0 / 48.0
+                previewMode = .single
                 status = "Rendered with Swift MLXFast texture"
             } catch {
                 status = "Render failed: \(error)"
@@ -96,8 +101,10 @@ private final class RenderPreviewModel: ObservableObject {
 
                 texture = rendered.0
                 fallbackImage = nil
+                targetImage = nil
                 renderSize = "\(rendered.1) x \(rendered.2)"
                 previewAspectRatio = Double(rendered.1) / Double(rendered.2)
+                previewMode = .single
                 status = "Rendered mock CVPixelBuffer texture"
             } catch {
                 status = "Camera frame failed: \(error)"
@@ -125,6 +132,7 @@ private final class RenderPreviewModel: ObservableObject {
 
                 let rendered = try await Task.detached(priority: .userInitiated) {
                     let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
+                    let target = try loadRecordedTargetImage(scene: scene)
                     let output = try scene.render()
                     guard let texture = FastGSImageExport.texture(
                         rasterizeOutput: output,
@@ -139,14 +147,16 @@ private final class RenderPreviewModel: ObservableObject {
                         width: scene.manifest.width,
                         height: scene.manifest.height
                     )
-                    return (texture, image, scene.manifest.width, scene.manifest.height, scene.manifest.pointCount)
+                    return (texture, image, target, scene.manifest.width, scene.manifest.height, scene.manifest.pointCount)
                 }.value
 
                 texture = rendered.0
                 fallbackImage = rendered.1
-                renderSize = "\(rendered.2) x \(rendered.3)"
-                previewAspectRatio = Double(rendered.2) / Double(rendered.3)
-                status = "Rendered recorded scanner frame, \(rendered.4) points"
+                targetImage = rendered.2
+                renderSize = "\(rendered.3) x \(rendered.4)"
+                previewAspectRatio = Double(rendered.3) / Double(rendered.4)
+                previewMode = .recordedSideBySide
+                status = "Rendered recorded scanner frame, \(rendered.5) points"
             } catch {
                 status = "Recorded render failed: \(error)"
             }
@@ -155,10 +165,17 @@ private final class RenderPreviewModel: ObservableObject {
     }
 }
 
+private enum RenderPreviewMode {
+    case single
+    case recordedSideBySide
+}
+
 private enum RenderPreviewError: Error {
     case textureCreationFailed
     case pixelBufferCreationFailed(CVReturn)
     case missingPixelBufferBaseAddress
+    case missingRecordedTargetImage
+    case cannotLoadRecordedTargetImage(URL)
 }
 
 private struct RenderPreviewView: View {
@@ -219,7 +236,10 @@ private struct RenderPreviewView: View {
         ZStack {
             Color(nsColor: .textBackgroundColor)
 
-            if let texture = model.texture, let device = model.device {
+            if model.previewMode == .recordedSideBySide {
+                recordedSideBySidePreview
+                    .padding(24)
+            } else if let texture = model.texture, let device = model.device {
                 MetalTexturePreview(texture: texture, device: device)
                     .aspectRatio(model.previewAspectRatio, contentMode: .fit)
                     .padding(24)
@@ -234,6 +254,62 @@ private struct RenderPreviewView: View {
             }
         }
     }
+
+    private var recordedSideBySidePreview: some View {
+        HStack(spacing: 16) {
+            previewPane(title: "Target") {
+                if let image = model.targetImage {
+                    Image(decorative: image, scale: 1)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    ProgressView()
+                }
+            }
+
+            previewPane(title: "Swift Render") {
+                if let texture = model.texture, let device = model.device {
+                    MetalTexturePreview(texture: texture, device: device)
+                        .aspectRatio(model.previewAspectRatio, contentMode: .fit)
+                } else if let image = model.fallbackImage {
+                    Image(decorative: image, scale: 1)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    ProgressView()
+                }
+            }
+        }
+    }
+
+    private func previewPane<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ZStack {
+                Color(nsColor: .windowBackgroundColor)
+                content()
+                    .aspectRatio(model.previewAspectRatio, contentMode: .fit)
+                    .padding(12)
+            }
+        }
+    }
+}
+
+private func loadRecordedTargetImage(scene: FastGSRecordedForwardScene) throws -> CGImage {
+    guard let targetPng = scene.manifest.targetPng else {
+        throw RenderPreviewError.missingRecordedTargetImage
+    }
+    let url = targetPng.hasPrefix("/")
+        ? URL(fileURLWithPath: targetPng)
+        : (scene.manifestDirectory ?? URL(fileURLWithPath: ".")).appendingPathComponent(targetPng)
+    guard let image = NSImage(contentsOf: url), let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        throw RenderPreviewError.cannotLoadRecordedTargetImage(url)
+    }
+    return cgImage
 }
 
 private func makeMockCameraPixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {

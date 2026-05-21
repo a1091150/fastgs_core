@@ -27,6 +27,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
     public var predChannelSums: [Double]
     public var samplePixelIds: [Int]
     public var predSamples: [Double]
+    public var targetPng: String?
 
     private enum CodingKeys: String, CodingKey {
         case width
@@ -48,6 +49,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
         case predChannelSums
         case samplePixelIds
         case predSamples
+        case targetPng
     }
 
     public init(
@@ -69,7 +71,8 @@ public struct FastGSRecordedForwardManifest: Decodable {
         colorsBuffer: Float32Buffer? = nil,
         predChannelSums: [Double],
         samplePixelIds: [Int],
-        predSamples: [Double]
+        predSamples: [Double],
+        targetPng: String? = nil
     ) {
         self.width = width
         self.height = height
@@ -90,6 +93,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
         self.predChannelSums = predChannelSums
         self.samplePixelIds = samplePixelIds
         self.predSamples = predSamples
+        self.targetPng = targetPng
     }
 
     public init(from decoder: Decoder) throws {
@@ -113,6 +117,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
         predChannelSums = try container.decode([Double].self, forKey: .predChannelSums)
         samplePixelIds = try container.decode([Int].self, forKey: .samplePixelIds)
         predSamples = try container.decode([Double].self, forKey: .predSamples)
+        targetPng = try container.decodeIfPresent(String.self, forKey: .targetPng)
     }
 }
 

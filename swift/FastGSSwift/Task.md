@@ -232,6 +232,8 @@ Planned Swift task order:
 - [x] Add a repeatable `make test-swift-recorded-forward` flow that regenerates
   recorded references, runs the Xcode recorded tests, and compares Python/C++
   vs Swift stage summaries.
+- [x] Display recorded scanner target and Swift render side by side in the
+  macOS app.
 
 ## IOSurface and Real-Time Camera Plan
 
