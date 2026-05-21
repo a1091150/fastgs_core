@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
 import math
 import sys
@@ -36,6 +37,21 @@ EVAL_INDEX = 0
 SH_DEGREE = 3
 SCALE = 0.02
 OPACITY = 0.82
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate a recorded FastGS reference for Swift parity tests.")
+    parser.add_argument("--dataset-dir", type=Path, default=DATASET_DIR)
+    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    parser.add_argument("--width", type=int, default=WIDTH)
+    parser.add_argument("--height", type=int, default=HEIGHT)
+    parser.add_argument("--max-frames", type=int, default=MAX_FRAMES)
+    parser.add_argument("--max-points", type=int, default=MAX_POINTS)
+    parser.add_argument("--eval-index", type=int, default=EVAL_INDEX)
+    parser.add_argument("--sh-degree", type=int, default=SH_DEGREE)
+    parser.add_argument("--scale", type=float, default=SCALE)
+    parser.add_argument("--opacity", type=float, default=OPACITY)
+    return parser.parse_args()
 
 
 def chw_to_hwc(values: np.ndarray) -> np.ndarray:
@@ -76,19 +92,20 @@ def write_f32_buffer(values: np.ndarray, path: Path) -> dict:
 
 
 def main() -> None:
-    if not DATASET_DIR.exists():
-        raise RuntimeError(f"missing dataset: {DATASET_DIR}")
+    args = parse_args()
+    if not args.dataset_dir.exists():
+        raise RuntimeError(f"missing dataset: {args.dataset_dir}")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     ext = import_extension()
     cameras, targets, points, colors, base_point_count = prepare_dataset(
-        dataset_dir=DATASET_DIR,
-        width=WIDTH,
-        height=HEIGHT,
-        max_frames=MAX_FRAMES,
+        dataset_dir=args.dataset_dir,
+        width=args.width,
+        height=args.height,
+        max_frames=args.max_frames,
         frame_step=1,
         start_index=0,
-        max_points=MAX_POINTS,
+        max_points=args.max_points,
         seed=42,
         extra_points_ratio=0.0,
         extra_points_mode="surface-jitter",
@@ -97,11 +114,11 @@ def main() -> None:
     if not cameras:
         raise RuntimeError("no cameras loaded")
 
-    eval_index = max(0, min(EVAL_INDEX, len(cameras) - 1))
-    model = init_model(points, colors, SH_DEGREE)
+    eval_index = max(0, min(args.eval_index, len(cameras) - 1))
+    model = init_model(points, colors, args.sh_degree)
     n = points.shape[0]
-    model.log_scales = mx.array(np.full((n, 3), math.log(SCALE), dtype=np.float32), dtype=mx.float32)
-    model.opacity_logits = mx.array(logit(np.full((n,), OPACITY, dtype=np.float32)).astype(np.float32), dtype=mx.float32)
+    model.log_scales = mx.array(np.full((n, 3), math.log(args.scale), dtype=np.float32), dtype=mx.float32)
+    model.opacity_logits = mx.array(logit(np.full((n,), args.opacity, dtype=np.float32)).astype(np.float32), dtype=mx.float32)
 
     background = mx.array([0.0, 0.0, 0.0], dtype=mx.float32)
     rotations = model.rotations / (mx.linalg.norm(model.rotations, axis=1, keepdims=True) + 1.0e-8)
@@ -115,16 +132,16 @@ def main() -> None:
         rotations=rotations,
         camera=cameras[eval_index],
         background=background,
-        sh_degree=SH_DEGREE,
+        sh_degree=args.sh_degree,
     )
     target = targets[eval_index]
 
-    pred_png = OUT_DIR / "recorded_pred.png"
-    target_png = OUT_DIR / "recorded_target.png"
-    sbs_png = OUT_DIR / "recorded_sbs.png"
-    manifest_path = OUT_DIR / "recorded_manifest.json"
-    means3d_path = OUT_DIR / "recorded_means3d.f32"
-    colors_path = OUT_DIR / "recorded_colors.f32"
+    pred_png = args.out_dir / "recorded_pred.png"
+    target_png = args.out_dir / "recorded_target.png"
+    sbs_png = args.out_dir / "recorded_sbs.png"
+    manifest_path = args.out_dir / "recorded_manifest.json"
+    means3d_path = args.out_dir / "recorded_means3d.f32"
+    colors_path = args.out_dir / "recorded_colors.f32"
     save_chw_png(pred, pred_png)
     save_chw_png(target, target_png)
     save_side_by_side(target, pred, sbs_png)
@@ -135,24 +152,24 @@ def main() -> None:
     target_np = np.array(target, dtype=np.float32)
     sample_ids = [
         0,
-        WIDTH // 2,
-        WIDTH - 1,
-        (HEIGHT // 2) * WIDTH + (WIDTH // 2),
-        WIDTH * HEIGHT - 1,
+        args.width // 2,
+        args.width - 1,
+        (args.height // 2) * args.width + (args.width // 2),
+        args.width * args.height - 1,
     ]
     camera = cameras[eval_index]
     manifest = {
-        "dataset": str(DATASET_DIR),
-        "width": WIDTH,
-        "height": HEIGHT,
-        "maxFrames": MAX_FRAMES,
-        "maxPoints": MAX_POINTS,
+        "dataset": str(args.dataset_dir),
+        "width": args.width,
+        "height": args.height,
+        "maxFrames": args.max_frames,
+        "maxPoints": args.max_points,
         "basePointCount": int(base_point_count),
         "pointCount": int(points.shape[0]),
         "evalIndex": eval_index,
-        "shDegree": SH_DEGREE,
-        "scale": SCALE,
-        "opacity": OPACITY,
+        "shDegree": args.sh_degree,
+        "scale": args.scale,
+        "opacity": args.opacity,
         "background": [0.0, 0.0, 0.0],
         "tanFovX": float(camera.tan_fovx),
         "tanFovY": float(camera.tan_fovy),

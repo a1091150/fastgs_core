@@ -361,6 +361,27 @@ The manifest reader and forward conversion now live in the Swift package:
 tests use. The macOS preview app uses this API for its recorded scanner frame
 button, so recorded-data rendering is no longer test-only.
 
+`generate_recorded_reference.py` is parameterized for larger references. For
+example:
+
+```bash
+conda run -n fastgs_core python swift/FastGSSwiftTools/generate_recorded_reference.py \
+  --max-points 16384 \
+  --out-dir /private/tmp/fastgs_recorded_reference_16384
+```
+
+The Xcode suite includes `testRecordedScannerLargeForwardRunsUnderXcode` for the
+16384-point reference. It currently verifies that the larger Swift path runs and
+exports an image, but uses a wider channel-sum threshold because this case
+exposes a larger Python/C++ vs Swift rasterize difference:
+
+- Python/C++ sums: `[2842.2002, 2406.896, 1899.2173]`
+- Swift sums observed: `[2858.0645, 2423.1213, 2056.7493]`
+
+This should be tightened after isolating whether the divergence starts in
+preprocess coverage, binning order, rasterize traversal, or accumulated
+transmittance.
+
 The current mock `CVPixelBuffer` path remains useful for presentation testing,
 but it is not the next critical path.
 

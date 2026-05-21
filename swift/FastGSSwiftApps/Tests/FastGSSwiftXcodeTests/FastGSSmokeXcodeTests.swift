@@ -6,6 +6,7 @@ import XCTest
 
 final class FastGSSmokeXcodeTests: XCTestCase {
     private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
+    private let recordedLargeManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_manifest.json")
 
     func testImageExportRGBABytes() {
         let outColor = MLXArray([
@@ -50,11 +51,31 @@ final class FastGSSmokeXcodeTests: XCTestCase {
     }
 
     func testRecordedScannerForwardRunsUnderXcode() throws {
-        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
-            throw XCTSkip("Generate /private/tmp/fastgs_recorded_reference/recorded_manifest.json first.")
+        try assertRecordedForward(
+            manifestURL: recordedManifestURL,
+            outputPNGURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_swift.png")
+        )
+    }
+
+    func testRecordedScannerLargeForwardRunsUnderXcode() throws {
+        try assertRecordedForward(
+            manifestURL: recordedLargeManifestURL,
+            outputPNGURL: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_swift.png"),
+            channelSumAccuracy: 200.0
+        )
+    }
+
+    private func assertRecordedForward(
+        manifestURL: URL,
+        outputPNGURL: URL,
+        channelSumAccuracy: Float = 1.0,
+        sampleAccuracy: Float = 2e-2
+    ) throws {
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
+            throw XCTSkip("Generate \(manifestURL.path) first.")
         }
 
-        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
         let manifest = scene.manifest
         let output = try scene.render()
         let outColor = output.outColor.asArray(Float.self)
@@ -62,19 +83,19 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         assertClose(
             channelSums(outColor, channels: 3),
             manifest.predChannelSums.map(Float.init),
-            accuracy: 1.0
+            accuracy: channelSumAccuracy
         )
         assertClose(
             samples(outColor, ids: manifest.samplePixelIds, channels: 3),
             manifest.predSamples.map(Float.init),
-            accuracy: 2e-2
+            accuracy: sampleAccuracy
         )
 
         try FastGSImageExport.writePNG(
             outColor: output.outColor,
             width: manifest.width,
             height: manifest.height,
-            to: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_swift.png")
+            to: outputPNGURL
         )
     }
 

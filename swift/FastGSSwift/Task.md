@@ -223,8 +223,10 @@ Planned Swift task order:
   `MTLTexture` / PNG export path.
 - [x] Move the recorded-data loader out of the test helper if the macOS app
   should display the recorded forward case interactively.
-- [ ] Expand from reduced 4096-point reference to larger point counts after the
+- [x] Expand from reduced 4096-point reference to larger point counts after the
   Swift path remains stable.
+- [ ] Tighten 16384-point recorded parity after investigating the current
+  larger-scene channel-sum divergence.
 
 ## IOSurface and Real-Time Camera Plan
 
