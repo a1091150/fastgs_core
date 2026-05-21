@@ -345,13 +345,13 @@ capture yet.
   acceptable to write a FastGS-specific optimizer wrapper that keeps typed
   Gaussian parameter groups and optimizer state explicitly.
 - First optimizer target:
-  - [ ] add a small typed parameter container for trainable Gaussian arrays
-  - [ ] add an Adam-style update step for means, colors/SH, opacity, scale, and
+  - [x] add a small typed parameter container for trainable Gaussian arrays
+  - [x] add an Adam-style update step for means, colors/SH, opacity, scale, and
     rotation
-  - [ ] support per-field learning rates because FastGS training usually does
+  - [x] support per-field learning rates because FastGS training usually does
     not update all Gaussian fields with the same schedule
-  - [ ] keep optimizer state as `MLXArray` buffers so updates remain on device
-  - [ ] test one synthetic gradient step before connecting to real backward
+  - [x] keep optimizer state as `MLXArray` buffers so updates remain on device
+  - [x] test one synthetic gradient step before connecting to real backward
 - Later optimizer work:
   - [ ] checkpoint parameter arrays and optimizer state
   - [ ] support densify/prune state migration when Gaussian count changes
