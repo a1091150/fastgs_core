@@ -3,6 +3,10 @@ import Foundation
 #if canImport(CoreVideo)
 import CoreVideo
 
+#if canImport(Metal)
+import Metal
+#endif
+
 public enum FastGSCameraFrameBridge {
     public enum BridgeError: Error, Equatable {
         case unsupportedPixelFormat(OSType)
@@ -60,5 +64,22 @@ public enum FastGSCameraFrameBridge {
             hasIOSurface: CVPixelBufferGetIOSurface(pixelBuffer) != nil
         )
     }
+
+    #if canImport(Metal)
+    public static func texture(
+        fromBGRA pixelBuffer: CVPixelBuffer,
+        device: MTLDevice,
+        usage: MTLTextureUsage = [.shaderRead]
+    ) throws -> MTLTexture? {
+        let frame = try lockBGRAFrame(pixelBuffer)
+        return FastGSImageExport.texture(
+            rgbaBytes: frame.rgbaBytes,
+            width: frame.width,
+            height: frame.height,
+            device: device,
+            usage: usage
+        )
+    }
+    #endif
 }
 #endif

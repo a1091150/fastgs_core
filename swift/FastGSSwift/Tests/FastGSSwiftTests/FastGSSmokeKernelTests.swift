@@ -64,6 +64,20 @@ final class FastGSSmokeKernelTests: XCTestCase {
         ])
     }
 
+    func testCameraFrameBridgeTexture() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("CVPixelBuffer/Metal bridge tests run in the Apple/Xcode environment.")
+        }
+
+        let pixelBuffer = try makeBGRA32PixelBuffer(width: 2, height: 1)
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let texture = try XCTUnwrap(FastGSCameraFrameBridge.texture(fromBGRA: pixelBuffer, device: device))
+
+        XCTAssertEqual(texture.width, 2)
+        XCTAssertEqual(texture.height, 1)
+        XCTAssertEqual(texture.pixelFormat, .rgba8Unorm)
+    }
+
     func testDoubleKernel() throws {
         guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
             throw XCTSkip(

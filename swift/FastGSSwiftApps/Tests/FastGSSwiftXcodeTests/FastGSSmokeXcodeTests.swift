@@ -60,6 +60,28 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         ])
     }
 
+    func testCameraFrameBridgeTextureRunsUnderXcode() throws {
+        let pixelBuffer = try makeBGRA32PixelBuffer(width: 2, height: 1)
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let texture = try XCTUnwrap(FastGSCameraFrameBridge.texture(fromBGRA: pixelBuffer, device: device))
+
+        XCTAssertEqual(texture.width, 2)
+        XCTAssertEqual(texture.height, 1)
+        XCTAssertEqual(texture.pixelFormat, .rgba8Unorm)
+
+        var bytes = [UInt8](repeating: 0, count: 8)
+        texture.getBytes(
+            &bytes,
+            bytesPerRow: 2 * 4,
+            from: MTLRegionMake2D(0, 0, 2, 1),
+            mipmapLevel: 0
+        )
+        XCTAssertEqual(bytes, [
+            30, 20, 10, 255,
+            70, 60, 50, 128,
+        ])
+    }
+
     func testMLXFastMetalKernelRunsUnderXcode() {
         let input = MLXArray([Float(1), Float(2), Float(3), Float(4)], [4])
         let output = FastGSSmokeKernel.double(input)

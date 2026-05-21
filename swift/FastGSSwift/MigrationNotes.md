@@ -301,8 +301,8 @@ Known remaining work:
 - Add a full-image exact rasterize parity fixture when the output surface gets
   larger and more varied.
 - Enable and test metric count path.
-- Extend the CVPixelBuffer bridge from CPU-readable BGRA conversion to a
-  lifetime-safe `MLXArray` or Metal texture path for camera-driven preview.
+- Extend the CVPixelBuffer bridge from copy-based texture creation to a
+  lifetime-safe `MLXArray` path for camera-driven forward rendering.
 
 ## CVPixelBuffer Bridge Status
 
@@ -316,10 +316,22 @@ prototype:
   `FastGSImageExport.texture(rgbaBytes:width:height:device:)`
 - reports whether the pixel buffer exposes an `IOSurface`
 
+`FastGSCameraFrameBridge.texture(fromBGRA:device:usage:)` is the first
+presentation bridge for camera frames. It uses the copy path:
+
+```text
+CVPixelBuffer BGRA
+  -> locked, stride-aware RGBA bytes
+  -> FastGSImageExport.texture(rgbaBytes:width:height:device:)
+  -> MTLTexture
+```
+
 The first Xcode test builds a mock IOSurface-compatible BGRA pixel buffer,
 writes deterministic pixels, and verifies the channel reorder plus stride-aware
-readback. The current bridge intentionally copies into `[UInt8]`; the next step
-is choosing a safe lifetime model before exposing the locked base address to
+readback. A second Xcode test creates an `MTLTexture` from that same buffer and
+reads the texture bytes back to verify the presentation path. The current bridge
+intentionally copies into `[UInt8]`; the next step is choosing a safe lifetime
+model before exposing the locked base address to
 `MLXArray(rawPointer:shape:dtype:finalizer:)`.
 
 ## macOS Preview Status

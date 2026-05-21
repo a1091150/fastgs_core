@@ -193,6 +193,8 @@ This is a later phase after macOS forward rendering is working.
 - `CVPixelBuffer` can expose an `IOSurface`.
 - [x] Add first `CVPixelBuffer` bridge prototype for 32-bit BGRA frames.
 - [x] Validate mock IOSurface-compatible BGRA `CVPixelBuffer` under Xcode.
+- [x] Add copy-based `CVPixelBuffer` BGRA -> RGBA `MTLTexture` bridge.
+- [x] Validate camera-frame texture bytes under Xcode.
 - `mlx-swift` supports creating an `MLXArray` from a raw pointer, so the planned camera bridge is:
 
   ```text
@@ -217,6 +219,8 @@ This is a later phase after macOS forward rendering is working.
 - Treat that presentation kernel separately from the FastGS math migration.
 - Next bridge step: decide the ownership model for wrapping a locked
   `CVPixelBuffer` base address as an `MLXArray` without unlocking too early.
+- Next app step: feed a mock or live camera `CVPixelBuffer` into the macOS
+  `MTKView` preview path.
 
 ## Backward and Training Plan
 
