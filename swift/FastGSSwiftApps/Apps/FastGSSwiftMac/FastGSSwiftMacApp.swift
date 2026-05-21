@@ -182,8 +182,14 @@ private struct MetalTexturePreview: NSViewRepresentable {
             let height = CGFloat(texture.height) * scale
             let x = (drawableBounds.width - width) * 0.5
             let y = (drawableBounds.height - height) * 0.5
-            let transform = CGAffineTransform(scaleX: scale, y: scale)
-                .translatedBy(x: x / scale, y: y / scale)
+            let transform = CGAffineTransform(
+                a: scale,
+                b: 0,
+                c: 0,
+                d: -scale,
+                tx: x,
+                ty: y + height
+            )
 
             ciContext.render(
                 image.transformed(by: transform),
