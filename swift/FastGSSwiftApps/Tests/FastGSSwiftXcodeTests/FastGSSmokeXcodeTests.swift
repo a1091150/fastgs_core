@@ -5,6 +5,8 @@ import MLX
 import XCTest
 
 final class FastGSSmokeXcodeTests: XCTestCase {
+    private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
+
     func testImageExportRGBABytes() {
         let outColor = MLXArray([
             Float(0), 0.5,
@@ -45,6 +47,37 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             0, 255, 64, 255,
             128, 0, 255, 255,
         ])
+    }
+
+    func testRecordedScannerForwardRunsUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate /private/tmp/fastgs_recorded_reference/recorded_manifest.json first.")
+        }
+
+        let manifest = try JSONDecoder().decode(
+            RecordedForwardManifest.self,
+            from: Data(contentsOf: recordedManifestURL)
+        )
+        let output = recordedForwardOutput(manifest)
+        let outColor = output.outColor.asArray(Float.self)
+
+        assertClose(
+            channelSums(outColor, channels: 3),
+            manifest.predChannelSums.map(Float.init),
+            accuracy: 1.0
+        )
+        assertClose(
+            samples(outColor, ids: manifest.samplePixelIds, channels: 3),
+            manifest.predSamples.map(Float.init),
+            accuracy: 2e-2
+        )
+
+        try FastGSImageExport.writePNG(
+            outColor: output.outColor,
+            width: manifest.width,
+            height: manifest.height,
+            to: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_swift.png")
+        )
     }
 
     func testCameraFrameBridgeReadsBGRAUnderXcode() throws {
@@ -442,6 +475,88 @@ private func samples(_ values: [Float], ids: [Int], channels: Int) -> [Float] {
     return (0..<channels).flatMap { channel in
         ids.map { values[channel * count + $0] }
     }
+}
+
+private struct RecordedForwardManifest: Decodable {
+    var width: Int
+    var height: Int
+    var pointCount: Int
+    var shDegree: Int
+    var scale: Double
+    var opacity: Double
+    var tanFovX: Double
+    var tanFovY: Double
+    var background: [Double]
+    var viewmatrix: [Double]
+    var projmatrix: [Double]
+    var campos: [Double]
+    var means3d: [Double]
+    var colors: [Double]
+    var predChannelSums: [Double]
+    var samplePixelIds: [Int]
+    var predSamples: [Double]
+}
+
+private func recordedForwardOutput(_ manifest: RecordedForwardManifest) -> FastGSRasterizeOutput {
+    let count = manifest.pointCount
+    let tileBounds = (
+        x: (manifest.width + 15) / 16,
+        y: (manifest.height + 15) / 16,
+        z: 1
+    )
+    let maxSHCoefficients = (manifest.shDegree + 1) * (manifest.shDegree + 1)
+    let means = MLXArray(manifest.means3d.map(Float.init), [count, 3])
+    let colors = manifest.colors.map(Float.init)
+    let shC0 = Float(0.28209479177387814)
+    let dc = MLXArray(colors.map { ($0 - 0.5) / shC0 }, [count, 3])
+    let sh = MLXArray.zeros([count, maxSHCoefficients - 1, 3], dtype: .float32)
+    let opacities = MLXArray(Array(repeating: Float(manifest.opacity), count: count), [count])
+    let scales = MLXArray(Array(repeating: Float(manifest.scale), count: count * 3), [count, 3])
+    var rotations = [Float](repeating: 0, count: count * 4)
+    for index in 0..<count {
+        rotations[index * 4] = 1
+    }
+    let preprocess = FastGSPreprocess.forward(
+        FastGSPreprocessInput(
+            means3D: means,
+            dc: dc,
+            sh: sh,
+            colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
+            opacities: opacities,
+            scales: scales,
+            rotations: MLXArray(rotations, [count, 4]),
+            cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
+            viewMatrix: MLXArray(manifest.viewmatrix.map(Float.init), [4, 4]),
+            projectionMatrix: MLXArray(manifest.projmatrix.map(Float.init), [4, 4]),
+            cameraPosition: MLXArray(Array(manifest.campos.prefix(3)).map(Float.init), [3]),
+            viewspacePoints: MLXArray.zeros([count, 4], dtype: .float32)
+        ),
+        params: FastGSPreprocessParams(
+            degree: manifest.shDegree,
+            maxSHCoefficients: maxSHCoefficients,
+            scaleModifier: 1,
+            tanFovX: Float(manifest.tanFovX),
+            tanFovY: Float(manifest.tanFovY),
+            imageHeight: manifest.height,
+            imageWidth: manifest.width,
+            tileBounds: tileBounds,
+            multiplier: 1
+        )
+    )
+    let binning = FastGSBinning.forward(
+        preprocessOutput: preprocess,
+        params: FastGSBinningParams(multiplier: 1, tileBounds: tileBounds)
+    )
+    return FastGSRasterize.forward(
+        preprocessOutput: preprocess,
+        binningOutput: binning,
+        background: MLXArray(manifest.background.map(Float.init), [3]),
+        params: FastGSRasterizeParams(
+            imageWidth: manifest.width,
+            imageHeight: manifest.height,
+            numTiles: tileBounds.x * tileBounds.y
+        )
+    )
 }
 
 private func makeBGRA32PixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {

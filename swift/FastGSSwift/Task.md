@@ -192,33 +192,37 @@ This is the next phase after the static fixture forward path is stable. Most
 FastGS flows render and train from recorded captures, so Swift should first
 prove it can consume real recorded data before attempting real-time capture.
 
-Reference data paths currently used by the root `Makefile`:
+Reference data path currently available:
 
-- `/Users/yangdunfu/Downloads/2026_03_01_16_36_14`
 - `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`
 
 Relevant existing Python/C++ targets:
 
-- `make test-scanner`
-- `make train-scanner-fixed`
-- `make train-scanner-fastgs-smoke`
+- `make test-scanner`, with the data path adjusted to
+  `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`
 - `make train-scanner-fastgs2-smoke`
 - `make train-scanner-fastgs2`
 
 Planned Swift task order:
 
-- [ ] Inspect the recorded scanner dataset format and identify the minimal
+- [x] Inspect the recorded scanner dataset format and identify the minimal
   frame/camera/point-cloud files needed for forward-only rendering.
-- [ ] Add a small Swift loader for recorded scanner metadata and one selected
+- [x] Generate a Python/C++ recorded reference in `/private/tmp` for a reduced
+  160x120, 4096-point forward case.
+- [x] Store the recorded reference generator under
+  `swift/FastGSSwiftTools/generate_recorded_reference.py`.
+- [x] Add a small Swift loader for recorded scanner metadata and one selected
   frame, keeping it separate from live camera capture.
-- [ ] Export a Python/C++ reference for one recorded frame using the existing
-  `test-scanner` or `train-scanner-*` path.
-- [ ] Feed the same recorded frame inputs into Swift `FastGSPreprocess ->
+- [x] Feed the same recorded frame inputs into Swift `FastGSPreprocess ->
   FastGSBinning -> FastGSRasterize`.
-- [ ] Compare Swift output against the recorded-data Python/C++ reference using
+- [x] Compare Swift output against the recorded-data Python/C++ reference using
   summary values and sampled pixels first.
-- [ ] Render a recorded-data Swift preview image through the existing
+- [x] Render a recorded-data Swift preview image through the existing
   `MTLTexture` / PNG export path.
+- [ ] Move the recorded-data loader out of the test helper if the macOS app
+  should display the recorded forward case interactively.
+- [ ] Expand from reduced 4096-point reference to larger point counts after the
+  Swift path remains stable.
 
 ## IOSurface and Real-Time Camera Plan
 
