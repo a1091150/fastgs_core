@@ -155,6 +155,8 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 - [x] Connect the first preprocess -> binning -> rasterize fixture.
 - [x] Compare E2E rasterize output summaries and sampled pixels against the existing Python/C++ implementation.
 - [x] Add larger 80x48, 5 Gaussian, 5x3 tile E2E fixture with non-square tile spans.
+- [x] Add Swift output image export from `FastGSRasterizeOutput.outColor`.
+- [x] Validate Swift-generated PNG export under Xcode.
 - Port full `fastgs_rasterize.metal` parity fixtures after the smoke path is stable.
 - Preserve:
   - [x] per-tile traversal in the smoke path
@@ -165,12 +167,12 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [x] `max_contrib`
   - [ ] optional metric count path
 - [x] First output format is MLX float color array.
-- Add a separate presentation conversion step later.
+- [x] Add a first presentation conversion step for RGBA8/PNG export.
 - Remaining rasterize expansion:
   - [ ] full-image exact parity fixture instead of summary/sample checks
   - [ ] metric count path
   - [ ] multi-scene and larger Gaussian fixtures
-  - [ ] app preview image export from Swift output instead of Python/C++ reference output
+  - [ ] Metal texture / CVPixelBuffer presentation bridge
 
 ### 6. macOS App Preview
 

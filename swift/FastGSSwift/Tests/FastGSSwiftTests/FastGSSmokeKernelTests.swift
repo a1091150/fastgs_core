@@ -7,6 +7,26 @@ final class FastGSSmokeKernelTests: XCTestCase {
         XCTAssertTrue(true)
     }
 
+    func testImageExportRGBABytes() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX array tests require an Xcode/metallib-ready environment.")
+        }
+
+        let outColor = MLXArray([
+            Float(0), 0.5,
+            1, -0.25,
+            0.25, 2,
+        ], [3, 2])
+
+        XCTAssertEqual(
+            FastGSImageExport.rgbaBytes(outColor: outColor, width: 2, height: 1),
+            [
+                0, 255, 64, 255,
+                128, 0, 255, 255,
+            ]
+        )
+    }
+
     func testDoubleKernel() throws {
         guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
             throw XCTSkip(
@@ -250,6 +270,27 @@ final class FastGSSmokeKernelTests: XCTestCase {
         let output = FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()
 
         assertRasterizeLargeE2E(preprocess: preprocess, binning: binning, output: output)
+    }
+
+    func testRasterizeLargeE2EPNGExport() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLXFast Metal tests require an Xcode/metallib-ready environment.")
+        }
+
+        let output = FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()
+        let url = URL(fileURLWithPath: "/private/tmp/fastgs_swift_large_rasterize.png")
+        try? FileManager.default.removeItem(at: url)
+
+        try FastGSImageExport.writePNG(rasterizeOutput: output, width: 80, height: 48, to: url)
+
+        let data = try Data(contentsOf: url)
+        XCTAssertGreaterThan(data.count, 100)
+        XCTAssertEqual(Array(data.prefix(8)), [137, 80, 78, 71, 13, 10, 26, 10])
+
+        let bytes = FastGSImageExport.rgbaBytes(rasterizeOutput: output, width: 80, height: 48)
+        XCTAssertTrue(bytes.contains { $0 != 0 })
+        XCTAssertEqual(bytes[3], 255)
+        XCTAssertEqual(bytes[4 * (80 * 48 - 1) + 3], 255)
     }
 }
 

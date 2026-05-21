@@ -254,6 +254,7 @@ Current coverage:
 - first preprocess -> binning -> rasterize fixture using the same
   precomputed-color scene as the Python/C++ reference path
 - larger 80x48 fixture with 5 Gaussians, 5x3 tiles, and non-square tile spans
+- Swift-side RGBA8/PNG export from `FastGSRasterizeOutput.outColor`
 - output shapes and dtypes through the Swift API
 - transmittance/color accumulation against hand-computed expected values
 - sampled intermediates for the first bucket
@@ -275,13 +276,17 @@ Reference generation note:
   while still exercising the full first forward path.
 - The larger fixture also writes a Python/C++ reference preview image to
   `/private/tmp/fastgs_large_rasterize_ref.png` for visual inspection.
+- The Swift export path writes the same large fixture's Swift MLXFast output to
+  `/private/tmp/fastgs_swift_large_rasterize.png`. It converts channel-major
+  float RGB `[3, H * W]` to interleaved RGBA8 before encoding PNG with ImageIO.
 
 Known remaining work:
 
 - Add a full-image exact rasterize parity fixture when the output surface gets
   larger and more varied.
 - Enable and test metric count path.
-- Add image export from the Swift output path before app preview.
+- Add a Metal texture or CVPixelBuffer presentation bridge for the macOS app
+  preview.
 
 ## Suggested Porting Checklist
 
