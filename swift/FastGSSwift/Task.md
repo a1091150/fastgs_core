@@ -219,7 +219,7 @@ Planned Swift task order:
   summary values and sampled pixels first.
 - [x] Render a recorded-data Swift preview image through the existing
   `MTLTexture` / PNG export path.
-- [ ] Move the recorded-data loader out of the test helper if the macOS app
+- [x] Move the recorded-data loader out of the test helper if the macOS app
   should display the recorded forward case interactively.
 - [ ] Expand from reduced 4096-point reference to larger point counts after the
   Swift path remains stable.

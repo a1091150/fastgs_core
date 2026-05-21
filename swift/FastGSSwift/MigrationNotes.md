@@ -340,6 +340,15 @@ channel sums and sampled pixels against the Python/C++ reference, and writes:
 
 - `/private/tmp/fastgs_recorded_reference/recorded_swift.png`
 
+The manifest reader and forward conversion now live in the Swift package:
+
+- `Sources/FastGSSwift/FastGSRecordedForward.swift`
+
+`FastGSRecordedForwardScene` decodes `recorded_manifest.json`, converts
+`means3d` and `colors` into `MLXArray` inputs, and runs the same forward path the
+tests use. The macOS preview app uses this API for its recorded scanner frame
+button, so recorded-data rendering is no longer test-only.
+
 The current mock `CVPixelBuffer` path remains useful for presentation testing,
 but it is not the next critical path.
 

@@ -17,6 +17,7 @@ struct FastGSSwiftMacApp: App {
 
 @MainActor
 private final class RenderPreviewModel: ObservableObject {
+    private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
     @Published var texture: MTLTexture?
     @Published var fallbackImage: CGImage?
     @Published var status = "Ready"
@@ -104,6 +105,54 @@ private final class RenderPreviewModel: ObservableObject {
             isRendering = false
         }
     }
+
+    func renderRecordedFrame() {
+        guard !isRendering else {
+            return
+        }
+
+        isRendering = true
+        let manifestURL = recordedManifestURL
+        status = "Rendering recorded scanner frame..."
+
+        Task {
+            do {
+                guard let device else {
+                    status = "Recorded render failed: no Metal device"
+                    isRendering = false
+                    return
+                }
+
+                let rendered = try await Task.detached(priority: .userInitiated) {
+                    let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
+                    let output = try scene.render()
+                    guard let texture = FastGSImageExport.texture(
+                        rasterizeOutput: output,
+                        width: scene.manifest.width,
+                        height: scene.manifest.height,
+                        device: device
+                    ) else {
+                        throw RenderPreviewError.textureCreationFailed
+                    }
+                    let image = try FastGSImageExport.cgImage(
+                        rasterizeOutput: output,
+                        width: scene.manifest.width,
+                        height: scene.manifest.height
+                    )
+                    return (texture, image, scene.manifest.width, scene.manifest.height, scene.manifest.pointCount)
+                }.value
+
+                texture = rendered.0
+                fallbackImage = rendered.1
+                renderSize = "\(rendered.2) x \(rendered.3)"
+                previewAspectRatio = Double(rendered.2) / Double(rendered.3)
+                status = "Rendered recorded scanner frame, \(rendered.4) points"
+            } catch {
+                status = "Recorded render failed: \(error)"
+            }
+            isRendering = false
+        }
+    }
 }
 
 private enum RenderPreviewError: Error {
@@ -145,6 +194,14 @@ private struct RenderPreviewView: View {
             }
             .disabled(model.isRendering)
             .help("Render mock camera frame")
+
+            Button {
+                model.renderRecordedFrame()
+            } label: {
+                Image(systemName: "photo.on.rectangle")
+            }
+            .disabled(model.isRendering)
+            .help("Render recorded scanner frame")
 
             Button {
                 model.render()
