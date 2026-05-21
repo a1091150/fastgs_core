@@ -1,4 +1,5 @@
 import FastGSSwift
+import Metal
 import MLX
 import XCTest
 
@@ -17,6 +18,32 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 128, 0, 255, 255,
             ]
         )
+    }
+
+    func testImageExportTextureRunsUnderXcode() throws {
+        let outColor = MLXArray([
+            Float(0), 0.5,
+            1, -0.25,
+            0.25, 2,
+        ], [3, 2])
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let texture = try XCTUnwrap(FastGSImageExport.texture(outColor: outColor, width: 2, height: 1, device: device))
+
+        XCTAssertEqual(texture.width, 2)
+        XCTAssertEqual(texture.height, 1)
+        XCTAssertEqual(texture.pixelFormat, .rgba8Unorm)
+
+        var bytes = [UInt8](repeating: 0, count: 8)
+        texture.getBytes(
+            &bytes,
+            bytesPerRow: 2 * 4,
+            from: MTLRegionMake2D(0, 0, 2, 1),
+            mipmapLevel: 0
+        )
+        XCTAssertEqual(bytes, [
+            0, 255, 64, 255,
+            128, 0, 255, 255,
+        ])
     }
 
     func testMLXFastMetalKernelRunsUnderXcode() {

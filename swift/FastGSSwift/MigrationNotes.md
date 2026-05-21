@@ -293,28 +293,33 @@ Reference generation note:
 - The Swift export path writes the same large fixture's Swift MLXFast output to
   `/private/tmp/fastgs_swift_large_rasterize.png`. It converts channel-major
   float RGB `[3, H * W]` to interleaved RGBA8 before encoding PNG with ImageIO.
+- `FastGSImageExport.texture(...)` converts the same RGBA8 bytes into an
+  `.rgba8Unorm` `MTLTexture` for app presentation.
 
 Known remaining work:
 
 - Add a full-image exact rasterize parity fixture when the output surface gets
   larger and more varied.
 - Enable and test metric count path.
-- Add a Metal texture or CVPixelBuffer presentation bridge for the macOS app
-  preview.
+- Add a CVPixelBuffer / IOSurface presentation bridge for camera-driven preview.
 
 ## macOS Preview Status
 
 The Xcode macOS app now renders the larger static fixture through the SwiftPM
-package and displays the result with SwiftUI:
+package and displays the result through an `MTKView`-backed Metal texture
+preview:
 
 - app entry: `swift/FastGSSwiftApps/Apps/FastGSSwiftMac/FastGSSwiftMacApp.swift`
 - render source: `FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()`
-- presentation bridge: `FastGSImageExport.cgImage(rasterizeOutput:width:height:)`
+- primary presentation bridge:
+  `FastGSImageExport.texture(rasterizeOutput:width:height:device:)`
+- debug fallback:
+  `FastGSImageExport.cgImage(rasterizeOutput:width:height:)`
 
 This is intentionally still a static preview. It proves the Swift package,
-MLXFast kernels, channel-major `outColor`, and SwiftUI presentation path can be
-connected inside an app target before adding camera input or interactive camera
-controls.
+MLXFast kernels, channel-major `outColor`, and Metal presentation path can be
+connected inside an app target before adding camera input, IOSurface wrapping,
+or interactive camera controls.
 
 ## Suggested Porting Checklist
 

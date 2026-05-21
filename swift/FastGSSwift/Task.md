@@ -168,11 +168,12 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
   - [ ] optional metric count path
 - [x] First output format is MLX float color array.
 - [x] Add a first presentation conversion step for RGBA8/PNG export.
+- [x] Add a first Metal texture presentation bridge from `outColor`.
 - Remaining rasterize expansion:
   - [ ] full-image exact parity fixture instead of summary/sample checks
   - [ ] metric count path
   - [ ] multi-scene and larger Gaussian fixtures
-  - [ ] Metal texture / CVPixelBuffer presentation bridge
+  - [ ] CVPixelBuffer / IOSurface presentation bridge
 
 ### 6. macOS App Preview
 
@@ -180,6 +181,7 @@ Detailed implementation notes are tracked in `MigrationNotes.md`.
 - [x] Load the large static Gaussian fixture.
 - [x] Render through the SwiftPM package.
 - [x] Display output using a SwiftUI-backed preview.
+- [x] Display output through an `MTKView`-backed Metal texture preview.
 - [x] Add a basic reload control.
 - Add basic camera controls after the static render path is stable.
 
@@ -205,7 +207,7 @@ This is a later phase after macOS forward rendering is working.
   ```text
   FastGSFrame.color MLXArray
     -> presentation conversion
-    -> BGRA / CVPixelBuffer / MTLTexture / IOSurface
+    -> RGBA8 / MTLTexture / CVPixelBuffer / IOSurface
     -> display
   ```
 

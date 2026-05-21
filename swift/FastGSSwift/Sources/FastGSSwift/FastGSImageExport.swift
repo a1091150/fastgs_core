@@ -1,6 +1,10 @@
 import Foundation
 import MLX
 
+#if canImport(Metal)
+import Metal
+#endif
+
 #if canImport(CoreGraphics) && canImport(ImageIO) && canImport(UniformTypeIdentifiers)
 import CoreGraphics
 import ImageIO
@@ -40,6 +44,60 @@ public enum FastGSImageExport {
     ) -> [UInt8] {
         rgbaBytes(outColor: rasterizeOutput.outColor, width: width, height: height, alpha: alpha)
     }
+
+    #if canImport(Metal)
+    public static func texture(
+        outColor: MLXArray,
+        width: Int,
+        height: Int,
+        device: MTLDevice,
+        usage: MTLTextureUsage = [.shaderRead]
+    ) -> MTLTexture? {
+        texture(rgbaBytes: rgbaBytes(outColor: outColor, width: width, height: height), width: width, height: height, device: device, usage: usage)
+    }
+
+    public static func texture(
+        rasterizeOutput: FastGSRasterizeOutput,
+        width: Int,
+        height: Int,
+        device: MTLDevice,
+        usage: MTLTextureUsage = [.shaderRead]
+    ) -> MTLTexture? {
+        texture(outColor: rasterizeOutput.outColor, width: width, height: height, device: device, usage: usage)
+    }
+
+    public static func texture(
+        rgbaBytes: [UInt8],
+        width: Int,
+        height: Int,
+        device: MTLDevice,
+        usage: MTLTextureUsage = [.shaderRead]
+    ) -> MTLTexture? {
+        precondition(width > 0 && height > 0, "width and height must be positive.")
+        precondition(rgbaBytes.count == width * height * 4, "rgbaBytes must contain width * height * 4 bytes.")
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = usage
+        descriptor.storageMode = .managed
+
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            return nil
+        }
+
+        texture.replace(
+            region: MTLRegionMake2D(0, 0, width, height),
+            mipmapLevel: 0,
+            withBytes: rgbaBytes,
+            bytesPerRow: width * 4
+        )
+        return texture
+    }
+    #endif
 
     @discardableResult
     public static func writePNG(

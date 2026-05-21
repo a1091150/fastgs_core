@@ -1,4 +1,5 @@
 import FastGSSwift
+import Metal
 import MLX
 import XCTest
 
@@ -25,6 +26,24 @@ final class FastGSSmokeKernelTests: XCTestCase {
                 128, 0, 255, 255,
             ]
         )
+    }
+
+    func testImageExportTexture() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX/Metal tests require an Xcode/metallib-ready environment.")
+        }
+
+        let outColor = MLXArray([
+            Float(0), 0.5,
+            1, -0.25,
+            0.25, 2,
+        ], [3, 2])
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let texture = try XCTUnwrap(FastGSImageExport.texture(outColor: outColor, width: 2, height: 1, device: device))
+
+        XCTAssertEqual(texture.width, 2)
+        XCTAssertEqual(texture.height, 1)
+        XCTAssertEqual(texture.pixelFormat, .rgba8Unorm)
     }
 
     func testDoubleKernel() throws {
