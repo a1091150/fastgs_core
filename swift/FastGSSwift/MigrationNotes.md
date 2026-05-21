@@ -492,6 +492,7 @@ Swift migration reference generators are kept in `swift/FastGSSwiftTools/`:
 - `fastgs_preprocess_edge_refs.py`
 - `fastgs_e2e_rasterize_ref.py`
 - `fastgs_large_rasterize_ref.py`
+- `fastgs_rasterize_backward_ref.py`
 - `generate_recorded_reference.py`
 - `compare_recorded_stage_summary.py`
 

@@ -7,6 +7,7 @@ import XCTest
 final class FastGSSmokeXcodeTests: XCTestCase {
     private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
     private let recordedLargeManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_manifest.json")
+    private let rasterizeBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_rasterize_backward_ref.json")
 
     func testAdamOptimizerAppliesSyntheticGradientStepUnderXcode() {
         let parameters = FastGSTrainableParameters(
@@ -420,6 +421,74 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         )
 
         assertRasterizeBackwardSkeleton(preprocess: preprocess, binning: binning, background: background, output: output)
+    }
+
+    func testRasterizeBackwardMatchesReferenceSummaryUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: rasterizeBackwardReferenceURL.path) else {
+            throw XCTSkip("Generate \(rasterizeBackwardReferenceURL.path) first.")
+        }
+
+        let reference = try JSONDecoder().decode(
+            RasterizeBackwardReference.self,
+            from: Data(contentsOf: rasterizeBackwardReferenceURL)
+        )
+        let preprocess = FastGSPreprocessParityFixture.rasterizeLargeE2EPreprocessOutput()
+        let binning = FastGSPreprocessParityFixture.rasterizeLargeE2EBinningOutput()
+        let rasterize = FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()
+        let cotangents = FastGSRasterizeCotangents.outColorOnes(like: rasterize)
+        let output = FastGSRasterizeBackward.forward(
+            preprocessOutput: preprocess,
+            binningOutput: binning,
+            rasterizeOutput: rasterize,
+            cotangents: cotangents,
+            background: MLXArray([Float(0.025), 0.03, 0.04], [3]),
+            params: FastGSPreprocessParityFixture.rasterizeLargeE2EParams
+        )
+
+        assertGradientSummary(output.means2D, reference.gradients.means2D, accuracy: 1e-3)
+        assertGradientSummary(output.colors, reference.gradients.colors, accuracy: 1e-3)
+        assertGradientSummary(output.conicOpacity, reference.gradients.conicOpacity, accuracy: 1e-2)
+        assertGradientSummary(output.viewspacePoints, reference.gradients.viewspacePoints, accuracy: 1e-2)
+    }
+}
+
+private struct RasterizeBackwardReference: Decodable {
+    var gradients: RasterizeBackwardGradients
+}
+
+private struct RasterizeBackwardGradients: Decodable {
+    var means2D: GradientReference
+    var colors: GradientReference
+    var conicOpacity: GradientReference
+    var viewspacePoints: GradientReference
+}
+
+private struct GradientReference: Decodable {
+    var shape: [Int]
+    var sum: Double
+    var absSum: Double
+    var maxAbs: Double
+    var samples: [Double]
+    var sampleIds: [Int]
+}
+
+private func assertGradientSummary(
+    _ array: MLXArray,
+    _ reference: GradientReference,
+    accuracy: Double,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    let values = array.asArray(Float.self).map(Double.init)
+    XCTAssertEqual(array.shape, reference.shape, file: file, line: line)
+    XCTAssertEqual(values.reduce(0, +), reference.sum, accuracy: accuracy, file: file, line: line)
+    XCTAssertEqual(values.map(abs).reduce(0, +), reference.absSum, accuracy: accuracy, file: file, line: line)
+    XCTAssertEqual(values.map(abs).max() ?? 0, reference.maxAbs, accuracy: accuracy, file: file, line: line)
+
+    let samples = reference.sampleIds.map { values[$0] }
+    XCTAssertEqual(samples.count, reference.samples.count, file: file, line: line)
+    for (actual, expected) in zip(samples, reference.samples) {
+        XCTAssertEqual(actual, expected, accuracy: accuracy, file: file, line: line)
     }
 }
 

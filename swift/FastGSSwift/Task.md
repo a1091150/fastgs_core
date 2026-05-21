@@ -309,8 +309,10 @@ capture yet.
   - [x] full `fastgs_render_backward_kernel` math port smoke-tested under Xcode
   - [ ] `FastGSPreprocessBackward.forward(...)`
 - Rasterize backward remaining work:
-  - [ ] compare `dL_dmeans2d`, `dL_dcolors`, `dL_dconicOpacity`, and
+  - [x] compare `dL_dmeans2d`, `dL_dcolors`, `dL_dconicOpacity`, and
     `dL_dviewspacePoints` against Python/C++ reference
+    - current parity checks compare gradient `sum`, `absSum`, `maxAbs`, and
+      fixed samples from `fastgs_rasterize_backward_ref.py`
   - [ ] wire rasterize backward output into preprocess backward once both
     explicit backward APIs are stable
 - Validate those explicit backward APIs with fixed upstream gradients before
