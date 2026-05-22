@@ -333,12 +333,14 @@ capture yet.
     `mx.value_and_grad` over `preprocess_forward`
     - `swift/FastGSSwiftTools/fastgs_preprocess_backward_ref.py` writes
       `/private/tmp/fastgs_preprocess_backward_ref.json`.
-    - The first fixture matches the Swift precomputed-color preprocess fixture
-      and compares loss plus gradient `sum`, `absSum`, `maxAbs`, and fixed
-      samples.
+    - The first fixtures match the Swift precomputed-color and SH degree-3
+      preprocess fixtures and compare loss plus gradient `sum`, `absSum`,
+      `maxAbs`, and fixed samples.
   - [ ] expand preprocess backward parity beyond the first synthetic fixture:
-    SH color path, precomputed covariance path, clamping path, and recorded
-    scene subsets.
+    - [x] SH color path
+    - [ ] precomputed covariance path
+    - [ ] clamping path
+    - [ ] recorded scene subsets
 - [x] Before continuing the full preprocess backward Metal math port, add an
   end-to-end autograd plumbing test. Single backward-kernel tests are useful,
   but they can miss argument ordering, closure, `CustomFunction`, and

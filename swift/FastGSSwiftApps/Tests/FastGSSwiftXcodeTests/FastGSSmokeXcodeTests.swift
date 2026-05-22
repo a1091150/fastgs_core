@@ -513,6 +513,55 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         assertGradientSummary(gradients.viewspacePoints, reference.gradients.viewspacePoints, accuracy: 1e-5)
     }
 
+    func testPreprocessBackwardSHDegree3MatchesReferenceSummaryUnderXcode() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_SLOW_PARITY"] == "1" else {
+            throw XCTSkip("Set FASTGS_RUN_SLOW_PARITY=1 to run the full preprocess backward parity check.")
+        }
+        guard FileManager.default.fileExists(atPath: preprocessBackwardReferenceURL.path) else {
+            throw XCTSkip("Generate \(preprocessBackwardReferenceURL.path) first.")
+        }
+
+        let reference = try JSONDecoder().decode(
+            PreprocessBackwardReference.self,
+            from: Data(contentsOf: preprocessBackwardReferenceURL)
+        ).fixtures.shDegree3
+        let input = FastGSPreprocessParityFixture.shDegree3Input()
+        let params = FastGSPreprocessParityFixture.shDegree3Params
+        let forwardOutput = FastGSPreprocessParityFixture.shDegree3Output()
+        let loss = forwardOutput.xy.sum()
+            + 0.1 * forwardOutput.depths.sum()
+            + 0.2 * forwardOutput.cov3D.sum()
+            + 0.3 * forwardOutput.rgb.sum()
+            + 0.4 * forwardOutput.conicOpacity.sum()
+            + 0.5 * forwardOutput.viewspacePoints.sum()
+        let cotangents = FastGSPreprocessCotangents(
+            radii: MLXArray.zeros(forwardOutput.radii.shape, dtype: forwardOutput.radii.dtype),
+            xy: MLXArray.ones(forwardOutput.xy.shape, dtype: forwardOutput.xy.dtype),
+            depths: 0.1 * MLXArray.ones(forwardOutput.depths.shape, dtype: forwardOutput.depths.dtype),
+            cov3D: 0.2 * MLXArray.ones(forwardOutput.cov3D.shape, dtype: forwardOutput.cov3D.dtype),
+            rgb: 0.3 * MLXArray.ones(forwardOutput.rgb.shape, dtype: forwardOutput.rgb.dtype),
+            conicOpacity: 0.4 * MLXArray.ones(forwardOutput.conicOpacity.shape, dtype: forwardOutput.conicOpacity.dtype),
+            tilesTouched: MLXArray.zeros(forwardOutput.tilesTouched.shape, dtype: forwardOutput.tilesTouched.dtype),
+            clamped: MLXArray.zeros(forwardOutput.clamped.shape, dtype: forwardOutput.clamped.dtype),
+            viewspacePoints: 0.5 * MLXArray.ones(forwardOutput.viewspacePoints.shape, dtype: forwardOutput.viewspacePoints.dtype)
+        )
+        let gradients = FastGSPreprocessBackward.forward(
+            input: input,
+            cotangents: cotangents,
+            forwardOutput: forwardOutput,
+            params: params
+        )
+
+        XCTAssertEqual(loss.item(Float.self), Float(reference.loss), accuracy: 1e-3)
+        assertGradientSummary(gradients.means3D, reference.gradients.means3D, accuracy: 2e-3)
+        assertGradientSummary(gradients.dc, reference.gradients.dc, accuracy: 1e-5)
+        assertGradientSummary(gradients.sh, reference.gradients.sh, accuracy: 1e-5)
+        assertGradientSummary(gradients.opacities, reference.gradients.opacities, accuracy: 1e-5)
+        assertGradientSummary(gradients.scales, reference.gradients.scales, accuracy: 2e-3)
+        assertGradientSummary(gradients.rotations, reference.gradients.rotations, accuracy: 1e-5)
+        assertGradientSummary(gradients.viewspacePoints, reference.gradients.viewspacePoints, accuracy: 1e-5)
+    }
+
     func testRecordedTrainingZeroVJPValueAndGradRunsUnderXcode() throws {
         guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
             throw XCTSkip("Generate \(recordedManifestURL.path) first.")
@@ -746,11 +795,37 @@ private struct RasterizeBackwardGradients: Decodable {
 private struct PreprocessBackwardReference: Decodable {
     var loss: Double
     var gradients: PreprocessBackwardGradients
+    var fixtures: PreprocessBackwardFixtures
+}
+
+private struct PreprocessBackwardFixtures: Decodable {
+    var precomputedColor: PreprocessBackwardFixtureReference
+    var shDegree3: PreprocessBackwardSHFixtureReference
+}
+
+private struct PreprocessBackwardFixtureReference: Decodable {
+    var loss: Double
+    var gradients: PreprocessBackwardGradients
+}
+
+private struct PreprocessBackwardSHFixtureReference: Decodable {
+    var loss: Double
+    var gradients: PreprocessBackwardSHGradients
 }
 
 private struct PreprocessBackwardGradients: Decodable {
     var means3D: GradientReference
     var colorsPrecomputed: GradientReference
+    var opacities: GradientReference
+    var scales: GradientReference
+    var rotations: GradientReference
+    var viewspacePoints: GradientReference
+}
+
+private struct PreprocessBackwardSHGradients: Decodable {
+    var means3D: GradientReference
+    var dc: GradientReference
+    var sh: GradientReference
     var opacities: GradientReference
     var scales: GradientReference
     var rotations: GradientReference
