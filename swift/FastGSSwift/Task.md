@@ -248,13 +248,33 @@ Initial fixed test dataset:
 
 Planned task order:
 
-- [ ] Inspect the exact scanner dataset files used by the Python training path:
+- [x] Inspect the exact scanner dataset files used by the Python training path:
   camera/frame metadata, target images, point cloud files, and any color fields.
+  - Python uses `plyfile.PlyData.read(...)` in
+    `scripts/train_scanner_fixed.py` / `scripts/train_scanner_fastgs2.py`.
+  - The fixed dataset uses `/Users/yangdunfu/Downloads/2026_05_04_16_51_29/points.ply`.
+  - `points.ply` is ASCII PLY (`ply.text == True`) with one `vertex` element
+    containing 793602 vertices.
+  - Actual vertex properties are:
+    `x: float`, `y: float`, `z: float`, `red: uchar`, `green: uchar`,
+    `blue: uchar`, `nx: float`, `ny: float`, `nz: float`,
+    `curvature: float`.
+  - Python loader currently consumes only `x/y/z` and optional
+    `red/green/blue`; colors are normalized from `0...255` to `0...1` and
+    clipped.
+  - The fixed dataset has 159 `frame_*.jpg` files and 958 `frame_*.json`
+    files; Python pairs matching frame indices.
+  - First image sample is `frame_00000.jpg`, RGB, 1920x1440.
+  - Frame JSON uses `intrinsics` length 9 and `cameraPoseARFrame` length 16.
+  - Python resizes targets to the requested training size, currently 512x512
+    for the Swift app path.
 - [ ] Decide whether to use a SwiftPM PLY package or write a minimal in-repo
   PLY reader.
-  - Prefer an in-repo minimal reader if the dataset uses a narrow PLY subset.
-  - Required first support is only the dataset's actual PLY format, likely
-    binary little-endian or ASCII with `x/y/z` and color properties.
+  - Prefer an in-repo minimal reader because the current dataset uses a narrow
+    ASCII PLY subset.
+  - Required first support is ASCII `vertex` PLY with `x/y/z` float and
+    optional `red/green/blue` uchar properties. Ignore normals/curvature for
+    the first Swift loader.
 - [ ] Add a Swift dataset loader that can read the fixed test directory and
   produce the same first-frame training inputs currently represented by the
   generated manifest.
@@ -565,10 +585,10 @@ or recomputing them from unrelated values.
   - [x] Add `make swift-recorded-full-512-camera-references` to generate
     per-camera 512x512 full-point manifests under
     `/private/tmp/fastgs_recorded_reference_full_512/camera_000...`.
-  - [ ] Clean up the macOS app so it only exposes training-related controls:
+  - [x] Clean up the macOS app so it only exposes training-related controls:
     dataset selection, camera/frame navigation, training start, progress, and
     target/render display.
-    - Remove static fixture forward, mock camera frame, and early reload/test
+    - [x] Remove static fixture forward, mock camera frame, and early reload/test
       forward buttons from the primary app UI.
   - [ ] After fixed-point training is stable, add FastGS-style after-train
     features such as densify and prune as explicit later stages.
