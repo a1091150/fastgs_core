@@ -463,6 +463,32 @@ final class FastGSSmokeXcodeTests: XCTestCase {
 
         assertPreprocessBackwardSkeleton(input: input, output: output)
     }
+
+    func testRecordedTrainingZeroVJPValueAndGradRunsUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let parameters = try scene.initialTrainableParameters()
+        let target = try scene.render(parameters: parameters).outColor
+        let result = FastGSTrainingRenderFunction.valueAndZeroGrad(
+            scene: scene,
+            parameters: parameters,
+            target: target
+        )
+
+        XCTAssertEqual(result.loss.shape, [])
+        XCTAssertTrue(result.loss.item(Float.self).isFinite)
+        XCTAssertEqual(result.loss.item(Float.self), 0, accuracy: 1e-7)
+        XCTAssertEqual(result.gradients.count, parameters.arrays.count)
+
+        for (gradient, parameter) in zip(result.gradients, parameters.arrays) {
+            XCTAssertEqual(gradient.shape, parameter.shape)
+            XCTAssertEqual(gradient.dtype, parameter.dtype)
+            XCTAssertTrue(gradient.asArray(Float.self).allSatisfy { $0 == 0 })
+        }
+    }
 }
 
 private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {

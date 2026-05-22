@@ -313,21 +313,23 @@ capture yet.
       the remaining primal gradients are zero-filled on the Swift side.
     - Xcode dispatch is stable when the MLXFast preprocess backward kernel is
       kept to 4 outputs. A larger single-kernel shape with 7 outputs repeatedly
-      restarted the Xcode test host, so the full math port should be split into
-      smaller MLXFast kernels instead of trying to emit every primal gradient
-      from one Metal custom kernel.
+      restarted the Xcode test host during the early skeleton phase. Do not
+      treat that skeleton workaround as the final design: the full math port
+      should still follow the original Metal kernel structure inside
+      `MLXFast.metalKernel(...)`.
 - Rasterize backward remaining work:
   - [x] compare `dL_dmeans2d`, `dL_dcolors`, `dL_dconicOpacity`, and
     `dL_dviewspacePoints` against Python/C++ reference
     - current parity checks compare gradient `sum`, `absSum`, `maxAbs`, and
       fixed samples from `fastgs_rasterize_backward_ref.py`
   - [x] wire rasterize backward output into preprocess backward smoke path
-  - [ ] port full preprocess backward math in split MLXFast stages
-- Before continuing the full preprocess backward Metal math port, add an
+  - [ ] port full preprocess backward math into `MLXFast.metalKernel(...)`
+    while preserving the original Metal code structure as much as possible
+- [x] Before continuing the full preprocess backward Metal math port, add an
   end-to-end autograd plumbing test. Single backward-kernel tests are useful,
   but they can miss argument ordering, closure, `CustomFunction`, and
   `valueAndGrad` integration failures.
-- Add a Swift training smoke path that renders an image, computes a scalar loss,
+- [x] Add a Swift training smoke path that renders an image, computes a scalar loss,
   and calls MLX Swift `valueAndGrad` / `buildValueAndGradient` over the
   trainable Gaussian parameters.
   - Use the current recorded-scene forward path as the first input fixture.
@@ -339,7 +341,7 @@ capture yet.
     every trainable parameter. This is intentional: the goal is to prove the
     full forward -> loss -> backward plumbing before trusting any Metal
     gradient math.
-- Add Swift `CustomFunction` wrappers before the full preprocess backward math
+- [x] Add Swift `CustomFunction` wrappers before the full preprocess backward math
   port:
 
   ```swift
@@ -357,13 +359,27 @@ capture yet.
 - The `CustomFunction` should define the autograd contract; the math inside
   `Forward` should still use the existing MLXFast render path. The first `VJP`
   implementation can be shape-correct zero gradients; later versions should
-  replace those zeros with rasterize backward and split preprocess backward
-  MLXFast kernels.
+  replace those zeros with rasterize backward and the full preprocess backward
+  `MLXFast.metalKernel(...)` port.
 - Keep forward intermediates available as `MLXArray` outputs so VJP can consume
   them.
 - After zero-VJP autograd plumbing is stable, replace zero gradients stage by
   stage and validate gradients against the existing implementation before
   attempting real training from Swift.
+- `FastGSTrainingBackwardMode` may be added as a temporary migration scaffold:
+  - `.zero` keeps the current shape-correct zero-gradient VJP.
+  - `.rasterizeOnly` routes `cotangents[0]` through
+    `FastGSRasterizeBackward.forward(...)` to prove loss cotangents reach the
+    rasterize backward Metal path, while trainable parameter gradients can
+    remain zero.
+  - `.full` routes rasterize backward output into preprocess backward.
+  This mode enum should not become the long-term public API; remove or hide it
+  after the full backward path is stable.
+- Do not split the full preprocess backward algorithm into smaller kernels as
+  the preferred solution. The intended final implementation is one
+  `MLXFast.metalKernel(...)` port that mirrors the original
+  `fastgs_preprocess_backward.metal` structure, with any MLXFast-specific
+  wrapper adjustments kept as small and explicit as possible.
 
 ### Optimizer Plan
 

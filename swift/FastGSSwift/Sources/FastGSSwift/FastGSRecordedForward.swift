@@ -156,18 +156,27 @@ public struct FastGSRecordedForwardScene {
         return try renderStages(verbose: verbose).rasterize
     }
 
+    public func render(
+        parameters: FastGSTrainableParameters,
+        verbose: Bool = false
+    ) throws -> FastGSRasterizeOutput {
+        return try renderStages(parameters: parameters, verbose: verbose).rasterize
+    }
+
     public func renderStages(verbose: Bool = false) throws -> FastGSRecordedForwardStages {
+        return try renderStages(parameters: initialTrainableParameters(), verbose: verbose)
+    }
+
+    public func renderStages(
+        parameters: FastGSTrainableParameters,
+        verbose: Bool = false
+    ) throws -> FastGSRecordedForwardStages {
         try validate()
 
-        let count = manifest.pointCount
-        let tileBounds = (
-            x: (manifest.width + 15) / 16,
-            y: (manifest.height + 15) / 16,
-            z: 1
-        )
-        let maxSHCoefficients = (manifest.shDegree + 1) * (manifest.shDegree + 1)
+        let tileBounds = tileBounds()
+        let maxSHCoefficients = maxSHCoefficients()
         let preprocess = FastGSPreprocess.forward(
-            try preprocessInput(count: count, maxSHCoefficients: maxSHCoefficients),
+            try preprocessInput(parameters: parameters),
             params: FastGSPreprocessParams(
                 degree: manifest.shDegree,
                 maxSHCoefficients: maxSHCoefficients,
@@ -200,7 +209,11 @@ public struct FastGSRecordedForwardScene {
         return FastGSRecordedForwardStages(preprocess: preprocess, binning: binning, rasterize: rasterize)
     }
 
-    private func preprocessInput(count: Int, maxSHCoefficients: Int) throws -> FastGSPreprocessInput {
+    public func initialTrainableParameters() throws -> FastGSTrainableParameters {
+        try validate()
+
+        let count = manifest.pointCount
+        let maxSHCoefficients = maxSHCoefficients()
         let means = MLXArray(try floatBuffer(name: "means3d", descriptor: manifest.means3dBuffer, fallback: manifest.means3d, expectedShape: [count, 3]), [count, 3])
         let colors = try floatBuffer(name: "colors", descriptor: manifest.colorsBuffer, fallback: manifest.colors, expectedShape: [count, 3])
         let shC0 = Float(0.28209479177387814)
@@ -213,20 +226,46 @@ public struct FastGSRecordedForwardScene {
             rotations[index * 4] = 1
         }
 
-        return FastGSPreprocessInput(
+        return FastGSTrainableParameters(
             means3D: means,
             dc: dc,
             sh: sh,
-            colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
             opacities: opacities,
             scales: scales,
-            rotations: MLXArray(rotations, [count, 4]),
+            rotations: MLXArray(rotations, [count, 4])
+        )
+    }
+
+    private func preprocessInput(parameters: FastGSTrainableParameters) throws -> FastGSPreprocessInput {
+        try validate(parameters: parameters)
+
+        let count = manifest.pointCount
+        return FastGSPreprocessInput(
+            means3D: parameters.means3D,
+            dc: parameters.dc,
+            sh: parameters.sh,
+            colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
+            opacities: parameters.opacities,
+            scales: parameters.scales,
+            rotations: parameters.rotations,
             cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
             viewMatrix: MLXArray(manifest.viewmatrix.map(Float.init), [4, 4]),
             projectionMatrix: MLXArray(manifest.projmatrix.map(Float.init), [4, 4]),
             cameraPosition: MLXArray(Array(manifest.campos.prefix(3)).map(Float.init), [3]),
             viewspacePoints: MLXArray.zeros([count, 4], dtype: .float32)
         )
+    }
+
+    private func tileBounds() -> (x: Int, y: Int, z: Int) {
+        (
+            x: (manifest.width + 15) / 16,
+            y: (manifest.height + 15) / 16,
+            z: 1
+        )
+    }
+
+    private func maxSHCoefficients() -> Int {
+        (manifest.shDegree + 1) * (manifest.shDegree + 1)
     }
 
     private func validate() throws {
@@ -250,6 +289,18 @@ public struct FastGSRecordedForwardScene {
         guard manifest.background.count == 3 else {
             throw FastGSRecordedForwardError.invalidBackground(count: manifest.background.count)
         }
+    }
+
+    private func validate(parameters: FastGSTrainableParameters) throws {
+        let count = manifest.pointCount
+        let maxSHCoefficients = maxSHCoefficients()
+        precondition(parameters.means3D.shape == [count, 3], "means3D must have shape [N, 3].")
+        precondition(parameters.dc.shape == [count, 3], "dc must have shape [N, 3].")
+        precondition(parameters.sh.shape == [count, maxSHCoefficients, 3], "sh must have shape [N, C, 3].")
+        precondition(parameters.opacities.shape == [count], "opacities must have shape [N].")
+        precondition(parameters.scales.shape == [count, 3], "scales must have shape [N, 3].")
+        precondition(parameters.rotations.shape == [count, 4], "rotations must have shape [N, 4].")
+        precondition(parameters.cov3DPrecomputed == nil, "recorded training smoke path currently uses scale/rotation covariance.")
     }
 
     private func floatBuffer(
