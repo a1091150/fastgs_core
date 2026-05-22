@@ -36,7 +36,7 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var outputLabel = "/private/tmp/fastgs_swift_mac_training"
     @Published var trainingWidth = 512
     @Published var trainingHeight = 512
-    @Published var maxFrames = 1
+    @Published var maxFrames = 9999
     @Published var trainingSteps = 200
     @Published var isDatasetLoaded = false
     @Published var isLoadingDataset = false
@@ -169,14 +169,14 @@ private final class RenderPreviewModel: ObservableObject {
                         }
                         let result: FastGSRecordedTrainingPreviewResult
                         if let scannerCache {
-                            let dataset = try FastGSScannerDatasetLoader.loadDataset(
+                            let scenes = try trainingScenes(
                                 cache: scannerCache,
-                                frameIndex: selectedFrameIndex,
                                 width: trainingWidth,
-                                height: trainingHeight
+                                height: trainingHeight,
+                                maxFrames: maxFrames
                             )
                             result = try FastGSRecordedTrainingPreview.run(
-                                scene: FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0),
+                                scenes: scenes,
                                 config: config,
                                 progress: progress,
                                 previewScheduler: previewScheduler,
@@ -686,6 +686,24 @@ private func trainingPreviewResult(
         pointCount: scene.manifest.pointCount,
         parameters: parameters
     )
+}
+
+private func trainingScenes(
+    cache: FastGSScannerDatasetCache,
+    width: Int,
+    height: Int,
+    maxFrames: Int
+) throws -> [FastGSRecordedForwardScene] {
+    let frameDescriptors = Array(cache.frameDescriptors.prefix(max(1, maxFrames)))
+    return try frameDescriptors.map { descriptor in
+        let dataset = try FastGSScannerDatasetLoader.loadDataset(
+            cache: cache,
+            frameIndex: descriptor.index,
+            width: width,
+            height: height
+        )
+        return FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+    }
 }
 
 private struct RenderPreviewView: View {

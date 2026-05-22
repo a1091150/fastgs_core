@@ -672,6 +672,13 @@ or recomputing them from unrelated values.
       frames the native loader reads from the selected start frame, but the
       fixed-point training scene still uses the first loaded frame until
       multi-view training is implemented.
+    - [x] Add the first simple multi-view training loop. The training runner can
+      now accept multiple recorded scenes and cycles through them with
+      `(step - 1) % sceneCount`, using one frame per optimization step. The Mac
+      App builds those scenes from scanner frame indices `0..<maxFrames`; if
+      `maxFrames` exceeds the dataset count, all available frames are used.
+    - [x] Change the Mac App default `maxFrames` to `9999`, so the default Load
+      and Train path uses all available scanner frames in the current dataset.
     - [x] Allow camera switching during training as a queued preview request.
       The left/right buttons update the requested camera and call
       `FastGSRenderPreviewScheduler.requestRender()`. The training loop consumes

@@ -176,8 +176,10 @@ public enum FastGSRecordedTrainingPreview {
                 normalizeWithAllFramePairs: true
             )
         )
-        let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
-        return try run(scene: scene, config: config, progress: progress, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
+        let scenes = dataset.frames.indices.map {
+            FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: $0)
+        }
+        return try run(scenes: scenes, config: config, progress: progress, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
     }
 
     public static func run(
@@ -188,18 +190,33 @@ public enum FastGSRecordedTrainingPreview {
         scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
-        Memory.cacheLimit = config.cacheLimitBytes
+        try run(scenes: [scene], config: config, progress: progress, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
+    }
 
-        let target = try scene.targetOutColor()
-        let targetRGBA = FastGSImageExport.rgbaBytes(
-            outColor: target,
-            width: scene.manifest.width,
-            height: scene.manifest.height
-        )
-        var parameters = try scene.initialTrainableParameters()
+    public static func run(
+        scenes: [FastGSRecordedForwardScene],
+        config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
+        progress: ((Int) -> Void)? = nil,
+        previewScheduler: FastGSRenderPreviewScheduler? = nil,
+        scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
+        preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
+    ) throws -> FastGSRecordedTrainingPreviewResult {
+        Memory.cacheLimit = config.cacheLimitBytes
+        precondition(!scenes.isEmpty, "recorded training preview expects at least one scene")
+
+        let targets = try scenes.map { try $0.targetOutColor() }
+        var parameters = try scenes[0].initialTrainableParameters()
         var optimizer = FastGSAdamOptimizer(learningRates: config.learningRates)
+        var lastScene = scenes[0]
+        var lastTarget = targets[0]
 
         for step in 1...config.totalSteps {
+            let sceneIndex = (step - 1) % scenes.count
+            let scene = scenes[sceneIndex]
+            let target = targets[sceneIndex]
+            lastScene = scene
+            lastTarget = target
+
             let result = FastGSTrainingStageGraph.valueAndGrad(
                 scene: scene,
                 parameters: parameters,
@@ -219,6 +236,11 @@ public enum FastGSRecordedTrainingPreview {
 
             if shouldWritePreview(step: step, config: config) || (shouldRenderScheduledPreview && scheduledPreview == nil) {
                 let render = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+                let targetRGBA = FastGSImageExport.rgbaBytes(
+                    outColor: target,
+                    width: scene.manifest.width,
+                    height: scene.manifest.height
+                )
                 try preview?(
                     FastGSRecordedTrainingPreviewResult(
                         step: step,
@@ -236,18 +258,22 @@ public enum FastGSRecordedTrainingPreview {
             }
         }
 
-        let render = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+        let render = FastGSTrainingStageGraph.render(scene: lastScene, parameters: parameters)
         return FastGSRecordedTrainingPreviewResult(
             step: config.totalSteps,
-            targetRGBA: targetRGBA,
+            targetRGBA: FastGSImageExport.rgbaBytes(
+                outColor: lastTarget,
+                width: lastScene.manifest.width,
+                height: lastScene.manifest.height
+            ),
             renderRGBA: FastGSImageExport.rgbaBytes(
                 outColor: render,
-                width: scene.manifest.width,
-                height: scene.manifest.height
+                width: lastScene.manifest.width,
+                height: lastScene.manifest.height
             ),
-            width: scene.manifest.width,
-            height: scene.manifest.height,
-            pointCount: scene.manifest.pointCount,
+            width: lastScene.manifest.width,
+            height: lastScene.manifest.height,
+            pointCount: lastScene.manifest.pointCount,
             parameters: parameters
         )
     }
