@@ -65,6 +65,7 @@ public struct FastGSRecordedTrainingReferenceSet {
 public struct FastGSRecordedTrainingRunConfig {
     public var referenceSet: FastGSRecordedTrainingReferenceSet
     public var totalSteps: Int
+    public var previewInterval: Int
     public var cacheLimitBytes: Int
     public var learningRates: FastGSAdamLearningRates
 
@@ -73,6 +74,7 @@ public struct FastGSRecordedTrainingRunConfig {
             referenceDirectory: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full_512", isDirectory: true)
         ),
         totalSteps: Int = 200,
+        previewInterval: Int = 20,
         cacheLimitBytes: Int = 4 * 1024 * 1024 * 1024,
         learningRates: FastGSAdamLearningRates = FastGSAdamLearningRates(
             means3D: 5e-5,
@@ -85,6 +87,7 @@ public struct FastGSRecordedTrainingRunConfig {
     ) {
         self.referenceSet = referenceSet
         self.totalSteps = totalSteps
+        self.previewInterval = previewInterval
         self.cacheLimitBytes = cacheLimitBytes
         self.learningRates = learningRates
     }
@@ -93,6 +96,7 @@ public struct FastGSRecordedTrainingRunConfig {
 public typealias FastGSRecordedTrainingPreviewConfig = FastGSRecordedTrainingRunConfig
 
 public struct FastGSRecordedTrainingPreviewResult {
+    public var step: Int
     public var targetRGBA: [UInt8]
     public var renderRGBA: [UInt8]
     public var width: Int
@@ -100,12 +104,14 @@ public struct FastGSRecordedTrainingPreviewResult {
     public var pointCount: Int
 
     public init(
+        step: Int,
         targetRGBA: [UInt8],
         renderRGBA: [UInt8],
         width: Int,
         height: Int,
         pointCount: Int
     ) {
+        self.step = step
         self.targetRGBA = targetRGBA
         self.renderRGBA = renderRGBA
         self.width = width
@@ -118,23 +124,30 @@ public enum FastGSRecordedTrainingPreview {
     public static func run(
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         cameraIndex: Int,
-        progress: ((Int) -> Void)? = nil
+        progress: ((Int) -> Void)? = nil,
+        preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
         guard let manifestURL = config.referenceSet.manifestURL(at: cameraIndex) else {
             throw FastGSRecordedTrainingPreviewError.noRecordedReference(config.referenceSet.referenceDirectory)
         }
-        return try run(manifestURL: manifestURL, config: config, progress: progress)
+        return try run(manifestURL: manifestURL, config: config, progress: progress, preview: preview)
     }
 
     public static func run(
         manifestURL: URL,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
-        progress: ((Int) -> Void)? = nil
+        progress: ((Int) -> Void)? = nil,
+        preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
         Memory.cacheLimit = config.cacheLimitBytes
 
         let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
         let target = try scene.targetOutColor()
+        let targetRGBA = FastGSImageExport.rgbaBytes(
+            outColor: target,
+            width: scene.manifest.width,
+            height: scene.manifest.height
+        )
         var parameters = try scene.initialTrainableParameters()
         var optimizer = FastGSAdamOptimizer(learningRates: config.learningRates)
 
@@ -150,15 +163,30 @@ public enum FastGSRecordedTrainingPreview {
             )
             eval(parameters: parameters, optimizer: optimizer)
             progress?(step)
+
+            if shouldWritePreview(step: step, config: config) {
+                let render = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+                try preview?(
+                    FastGSRecordedTrainingPreviewResult(
+                        step: step,
+                        targetRGBA: targetRGBA,
+                        renderRGBA: FastGSImageExport.rgbaBytes(
+                            outColor: render,
+                            width: scene.manifest.width,
+                            height: scene.manifest.height
+                        ),
+                        width: scene.manifest.width,
+                        height: scene.manifest.height,
+                        pointCount: scene.manifest.pointCount
+                    )
+                )
+            }
         }
 
         let render = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
         return FastGSRecordedTrainingPreviewResult(
-            targetRGBA: FastGSImageExport.rgbaBytes(
-                outColor: target,
-                width: scene.manifest.width,
-                height: scene.manifest.height
-            ),
+            step: config.totalSteps,
+            targetRGBA: targetRGBA,
             renderRGBA: FastGSImageExport.rgbaBytes(
                 outColor: render,
                 width: scene.manifest.width,
@@ -180,6 +208,13 @@ public enum FastGSRecordedTrainingPreview {
             scales: gradients[4],
             rotations: gradients[5]
         )
+    }
+
+    private static func shouldWritePreview(step: Int, config: FastGSRecordedTrainingRunConfig) -> Bool {
+        guard config.previewInterval > 0 else {
+            return false
+        }
+        return step % config.previewInterval == 0
     }
 
     private static func eval(parameters: FastGSTrainableParameters, optimizer: FastGSAdamOptimizer) {

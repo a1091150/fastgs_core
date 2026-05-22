@@ -1,7 +1,6 @@
 import FastGSSwift
 import AppKit
 import CoreImage
-import CoreVideo
 import Metal
 import MetalKit
 import SwiftUI
@@ -19,6 +18,7 @@ struct FastGSSwiftMacApp: App {
 @MainActor
 private final class RenderPreviewModel: ObservableObject {
     private var trainingConfig = FastGSRecordedTrainingRunConfig()
+    private let outputDirectory = URL(fileURLWithPath: "/private/tmp/fastgs_swift_mac_training", isDirectory: true)
     @Published var texture: MTLTexture?
     @Published var fallbackImage: CGImage?
     @Published var targetImage: CGImage?
@@ -26,160 +26,27 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var trainingStep = 0
     @Published var totalTrainingSteps = 0
     @Published var cameraIndex = 0
-    @Published var renderSize = "80 x 48"
-    @Published var previewAspectRatio = 80.0 / 48.0
+    @Published var renderSize = "512 x 512"
+    @Published var previewAspectRatio = 1.0
     @Published var previewMode: RenderPreviewMode = .single
-    @Published var isRendering = false
     @Published var isTraining = false
     let device = MTLCreateSystemDefaultDevice()
+
+    init() {
+        refreshTrainingReferences()
+        totalTrainingSteps = trainingConfig.totalSteps
+        status = trainingConfig.referenceSet.isEmpty
+            ? "No recorded references. Run make swift-recorded-full-512-reference first"
+            : "Ready for training"
+    }
 
     var cameraLabel: String {
         let count = max(trainingConfig.referenceSet.count, 1)
         return "Camera \(min(cameraIndex + 1, count)) / \(count)"
     }
 
-    func render() {
-        guard !isRendering, !isTraining else {
-            return
-        }
-
-        isRendering = true
-        status = "Rendering..."
-
-        Task {
-            do {
-                guard let device else {
-                    status = "Render failed: no Metal device"
-                    isRendering = false
-                    return
-                }
-
-                let rendered = try await Task.detached(priority: .userInitiated) {
-                    let output = FastGSPreprocessParityFixture.rasterizeLargeE2EOutput()
-                    guard let texture = FastGSImageExport.texture(
-                        rasterizeOutput: output,
-                        width: 80,
-                        height: 48,
-                        device: device
-                    ) else {
-                        throw RenderPreviewError.textureCreationFailed
-                    }
-                    let image = try FastGSImageExport.cgImage(rasterizeOutput: output, width: 80, height: 48)
-                    return (texture, image)
-                }.value
-
-                texture = rendered.0
-                fallbackImage = rendered.1
-                targetImage = nil
-                renderSize = "80 x 48"
-                previewAspectRatio = 80.0 / 48.0
-                previewMode = .single
-                status = "Rendered with Swift MLXFast texture"
-            } catch {
-                status = "Render failed: \(error)"
-            }
-            isRendering = false
-        }
-    }
-
-    func renderMockCameraFrame() {
-        guard !isRendering, !isTraining else {
-            return
-        }
-
-        isRendering = true
-        status = "Rendering mock camera frame..."
-
-        Task {
-            do {
-                guard let device else {
-                    status = "Camera frame failed: no Metal device"
-                    isRendering = false
-                    return
-                }
-
-                let rendered = try await Task.detached(priority: .userInitiated) {
-                    let width = 160
-                    let height = 96
-                    let pixelBuffer = try makeMockCameraPixelBuffer(width: width, height: height)
-                    guard let texture = try FastGSCameraFrameBridge.texture(fromBGRA: pixelBuffer, device: device) else {
-                        throw RenderPreviewError.textureCreationFailed
-                    }
-                    return (texture, width, height)
-                }.value
-
-                texture = rendered.0
-                fallbackImage = nil
-                targetImage = nil
-                renderSize = "\(rendered.1) x \(rendered.2)"
-                previewAspectRatio = Double(rendered.1) / Double(rendered.2)
-                previewMode = .single
-                status = "Rendered mock CVPixelBuffer texture"
-            } catch {
-                status = "Camera frame failed: \(error)"
-            }
-            isRendering = false
-        }
-    }
-
-    func renderRecordedFrame() {
-        guard !isRendering, !isTraining else {
-            return
-        }
-
-        isRendering = true
-        refreshTrainingReferences()
-        guard let manifestURL = selectedTrainingManifestURL() else {
-            status = "No recorded references. Run make swift-recorded-full-512-reference first"
-            isRendering = false
-            return
-        }
-        status = "Rendering \(cameraLabel)..."
-
-        Task {
-            do {
-                guard let device else {
-                    status = "Recorded render failed: no Metal device"
-                    isRendering = false
-                    return
-                }
-
-                let rendered = try await Task.detached(priority: .userInitiated) {
-                    let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
-                    let target = try loadRecordedTargetImage(scene: scene)
-                    let output = try scene.render()
-                    guard let texture = FastGSImageExport.texture(
-                        rasterizeOutput: output,
-                        width: scene.manifest.width,
-                        height: scene.manifest.height,
-                        device: device
-                    ) else {
-                        throw RenderPreviewError.textureCreationFailed
-                    }
-                    let image = try FastGSImageExport.cgImage(
-                        rasterizeOutput: output,
-                        width: scene.manifest.width,
-                        height: scene.manifest.height
-                    )
-                    return (texture, image, target, scene.manifest.width, scene.manifest.height, scene.manifest.pointCount)
-                }.value
-
-                texture = rendered.0
-                fallbackImage = rendered.1
-                targetImage = rendered.2
-                renderSize = "\(rendered.3) x \(rendered.4)"
-                previewAspectRatio = Double(rendered.3) / Double(rendered.4)
-                previewMode = .recordedSideBySide
-                status = "Rendered \(cameraLabel), \(rendered.5) points"
-            } catch {
-                status = "Recorded render failed: \(error)"
-            }
-            isRendering = false
-        }
-    }
-
     func trainRecordedFrame() {
-        guard !isRendering, !isTraining else {
+        guard !isTraining else {
             return
         }
 
@@ -202,6 +69,8 @@ private final class RenderPreviewModel: ObservableObject {
                     isTraining = false
                     return
                 }
+                let cameraIndex = cameraIndex
+                let outputDirectory = outputDirectory
 
                 let trained = try await Task.detached(priority: .userInitiated) {
                     let result = try FastGSRecordedTrainingPreview.run(
@@ -212,6 +81,18 @@ private final class RenderPreviewModel: ObservableObject {
                             self.trainingStep = step
                             self.status = "Training \(self.cameraLabel)..."
                         }
+                    } preview: { preview in
+                        try writeSideBySidePNG(
+                            targetRGBA: preview.targetRGBA,
+                            renderRGBA: preview.renderRGBA,
+                            width: preview.width,
+                            height: preview.height,
+                            to: trainingOutputURL(
+                                outputDirectory: outputDirectory,
+                                cameraIndex: cameraIndex,
+                                step: preview.step
+                            )
+                        )
                     }
 
                     guard let texture = FastGSImageExport.texture(
@@ -241,7 +122,7 @@ private final class RenderPreviewModel: ObservableObject {
                 renderSize = "\(trained.3) x \(trained.4)"
                 previewAspectRatio = Double(trained.3) / Double(trained.4)
                 previewMode = .recordedSideBySide
-                status = "Training completed for \(cameraLabel), \(trained.5) points"
+                status = "Training completed, wrote previews to \(outputDirectory.path)"
             } catch {
                 status = "Training failed: \(error)"
             }
@@ -250,7 +131,7 @@ private final class RenderPreviewModel: ObservableObject {
     }
 
     func selectCamera(delta: Int) {
-        guard !isRendering, !isTraining else {
+        guard !isTraining else {
             return
         }
         refreshTrainingReferences()
@@ -263,9 +144,6 @@ private final class RenderPreviewModel: ObservableObject {
         trainingStep = 0
         totalTrainingSteps = trainingConfig.totalSteps
         status = "Selected \(cameraLabel)"
-        if previewMode == .recordedSideBySide {
-            renderRecordedFrame()
-        }
     }
 
     private func refreshTrainingReferences() {
@@ -281,6 +159,7 @@ private final class RenderPreviewModel: ObservableObject {
     private func selectedTrainingManifestURL() -> URL? {
         trainingConfig.referenceSet.manifestURL(at: cameraIndex)
     }
+
 }
 
 private enum RenderPreviewMode {
@@ -290,10 +169,35 @@ private enum RenderPreviewMode {
 
 private enum RenderPreviewError: Error {
     case textureCreationFailed
-    case pixelBufferCreationFailed(CVReturn)
-    case missingPixelBufferBaseAddress
-    case missingRecordedTargetImage
-    case cannotLoadRecordedTargetImage(URL)
+}
+
+private func trainingOutputURL(outputDirectory: URL, cameraIndex: Int, step: Int) -> URL {
+    outputDirectory.appendingPathComponent(
+        String(format: "camera_%03d_step_%03d_sbs.png", cameraIndex, step)
+    )
+}
+
+private func writeSideBySidePNG(
+    targetRGBA: [UInt8],
+    renderRGBA: [UInt8],
+    width: Int,
+    height: Int,
+    to url: URL
+) throws {
+    try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+
+    var combined = [UInt8](repeating: 0, count: width * 2 * height * 4)
+    for row in 0..<height {
+        let sourceStart = row * width * 4
+        let sourceEnd = sourceStart + width * 4
+        let targetStart = row * width * 2 * 4
+        combined.replaceSubrange(targetStart..<(targetStart + width * 4), with: targetRGBA[sourceStart..<sourceEnd])
+        combined.replaceSubrange((targetStart + width * 4)..<(targetStart + width * 2 * 4), with: renderRGBA[sourceStart..<sourceEnd])
+    }
+    try FastGSImageExport.writePNG(rgbaBytes: combined, width: width * 2, height: height, to: url)
 }
 
 private struct RenderPreviewView: View {
@@ -304,9 +208,6 @@ private struct RenderPreviewView: View {
             toolbar
             Divider()
             preview
-        }
-        .task {
-            model.render()
         }
     }
 
@@ -335,7 +236,7 @@ private struct RenderPreviewView: View {
             } label: {
                 Image(systemName: "chevron.left")
             }
-            .disabled(model.isRendering || model.isTraining)
+            .disabled(model.isTraining)
             .help("Previous recorded camera")
 
             Button {
@@ -343,40 +244,16 @@ private struct RenderPreviewView: View {
             } label: {
                 Image(systemName: "chevron.right")
             }
-            .disabled(model.isRendering || model.isTraining)
+            .disabled(model.isTraining)
             .help("Next recorded camera")
-
-            Button {
-                model.renderMockCameraFrame()
-            } label: {
-                Image(systemName: "camera.viewfinder")
-            }
-            .disabled(model.isRendering || model.isTraining)
-            .help("Render mock camera frame")
-
-            Button {
-                model.renderRecordedFrame()
-            } label: {
-                Image(systemName: "photo.on.rectangle")
-            }
-            .disabled(model.isRendering || model.isTraining)
-            .help("Render recorded scanner frame")
 
             Button {
                 model.trainRecordedFrame()
             } label: {
                 Image(systemName: "play.circle")
             }
-            .disabled(model.isRendering || model.isTraining)
+            .disabled(model.isTraining)
             .help("Train recorded 512 x 512 frame")
-
-            Button {
-                model.render()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .disabled(model.isRendering || model.isTraining)
-            .help("Reload render")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -400,7 +277,13 @@ private struct RenderPreviewView: View {
                     .scaledToFit()
                     .padding(24)
             } else {
-                ProgressView()
+                VStack(spacing: 8) {
+                    Text(model.cameraLabel)
+                        .font(.headline)
+                    Text(model.status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -447,63 +330,6 @@ private struct RenderPreviewView: View {
             }
         }
     }
-}
-
-private func loadRecordedTargetImage(scene: FastGSRecordedForwardScene) throws -> CGImage {
-    guard let targetPng = scene.manifest.targetPng else {
-        throw RenderPreviewError.missingRecordedTargetImage
-    }
-    let url = targetPng.hasPrefix("/")
-        ? URL(fileURLWithPath: targetPng)
-        : (scene.manifestDirectory ?? URL(fileURLWithPath: ".")).appendingPathComponent(targetPng)
-    guard let image = NSImage(contentsOf: url), let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-        throw RenderPreviewError.cannotLoadRecordedTargetImage(url)
-    }
-    return cgImage
-}
-
-private func makeMockCameraPixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
-    let attributes: [CFString: Any] = [
-        kCVPixelBufferIOSurfacePropertiesKey: [:],
-    ]
-    var pixelBuffer: CVPixelBuffer?
-    let status = CVPixelBufferCreate(
-        kCFAllocatorDefault,
-        width,
-        height,
-        kCVPixelFormatType_32BGRA,
-        attributes as CFDictionary,
-        &pixelBuffer
-    )
-    guard status == kCVReturnSuccess, let pixelBuffer else {
-        throw RenderPreviewError.pixelBufferCreationFailed(status)
-    }
-
-    CVPixelBufferLockBaseAddress(pixelBuffer, [])
-    defer {
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-    }
-
-    guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-        throw RenderPreviewError.missingPixelBufferBaseAddress
-    }
-
-    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-    let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
-    for y in 0..<height {
-        for x in 0..<width {
-            let offset = y * bytesPerRow + x * 4
-            let checker = ((x / 16) + (y / 16)).isMultiple(of: 2)
-            let horizontal = UInt8((x * 255) / max(width - 1, 1))
-            let vertical = UInt8((y * 255) / max(height - 1, 1))
-            bytes[offset + 0] = checker ? 48 : 180
-            bytes[offset + 1] = vertical
-            bytes[offset + 2] = horizontal
-            bytes[offset + 3] = 255
-        }
-    }
-
-    return pixelBuffer
 }
 
 private struct MetalTexturePreview: NSViewRepresentable {
