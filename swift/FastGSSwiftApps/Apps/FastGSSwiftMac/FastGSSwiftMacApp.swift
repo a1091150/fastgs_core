@@ -4,7 +4,6 @@ import CoreImage
 import CoreVideo
 import Metal
 import MetalKit
-import MLX
 import SwiftUI
 
 @main
@@ -197,59 +196,35 @@ private final class RenderPreviewModel: ObservableObject {
                 }
 
                 let trained = try await Task.detached(priority: .userInitiated) {
-                    Memory.cacheLimit = 4 * 1024 * 1024 * 1024
-
-                    let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
-                    let target = try scene.targetOutColor()
-                    var parameters = try scene.initialTrainableParameters()
-                    var optimizer = FastGSAdamOptimizer(
-                        learningRates: FastGSAdamLearningRates(
-                            means3D: 5e-5,
-                            dc: 5e-4,
-                            sh: 5e-4,
-                            opacities: 5e-4,
-                            scales: 5e-5,
-                            rotations: 5e-5
-                        )
-                    )
-
-                    for step in 1...totalSteps {
-                        let result = FastGSTrainingStageGraph.valueAndGrad(
-                            scene: scene,
-                            parameters: parameters,
-                            target: target
-                        )
-                        parameters = optimizer.update(
-                            parameters: parameters,
-                            gradients: fastGSMacTrainableGradients(from: result.gradients)
-                        )
-                        fastGSEvalTrainingState(parameters: parameters, optimizer: optimizer)
-                        await MainActor.run {
+                    let result = try FastGSRecordedTrainingPreview.run(
+                        manifestURL: manifestURL,
+                        config: FastGSRecordedTrainingPreviewConfig(totalSteps: totalSteps)
+                    ) { step in
+                        Task { @MainActor in
                             self.trainingStep = step
                             self.status = "Training recorded 512 x 512 frame..."
                         }
                     }
 
-                    let render = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
                     guard let texture = FastGSImageExport.texture(
-                        outColor: render,
-                        width: scene.manifest.width,
-                        height: scene.manifest.height,
+                        rgbaBytes: result.renderRGBA,
+                        width: result.width,
+                        height: result.height,
                         device: device
                     ) else {
                         throw RenderPreviewError.textureCreationFailed
                     }
                     let image = try FastGSImageExport.cgImage(
-                        outColor: render,
-                        width: scene.manifest.width,
-                        height: scene.manifest.height
+                        rgbaBytes: result.renderRGBA,
+                        width: result.width,
+                        height: result.height
                     )
                     let targetImage = try FastGSImageExport.cgImage(
-                        outColor: target,
-                        width: scene.manifest.width,
-                        height: scene.manifest.height
+                        rgbaBytes: result.targetRGBA,
+                        width: result.width,
+                        height: result.height
                     )
-                    return (texture, image, targetImage, scene.manifest.width, scene.manifest.height, scene.manifest.pointCount)
+                    return (texture, image, targetImage, result.width, result.height, result.pointCount)
                 }.value
 
                 texture = trained.0
@@ -411,27 +386,6 @@ private struct RenderPreviewView: View {
                     .padding(12)
             }
         }
-    }
-}
-
-private func fastGSMacTrainableGradients(from gradients: [MLXArray]) -> FastGSTrainableGradients {
-    precondition(gradients.count == 6, "macOS recorded training expects six trainable gradients")
-    return FastGSTrainableGradients(
-        means3D: gradients[0],
-        dc: gradients[1],
-        sh: gradients[2],
-        opacities: gradients[3],
-        scales: gradients[4],
-        rotations: gradients[5]
-    )
-}
-
-private func fastGSEvalTrainingState(parameters: FastGSTrainableParameters, optimizer: FastGSAdamOptimizer) {
-    for array in parameters.arrays {
-        array.eval()
-    }
-    for array in optimizer.stateArrays() {
-        array.eval()
     }
 }
 

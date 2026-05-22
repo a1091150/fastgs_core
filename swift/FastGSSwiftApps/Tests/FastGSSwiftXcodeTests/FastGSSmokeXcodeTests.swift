@@ -7,7 +7,7 @@ import XCTest
 final class FastGSSmokeXcodeTests: XCTestCase {
     private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
     private let recordedLargeManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_manifest.json")
-    private let recordedFullManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full/recorded_manifest.json")
+    private let recordedFullManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full_512/recorded_manifest.json")
     private let rasterizeBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_rasterize_backward_ref.json")
     private let preprocessBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_preprocess_backward_ref.json")
 

@@ -456,11 +456,13 @@ capture yet.
       loop and verifies losses stay finite while the final loss does not exceed
       the first loss by more than 1%.
     - `make test-swift-recorded-training-preview` runs 200 steps against the
-      recorded target tensor and writes target/render side-by-side PNGs every
-      20 steps to `/private/tmp/fastgs_swift_training_preview`.
-    - The preview path now regenerates a full-point recorded reference under
-      `/private/tmp/fastgs_recorded_reference_full` instead of using the
-      4096/16384-point reduced fixtures.
+      full-point 512x512 recorded target tensor and writes target/render
+      side-by-side PNGs every 20 steps to
+      `/private/tmp/fastgs_swift_training_preview`.
+    - The preview path now regenerates a full-point 512x512 recorded reference
+      under `/private/tmp/fastgs_recorded_reference_full_512` instead of using
+      the 4096/16384-point reduced fixtures or the earlier small full-point
+      preview.
     - The preview path sets MLX Swift `Memory.cacheLimit` to 4 GB before the
       training loop, matching the intended `mlx_set_cache_limit` behavior.
     - The preview path writes `debug_summary.json` and `debug_summary.csv`

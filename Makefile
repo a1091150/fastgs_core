@@ -130,7 +130,7 @@ test-swift-recorded-training-loop: swift-recorded-reference swift-recorded-train
 swift-recorded-training-preview-xcode:
 	cd swift/FastGSSwiftApps && xcodebuild test -quiet -project FastGSSwift.xcodeproj -scheme FastGSSwiftMac -destination 'platform=macOS' -derivedDataPath $(SWIFT_XCODE_DERIVED_DATA) -test-timeouts-enabled NO -only-testing:FastGSSwiftXcodeTests/FastGSSmokeXcodeTests/testRecordedTrainingPreview200StepsWritesSideBySidePNGsUnderXcode
 
-test-swift-recorded-training-preview: swift-recorded-full-reference swift-recorded-training-preview-xcode
+test-swift-recorded-training-preview: swift-recorded-full-512-reference swift-recorded-training-preview-xcode
 
 train-scanner-fixed:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14'
