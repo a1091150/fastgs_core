@@ -768,23 +768,9 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertTrue(result.gradients.contains { hasFiniteNonZeroValues($0) })
 
         var optimizer = FastGSAdamOptimizer(
-            learningRates: FastGSAdamLearningRates(
-                means3D: 1e-4,
-                dc: 1e-3,
-                sh: 1e-3,
-                opacities: 1e-3,
-                scales: 1e-4,
-                rotations: 1e-4
-            )
+            learningRates: recordedTrainingSmokeLearningRates()
         )
-        let gradientStruct = FastGSTrainableGradients(
-            means3D: result.gradients[0],
-            dc: result.gradients[1],
-            sh: result.gradients[2],
-            opacities: result.gradients[3],
-            scales: result.gradients[4],
-            rotations: result.gradients[5]
-        )
+        let gradientStruct = trainableGradients(from: result.gradients)
         let updated = optimizer.update(parameters: parameters, gradients: gradientStruct)
 
         XCTAssertEqual(optimizer.state?.step, 1)
@@ -796,6 +782,53 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 || maxAbsDiff(updated.opacities, parameters.opacities) > 0
                 || maxAbsDiff(updated.scales, parameters.scales) > 0
                 || maxAbsDiff(updated.rotations, parameters.rotations) > 0
+        )
+    }
+
+    func testRecordedSmallTrainingLoopReducesSyntheticLossUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        var parameters = try scene.initialTrainableParameters()
+        let initialParameters = parameters
+        let target = 0.9 * FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+        var optimizer = FastGSAdamOptimizer(
+            learningRates: recordedTrainingSmokeLearningRates()
+        )
+        var losses = [Float]()
+
+        for step in 0..<3 {
+            let result = FastGSTrainingStageGraph.valueAndGrad(
+                scene: scene,
+                parameters: parameters,
+                target: target
+            )
+            let loss = result.loss.item(Float.self)
+            XCTAssertTrue(loss.isFinite)
+            XCTAssertGreaterThan(loss, 0)
+            XCTAssertEqual(result.gradients.count, 6)
+            XCTAssertTrue(result.gradients.contains { hasFiniteNonZeroValues($0) })
+
+            losses.append(loss)
+            parameters = optimizer.update(
+                parameters: parameters,
+                gradients: trainableGradients(from: result.gradients)
+            )
+            XCTAssertEqual(optimizer.state?.step, step + 1)
+            XCTAssertFalse(optimizer.stateArrays().isEmpty)
+        }
+
+        XCTAssertEqual(losses.count, 3)
+        XCTAssertLessThanOrEqual(losses.last ?? .infinity, (losses.first ?? 0) * 1.01)
+        XCTAssertTrue(
+            maxAbsDiff(parameters.means3D, initialParameters.means3D) > 0
+                || maxAbsDiff(parameters.dc, initialParameters.dc) > 0
+                || maxAbsDiff(parameters.sh, initialParameters.sh) > 0
+                || maxAbsDiff(parameters.opacities, initialParameters.opacities) > 0
+                || maxAbsDiff(parameters.scales, initialParameters.scales) > 0
+                || maxAbsDiff(parameters.rotations, initialParameters.rotations) > 0
         )
     }
 }
@@ -1132,6 +1165,29 @@ private func maxAbsDiff(_ lhs: MLXArray, _ rhs: MLXArray) -> Float {
     let left = lhs.asArray(Float.self)
     let right = rhs.asArray(Float.self)
     return zip(left, right).map { abs($0 - $1) }.max() ?? 0
+}
+
+private func recordedTrainingSmokeLearningRates() -> FastGSAdamLearningRates {
+    FastGSAdamLearningRates(
+        means3D: 1e-4,
+        dc: 1e-3,
+        sh: 1e-3,
+        opacities: 1e-3,
+        scales: 1e-4,
+        rotations: 1e-4
+    )
+}
+
+private func trainableGradients(from gradients: [MLXArray]) -> FastGSTrainableGradients {
+    precondition(gradients.count == 6, "recorded training smoke expects six trainable gradients")
+    return FastGSTrainableGradients(
+        means3D: gradients[0],
+        dc: gradients[1],
+        sh: gradients[2],
+        opacities: gradients[3],
+        scales: gradients[4],
+        rotations: gradients[5]
+    )
 }
 
 private func recordedStageSummary(_ stages: FastGSRecordedForwardStages, sampleIDs: [Int]) -> [String: Any] {

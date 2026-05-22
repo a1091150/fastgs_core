@@ -452,6 +452,9 @@ capture yet.
     - `make test-swift-recorded-training-smoke` regenerates the small recorded
       reference, runs Xcode, computes a nonzero image loss, calls
       `valueAndGrad`, and verifies Adam updates at least one trainable array.
+    - `make test-swift-recorded-training-loop` runs a 3-step synthetic target
+      loop and verifies losses stay finite while the final loss does not exceed
+      the first loss by more than 1%.
 
 ## Test Plan
 
