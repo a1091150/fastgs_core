@@ -117,6 +117,28 @@ public struct FastGSPreprocessOutput {
     public var tilesTouched: MLXArray
     public var clamped: MLXArray
     public var viewspacePoints: MLXArray
+
+    public init(
+        radii: MLXArray,
+        xy: MLXArray,
+        depths: MLXArray,
+        cov3D: MLXArray,
+        rgb: MLXArray,
+        conicOpacity: MLXArray,
+        tilesTouched: MLXArray,
+        clamped: MLXArray,
+        viewspacePoints: MLXArray
+    ) {
+        self.radii = radii
+        self.xy = xy
+        self.depths = depths
+        self.cov3D = cov3D
+        self.rgb = rgb
+        self.conicOpacity = conicOpacity
+        self.tilesTouched = tilesTouched
+        self.clamped = clamped
+        self.viewspacePoints = viewspacePoints
+    }
 }
 
 public enum FastGSPreprocess {

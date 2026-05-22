@@ -450,6 +450,59 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         assertGradientSummary(output.conicOpacity, reference.gradients.conicOpacity, accuracy: 1e-2)
         assertGradientSummary(output.viewspacePoints, reference.gradients.viewspacePoints, accuracy: 1e-2)
     }
+
+    func testPreprocessBackwardKernelRunsUnderXcode() {
+        let input = FastGSPreprocessParityFixture.rasterizeLargeE2EInput()
+        let preprocess = preprocessBackwardSmokeForwardOutput(count: input.means3D.shape[0])
+        let output = FastGSPreprocessBackward.forward(
+            input: input,
+            cotangents: preprocessBackwardSmokeCotangents(like: preprocess),
+            forwardOutput: preprocess,
+            params: FastGSPreprocessParityFixture.rasterizeLargeE2EPreprocessParams
+        )
+
+        assertPreprocessBackwardSkeleton(input: input, output: output)
+    }
+}
+
+private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {
+    FastGSPreprocessOutput(
+        radii: MLXArray.ones([count], dtype: .int32),
+        xy: MLXArray.zeros([count, 2], dtype: .float32),
+        depths: MLXArray.zeros([count], dtype: .float32),
+        cov3D: MLXArray.zeros([count, 6], dtype: .float32),
+        rgb: MLXArray.zeros([count, 3], dtype: .float32),
+        conicOpacity: MLXArray.zeros([count, 4], dtype: .float32),
+        tilesTouched: MLXArray.zeros([count], dtype: .uint32),
+        clamped: MLXArray.zeros([count, 3], dtype: .bool),
+        viewspacePoints: MLXArray.zeros([count, 4], dtype: .float32)
+    )
+}
+
+private func preprocessBackwardSmokeCotangents(like output: FastGSPreprocessOutput) -> FastGSPreprocessCotangents {
+    let cotangents = FastGSPreprocessCotangents(
+        radii: MLXArray.zeros(output.radii.shape, dtype: output.radii.dtype),
+        xy: MLXArray.ones(output.xy.shape, dtype: output.xy.dtype),
+        depths: MLXArray.ones(output.depths.shape, dtype: output.depths.dtype),
+        cov3D: MLXArray.ones(output.cov3D.shape, dtype: output.cov3D.dtype),
+        rgb: MLXArray.ones(output.rgb.shape, dtype: output.rgb.dtype),
+        conicOpacity: MLXArray.ones(output.conicOpacity.shape, dtype: output.conicOpacity.dtype),
+        tilesTouched: MLXArray.zeros(output.tilesTouched.shape, dtype: output.tilesTouched.dtype),
+        clamped: MLXArray.zeros(output.clamped.shape, dtype: output.clamped.dtype),
+        viewspacePoints: MLXArray.ones(output.viewspacePoints.shape, dtype: output.viewspacePoints.dtype)
+    )
+    eval([
+        cotangents.radii,
+        cotangents.xy,
+        cotangents.depths,
+        cotangents.cov3D,
+        cotangents.rgb,
+        cotangents.conicOpacity,
+        cotangents.tilesTouched,
+        cotangents.clamped,
+        cotangents.viewspacePoints,
+    ])
+    return cotangents
 }
 
 private struct RasterizeBackwardReference: Decodable {
@@ -519,6 +572,28 @@ private func assertRasterizeBackwardSkeleton(
     XCTAssertTrue(output.colors.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
     XCTAssertTrue(output.conicOpacity.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
     XCTAssertTrue(output.viewspacePoints.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
+}
+
+private func assertPreprocessBackwardSkeleton(
+    input: FastGSPreprocessInput,
+    output: FastGSPreprocessBackwardOutput,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    XCTAssertEqual(output.means3D.shape, input.means3D.shape, file: file, line: line)
+    XCTAssertEqual(output.dc.shape, input.dc.shape, file: file, line: line)
+    XCTAssertEqual(output.sh.shape, input.sh.shape, file: file, line: line)
+    XCTAssertEqual(output.colorsPrecomputed.shape, input.colorsPrecomputed.shape, file: file, line: line)
+    XCTAssertEqual(output.opacities.shape, input.opacities.shape, file: file, line: line)
+    XCTAssertEqual(output.scales.shape, input.scales.shape, file: file, line: line)
+    XCTAssertEqual(output.rotations.shape, input.rotations.shape, file: file, line: line)
+    XCTAssertEqual(output.cov3DPrecomputed.shape, input.cov3DPrecomputed.shape, file: file, line: line)
+    XCTAssertEqual(output.viewMatrix.shape, input.viewMatrix.shape, file: file, line: line)
+    XCTAssertEqual(output.projectionMatrix.shape, input.projectionMatrix.shape, file: file, line: line)
+    XCTAssertEqual(output.cameraPosition.shape, input.cameraPosition.shape, file: file, line: line)
+    XCTAssertEqual(output.viewspacePoints.shape, input.viewspacePoints.shape, file: file, line: line)
+    XCTAssertTrue(output.means3D.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
+    XCTAssertTrue(output.opacities.asArray(Float.self).contains { abs($0) > 1e-7 }, file: file, line: line)
 }
 
 private func assertBinning(

@@ -307,17 +307,40 @@ capture yet.
 - Port backward kernels behind explicit Swift APIs first:
   - [x] `FastGSRasterizeBackward.forward(...)` API and MLXFast dispatch skeleton
   - [x] full `fastgs_render_backward_kernel` math port smoke-tested under Xcode
-  - [ ] `FastGSPreprocessBackward.forward(...)`
+  - [x] `FastGSPreprocessBackward.forward(...)` API and MLXFast dispatch skeleton
+    - Current skeleton returns the gradient-critical smoke outputs
+      `dL_dmeans3D`, `dL_dDC`, `dL_dopacities`, and `dL_dviewspacePoints`;
+      the remaining primal gradients are zero-filled on the Swift side.
+    - Xcode dispatch is stable when the MLXFast preprocess backward kernel is
+      kept to 4 outputs. A larger single-kernel shape with 7 outputs repeatedly
+      restarted the Xcode test host, so the full math port should be split into
+      smaller MLXFast kernels instead of trying to emit every primal gradient
+      from one Metal custom kernel.
 - Rasterize backward remaining work:
   - [x] compare `dL_dmeans2d`, `dL_dcolors`, `dL_dconicOpacity`, and
     `dL_dviewspacePoints` against Python/C++ reference
     - current parity checks compare gradient `sum`, `absSum`, `maxAbs`, and
       fixed samples from `fastgs_rasterize_backward_ref.py`
-  - [ ] wire rasterize backward output into preprocess backward once both
-    explicit backward APIs are stable
-- Validate those explicit backward APIs with fixed upstream gradients before
-  wrapping them in autograd.
-- After explicit backward parity is stable, add Swift `CustomFunction` wrappers:
+  - [x] wire rasterize backward output into preprocess backward smoke path
+  - [ ] port full preprocess backward math in split MLXFast stages
+- Before continuing the full preprocess backward Metal math port, add an
+  end-to-end autograd plumbing test. Single backward-kernel tests are useful,
+  but they can miss argument ordering, closure, `CustomFunction`, and
+  `valueAndGrad` integration failures.
+- Add a Swift training smoke path that renders an image, computes a scalar loss,
+  and calls MLX Swift `valueAndGrad` / `buildValueAndGradient` over the
+  trainable Gaussian parameters.
+  - Use the current recorded-scene forward path as the first input fixture.
+  - Use a simple image loss first, preferably MSE or L1 between rendered
+    `outColor` and a target image.
+  - Assert that the rendered image shape is correct, loss is finite, and all
+    returned gradients have the expected shapes.
+  - For the first version, the custom backward may return zero gradients for
+    every trainable parameter. This is intentional: the goal is to prove the
+    full forward -> loss -> backward plumbing before trusting any Metal
+    gradient math.
+- Add Swift `CustomFunction` wrappers before the full preprocess backward math
+  port:
 
   ```swift
   let render = CustomFunction {
@@ -325,17 +348,22 @@ capture yet.
           // call MLXFast.metalKernel-based preprocess/binning/rasterize
       }
       VJP { primals, cotangents in
-          // call MLXFast.metalKernel-based rasterize/preprocess backward
+          // first return zero gradients with the same shapes as primals
+          // later call MLXFast.metalKernel-based rasterize/preprocess backward
       }
   }
   ```
 
 - The `CustomFunction` should define the autograd contract; the math inside
-  `Forward` and `VJP` should still use `MLXFast.metalKernel` rather than a
-  separate C++ primitive runtime.
+  `Forward` should still use the existing MLXFast render path. The first `VJP`
+  implementation can be shape-correct zero gradients; later versions should
+  replace those zeros with rasterize backward and split preprocess backward
+  MLXFast kernels.
 - Keep forward intermediates available as `MLXArray` outputs so VJP can consume
   them.
-- Validate gradients against the existing implementation before attempting training from Swift.
+- After zero-VJP autograd plumbing is stable, replace zero gradients stage by
+  stage and validate gradients against the existing implementation before
+  attempting real training from Swift.
 
 ### Optimizer Plan
 
