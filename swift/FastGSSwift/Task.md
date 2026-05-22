@@ -280,12 +280,20 @@ Planned task order:
     colors normalized to `0...1`.
   - Added unit tests for a synthetic ASCII PLY and the fixed scanner
     `points.ply` sample values.
-- [ ] Add a Swift dataset loader that can read the fixed test directory and
+- [x] Add a Swift dataset loader that can read the fixed test directory and
   produce the same first-frame training inputs currently represented by the
   generated manifest.
-- [ ] Add unit/Xcode tests comparing the native Swift loader output against the
+  - Implemented `FastGSScannerDatasetLoader` for `points.ply`,
+    `frame_*.jpg`, and `frame_*.json`.
+  - The loader mirrors the Python scanner path's axis transform,
+    camera-position normalization, 512x512 camera projection, and target image
+    conversion to CHW float RGB.
+- [x] Add unit tests comparing the native Swift loader output against the
   existing Python-generated manifest for point count, camera parameters, image
-  size, target image samples, and point/color samples.
+  size, and point/color samples.
+  - Target image loading is currently validated for shape and normalized
+    `0...1` bounds. Exact target pixel parity should be added when the image
+    resize path is locked to match Pillow bilinear behavior.
 - [ ] Update the macOS app to choose a dataset directory with an
   `NSOpenPanel`, while keeping the fixed directory as the test/default path.
 - [ ] Retire the Python-generated manifest dependency from the main macOS
