@@ -268,13 +268,18 @@ Planned task order:
   - Frame JSON uses `intrinsics` length 9 and `cameraPoseARFrame` length 16.
   - Python resizes targets to the requested training size, currently 512x512
     for the Swift app path.
-- [ ] Decide whether to use a SwiftPM PLY package or write a minimal in-repo
+- [x] Decide whether to use a SwiftPM PLY package or write a minimal in-repo
   PLY reader.
-  - Prefer an in-repo minimal reader because the current dataset uses a narrow
+  - Use an in-repo minimal reader because the current dataset uses a narrow
     ASCII PLY subset.
   - Required first support is ASCII `vertex` PLY with `x/y/z` float and
     optional `red/green/blue` uchar properties. Ignore normals/curvature for
     the first Swift loader.
+  - Implemented `FastGSPLYReader` and `FastGSPointCloud` in the Swift package.
+    The first version reads positions as flat float triples and optional RGB
+    colors normalized to `0...1`.
+  - Added unit tests for a synthetic ASCII PLY and the fixed scanner
+    `points.ply` sample values.
 - [ ] Add a Swift dataset loader that can read the fixed test directory and
   produce the same first-frame training inputs currently represented by the
   generated manifest.
