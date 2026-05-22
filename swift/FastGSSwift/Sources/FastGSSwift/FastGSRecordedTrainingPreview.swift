@@ -102,6 +102,7 @@ public struct FastGSRecordedTrainingPreviewResult {
     public var width: Int
     public var height: Int
     public var pointCount: Int
+    public var parameters: FastGSTrainableParameters?
 
     public init(
         step: Int,
@@ -109,7 +110,8 @@ public struct FastGSRecordedTrainingPreviewResult {
         renderRGBA: [UInt8],
         width: Int,
         height: Int,
-        pointCount: Int
+        pointCount: Int,
+        parameters: FastGSTrainableParameters? = nil
     ) {
         self.step = step
         self.targetRGBA = targetRGBA
@@ -117,6 +119,7 @@ public struct FastGSRecordedTrainingPreviewResult {
         self.width = width
         self.height = height
         self.pointCount = pointCount
+        self.parameters = parameters
     }
 }
 
@@ -125,24 +128,26 @@ public enum FastGSRecordedTrainingPreview {
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         cameraIndex: Int,
         progress: ((Int) -> Void)? = nil,
+        previewScheduler: FastGSRenderPreviewScheduler? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
         guard let manifestURL = config.referenceSet.manifestURL(at: cameraIndex) else {
             throw FastGSRecordedTrainingPreviewError.noRecordedReference(config.referenceSet.referenceDirectory)
         }
-        return try run(manifestURL: manifestURL, config: config, progress: progress, preview: preview)
+        return try run(manifestURL: manifestURL, config: config, progress: progress, previewScheduler: previewScheduler, preview: preview)
     }
 
     public static func run(
         manifestURL: URL,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil,
+        previewScheduler: FastGSRenderPreviewScheduler? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
         Memory.cacheLimit = config.cacheLimitBytes
 
         let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
-        return try run(scene: scene, config: config, progress: progress, preview: preview)
+        return try run(scene: scene, config: config, progress: progress, previewScheduler: previewScheduler, preview: preview)
     }
 
     public static func run(
@@ -153,6 +158,7 @@ public enum FastGSRecordedTrainingPreview {
         maxFrames: Int = 1,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil,
+        previewScheduler: FastGSRenderPreviewScheduler? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
         Memory.cacheLimit = config.cacheLimitBytes
@@ -168,13 +174,14 @@ public enum FastGSRecordedTrainingPreview {
             )
         )
         let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
-        return try run(scene: scene, config: config, progress: progress, preview: preview)
+        return try run(scene: scene, config: config, progress: progress, previewScheduler: previewScheduler, preview: preview)
     }
 
     public static func run(
         scene: FastGSRecordedForwardScene,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil,
+        previewScheduler: FastGSRenderPreviewScheduler? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
         Memory.cacheLimit = config.cacheLimitBytes
@@ -201,7 +208,7 @@ public enum FastGSRecordedTrainingPreview {
             eval(parameters: parameters, optimizer: optimizer)
             progress?(step)
 
-            if shouldWritePreview(step: step, config: config) {
+            if shouldWritePreview(step: step, config: config) || previewScheduler?.consumeRenderRequest() == true {
                 let render = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
                 try preview?(
                     FastGSRecordedTrainingPreviewResult(
@@ -231,7 +238,8 @@ public enum FastGSRecordedTrainingPreview {
             ),
             width: scene.manifest.width,
             height: scene.manifest.height,
-            pointCount: scene.manifest.pointCount
+            pointCount: scene.manifest.pointCount,
+            parameters: parameters
         )
     }
 

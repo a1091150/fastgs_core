@@ -77,6 +77,108 @@ final class FastGSScannerDatasetLoaderTests: XCTestCase {
         assertClose(camera.viewmatrix, manifest.viewmatrix.map(Float.init), accuracy: 1e-5)
         assertClose(camera.projmatrix, manifest.projmatrix.map(Float.init), accuracy: 1e-5)
     }
+
+    func testFixedScannerCameraSwitchPerformanceReport() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_PERF_REPORT"] == "1" else {
+            throw XCTSkip("Set FASTGS_RUN_PERF_REPORT=1 to print scanner switch timing diagnostics.")
+        }
+
+        let datasetURL = URL(fileURLWithPath: "/Users/yangdunfu/Downloads/2026_05_04_16_51_29", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: datasetURL.appendingPathComponent("points.ply").path) else {
+            throw XCTSkip("Fixed scanner dataset is not available at \(datasetURL.path).")
+        }
+
+        var report = FastGSScannerTimingReport()
+
+        let contents = try report.measure("directory scan") {
+            try FileManager.default.contentsOfDirectory(at: datasetURL, includingPropertiesForKeys: nil)
+        }
+        let framePairCount = Set(contents.compactMap(scannerFrameIndex)).count
+
+        let pointCloud = try report.measure("points.ply read") {
+            try FastGSPLYReader.readPointCloud(url: datasetURL.appendingPathComponent("points.ply"))
+        }
+
+        let dataset = try report.measure("loader maxFrames=1") {
+            try FastGSScannerDatasetLoader.load(
+                directory: datasetURL,
+                options: FastGSScannerDatasetOptions(
+                    width: 512,
+                    height: 512,
+                    maxFrames: 1,
+                    startIndex: 0,
+                    normalizeWithAllFramePairs: true
+                )
+            )
+        }
+        let cache = try report.measure("cache load once") {
+            try FastGSScannerDatasetLoader.loadCache(
+                directory: datasetURL,
+                options: FastGSScannerDatasetOptions(width: 512, height: 512, normalizeWithAllFramePairs: true)
+            )
+        }
+        _ = try report.measure("cached frame load") {
+            try FastGSScannerDatasetLoader.loadDataset(
+                cache: cache,
+                frameIndex: cache.frameDescriptors[min(1, cache.frameDescriptors.count - 1)].index,
+                width: 512,
+                height: 512
+            )
+        }
+
+        let scene = report.measure("scene init") {
+            FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+        }
+
+        if ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" {
+            let parameters = try report.measure("initial parameters") {
+                try scene.initialTrainableParameters()
+            }
+            _ = try report.measure("swift render") {
+                try scene.render(parameters: parameters).outColor.eval()
+            }
+        }
+
+        print(
+            """
+
+            FastGS scanner switch timing report
+            dataset: \(datasetURL.path)
+            directory entries: \(contents.count)
+            frame-like entries: \(framePairCount)
+            point count: \(pointCloud.count)
+            loaded frames: \(dataset.frames.count)
+            \(report.description)
+            """
+        )
+    }
+}
+
+private struct FastGSScannerTimingReport {
+    private var rows = [(String, TimeInterval)]()
+
+    mutating func measure<T>(_ name: String, _ work: () throws -> T) rethrows -> T {
+        let start = Date()
+        let value = try work()
+        rows.append((name, Date().timeIntervalSince(start)))
+        return value
+    }
+
+    var description: String {
+        rows
+            .map { name, seconds in
+                "\(name.padding(toLength: 22, withPad: " ", startingAt: 0)) \(String(format: "%.3f", seconds)) s"
+            }
+            .joined(separator: "\n")
+    }
+}
+
+private func scannerFrameIndex(_ url: URL) -> Int? {
+    let stem = url.deletingPathExtension().lastPathComponent
+    guard stem.hasPrefix("frame_") else {
+        return nil
+    }
+    return Int(stem.dropFirst("frame_".count))
 }
 
 private func assertClose(

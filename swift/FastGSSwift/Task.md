@@ -638,17 +638,53 @@ or recomputing them from unrelated values.
     - [x] Add an explicit `Load` button. The app no longer scans or previews the
       dataset implicitly after settings changes; camera navigation and training
       stay disabled until Load succeeds.
-    - [x] Make camera switching use a target-only JPEG preview path instead of
-      `FastGSScannerDatasetLoader.load(...)`, so switching frames does not
-      re-read `points.ply`.
     - [x] Run one initial forward render during Load so the right-hand Swift
       Render pane shows the current untrained Gaussian render before pressing
       Train.
+    - [x] Make camera switching run a Swift render for the newly selected
+      scanner frame, so the left target and right render panes move together.
+      `Load` now builds a `FastGSScannerDatasetCache` with the transformed
+      point cloud and frame descriptors, so switching cameras no longer
+      re-reads `points.ply`; it only loads the selected frame camera/target and
+      runs the MLX forward path.
+    - [x] Preserve trained Gaussian parameters after the Mac App training run.
+      Camera switching now renders the selected camera with the trained
+      parameters when available, instead of falling back to the initial
+      point-cloud colors/scales/opacities.
+    - [x] Add a single-entry MLX runtime gate in the macOS app. MLX C++ and
+      MLX Swift are treated as single-thread-only for this project, so Load,
+      camera-switch render, and training are all serialized through one lock.
+    - [x] Add `FastGSRenderPreviewScheduler` for training-time preview render
+      requests. The scheduler records a pending render request, enforces a
+      maximum preview frequency such as 60 FPS, and lets the training loop
+      consume the request only after finishing the current optimization step.
+      This keeps the pattern as:
+
+      ```text
+      train step N
+        -> optional scheduled render-to-preview
+        -> train step N+1
+      ```
+
+      rather than rendering from another thread while MLX work is active.
     - explicit Train button
     - Current training remains single-view: `maxFrames` controls how many
       frames the native loader reads from the selected start frame, but the
       fixed-point training scene still uses the first loaded frame until
       multi-view training is implemented.
+    - Next UI wiring: if camera switching or a future preview-refresh button is
+      allowed while training is active, it should call
+      `FastGSRenderPreviewScheduler.requestRender()` and let the training loop
+      perform the render between steps instead of launching a concurrent MLX
+      render task.
+    - [x] Add a manual performance report test for camera switching:
+      `FASTGS_RUN_PERF_REPORT=1 swift test --filter FastGSScannerDatasetLoaderTests/testFixedScannerCameraSwitchPerformanceReport`.
+      On the fixed dataset, full loader time was about 3.8s because
+      `points.ply` read/transform dominates; cached frame load measured about
+      0.04s before the MLX render.
+    - Next performance task: if switching still feels slow, measure the
+      Xcode/Metal render segment with `FASTGS_RUN_METAL_TESTS=1` and then cache
+      decoded/resized target images or selected-frame camera metadata.
   - [ ] After fixed-point training is stable, add FastGS-style after-train
     features such as densify and prune as explicit later stages.
 

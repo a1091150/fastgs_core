@@ -41,6 +41,9 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var isDatasetLoaded = false
     @Published var isLoadingDataset = false
     private var frameIndices = [Int]()
+    private let previewScheduler = FastGSRenderPreviewScheduler(maximumFramesPerSecond: 60)
+    private var scannerCache: FastGSScannerDatasetCache?
+    private var trainedParameters: FastGSTrainableParameters?
     let device = MTLCreateSystemDefaultDevice()
 
     init() {
@@ -97,53 +100,79 @@ private final class RenderPreviewModel: ObservableObject {
                 let trainingHeight = trainingHeight
                 let maxFrames = maxFrames
                 let selectedFrameIndex = selectedFrameIndex
+                let previewScheduler = previewScheduler
+                let scannerCache = scannerCache
 
                 let trained = try await Task.detached(priority: .userInitiated) {
-                    let result = try FastGSRecordedTrainingPreview.run(
-                        scannerDatasetDirectory: datasetDirectory,
-                        cameraIndex: selectedFrameIndex,
-                        width: trainingWidth,
-                        height: trainingHeight,
-                        maxFrames: maxFrames,
-                        config: config
-                    ) { step in
-                        Task { @MainActor in
-                            self.trainingStep = step
-                            self.status = "Training \(self.cameraLabel)..."
+                    try FastGSMacMLXRuntime.run {
+                        let progress: (Int) -> Void = { step in
+                            Task { @MainActor in
+                                self.trainingStep = step
+                                self.status = "Training \(self.cameraLabel)..."
+                            }
                         }
-                    } preview: { preview in
-                        try writeSideBySidePNG(
-                            targetRGBA: preview.targetRGBA,
-                            renderRGBA: preview.renderRGBA,
-                            width: preview.width,
-                            height: preview.height,
-                            to: trainingOutputURL(
-                                outputDirectory: outputDirectory,
-                                cameraIndex: selectedFrameIndex,
-                                step: preview.step
+                        let preview: (FastGSRecordedTrainingPreviewResult) throws -> Void = { preview in
+                            try writeSideBySidePNG(
+                                targetRGBA: preview.targetRGBA,
+                                renderRGBA: preview.renderRGBA,
+                                width: preview.width,
+                                height: preview.height,
+                                to: trainingOutputURL(
+                                    outputDirectory: outputDirectory,
+                                    cameraIndex: selectedFrameIndex,
+                                    step: preview.step
+                                )
                             )
-                        )
-                    }
+                        }
+                        let result: FastGSRecordedTrainingPreviewResult
+                        if let scannerCache {
+                            let dataset = try FastGSScannerDatasetLoader.loadDataset(
+                                cache: scannerCache,
+                                frameIndex: selectedFrameIndex,
+                                width: trainingWidth,
+                                height: trainingHeight
+                            )
+                            result = try FastGSRecordedTrainingPreview.run(
+                                scene: FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0),
+                                config: config,
+                                progress: progress,
+                                previewScheduler: previewScheduler,
+                                preview: preview
+                            )
+                        } else {
+                            result = try FastGSRecordedTrainingPreview.run(
+                                scannerDatasetDirectory: datasetDirectory,
+                                cameraIndex: selectedFrameIndex,
+                                width: trainingWidth,
+                                height: trainingHeight,
+                                maxFrames: maxFrames,
+                                config: config,
+                                progress: progress,
+                                previewScheduler: previewScheduler,
+                                preview: preview
+                            )
+                        }
 
-                    guard let texture = FastGSImageExport.texture(
-                        rgbaBytes: result.renderRGBA,
-                        width: result.width,
-                        height: result.height,
-                        device: device
-                    ) else {
-                        throw RenderPreviewError.textureCreationFailed
+                        guard let texture = FastGSImageExport.texture(
+                            rgbaBytes: result.renderRGBA,
+                            width: result.width,
+                            height: result.height,
+                            device: device
+                        ) else {
+                            throw RenderPreviewError.textureCreationFailed
+                        }
+                        let image = try FastGSImageExport.cgImage(
+                            rgbaBytes: result.renderRGBA,
+                            width: result.width,
+                            height: result.height
+                        )
+                        let targetImage = try FastGSImageExport.cgImage(
+                            rgbaBytes: result.targetRGBA,
+                            width: result.width,
+                            height: result.height
+                        )
+                        return (texture, image, targetImage, result.width, result.height, result.pointCount, result.parameters)
                     }
-                    let image = try FastGSImageExport.cgImage(
-                        rgbaBytes: result.renderRGBA,
-                        width: result.width,
-                        height: result.height
-                    )
-                    let targetImage = try FastGSImageExport.cgImage(
-                        rgbaBytes: result.targetRGBA,
-                        width: result.width,
-                        height: result.height
-                    )
-                    return (texture, image, targetImage, result.width, result.height, result.pointCount)
                 }.value
 
                 texture = trained.0
@@ -152,6 +181,7 @@ private final class RenderPreviewModel: ObservableObject {
                 renderSize = "\(trained.3) x \(trained.4)"
                 previewAspectRatio = Double(trained.3) / Double(trained.4)
                 previewMode = .recordedSideBySide
+                trainedParameters = trained.6
                 status = "Training completed, wrote previews to \(outputDirectory.path)"
             } catch {
                 status = "Training failed: \(error)"
@@ -227,6 +257,7 @@ private final class RenderPreviewModel: ObservableObject {
         maxFrames = max(1, maxFrames)
         trainingSteps = max(1, trainingSteps)
         refreshTrainingConfig()
+        trainedParameters = nil
         totalTrainingSteps = trainingConfig.totalSteps
         renderSize = "\(trainingWidth) x \(trainingHeight)"
         if isDatasetLoaded {
@@ -243,6 +274,7 @@ private final class RenderPreviewModel: ObservableObject {
         }
 
         resetLoadedDataset(clearStatus: false)
+        trainedParameters = nil
         isLoadingDataset = true
         datasetLabel = datasetDirectory.lastPathComponent
         status = "Loading scanner frames and initial render..."
@@ -254,30 +286,39 @@ private final class RenderPreviewModel: ObservableObject {
         Task {
             do {
                 let loaded = try await Task.detached(priority: .userInitiated) {
-                    let indices = scannerFramePairIndices(directory: datasetDirectory)
-                    guard !indices.isEmpty else {
-                        throw RenderPreviewError.noFramePairs
+                    try FastGSMacMLXRuntime.run {
+                        let cache = try FastGSScannerDatasetLoader.loadCache(
+                            directory: datasetDirectory,
+                            options: FastGSScannerDatasetOptions(
+                                width: width,
+                                height: height,
+                                maxFrames: maxFrames,
+                                normalizeWithAllFramePairs: true
+                            )
+                        )
+                        let indices = cache.frameDescriptors.map(\.index)
+                        guard !indices.isEmpty else {
+                            throw RenderPreviewError.noFramePairs
+                        }
+                        let firstIndex = indices[0]
+                        let preview = try initialRenderPreview(
+                            cache: cache,
+                            frameIndex: firstIndex,
+                            width: width,
+                            height: height,
+                            maxFrames: maxFrames
+                        )
+                        return (cache, indices, preview)
                     }
-                    guard FileManager.default.fileExists(atPath: datasetDirectory.appendingPathComponent("points.ply").path) else {
-                        throw RenderPreviewError.missingPointCloud
-                    }
-                    let firstIndex = indices[0]
-                    let preview = try initialRenderPreview(
-                        directory: datasetDirectory,
-                        frameIndex: firstIndex,
-                        width: width,
-                        height: height,
-                        maxFrames: maxFrames
-                    )
-                    return (indices, preview)
                 }.value
 
-                frameIndices = loaded.0
-                cameraCount = loaded.0.count
+                scannerCache = loaded.0
+                frameIndices = loaded.1
+                cameraCount = loaded.1.count
                 cameraIndex = 0
-                targetImage = loaded.1.target
+                targetImage = loaded.2.target
                 texture = nil
-                fallbackImage = loaded.1.render
+                fallbackImage = loaded.2.render
                 renderSize = "\(width) x \(height)"
                 previewAspectRatio = Double(width) / Double(height)
                 previewMode = .recordedSideBySide
@@ -314,6 +355,8 @@ private final class RenderPreviewModel: ObservableObject {
         targetImage = nil
         texture = nil
         fallbackImage = nil
+        scannerCache = nil
+        trainedParameters = nil
         previewMode = .single
         if clearStatus {
             status = "Press Load to read scanner frames"
@@ -329,30 +372,40 @@ private final class RenderPreviewModel: ObservableObject {
             return
         }
         let selectedFrameIndex = frameIndices.indices.contains(cameraIndex) ? frameIndices[cameraIndex] : cameraIndex
-        let datasetDirectory = datasetDirectory
+        guard let scannerCache else {
+            status = "Press Load to read scanner frames"
+            return
+        }
         let width = max(16, trainingWidth)
         let height = max(16, trainingHeight)
+        let maxFrames = max(1, maxFrames)
+        let trainedParameters = trainedParameters
+        status = "Rendering \(cameraLabel)..."
 
         Task {
             do {
-                let image = try await Task.detached(priority: .userInitiated) {
-                    try targetPreviewCGImage(
-                        directory: datasetDirectory,
-                        frameIndex: selectedFrameIndex,
-                        width: width,
-                        height: height
-                    )
+                let preview = try await Task.detached(priority: .userInitiated) {
+                    try FastGSMacMLXRuntime.run {
+                        try initialRenderPreview(
+                            cache: scannerCache,
+                            frameIndex: selectedFrameIndex,
+                            width: width,
+                            height: height,
+                            maxFrames: maxFrames,
+                            parameters: trainedParameters
+                        )
+                    }
                 }.value
 
-                targetImage = image
+                targetImage = preview.target
                 texture = nil
-                fallbackImage = nil
+                fallbackImage = preview.render
                 renderSize = "\(width) x \(height)"
                 previewAspectRatio = Double(width) / Double(height)
                 previewMode = .recordedSideBySide
-                status = "Selected \(cameraLabel)"
+                status = "Rendered \(cameraLabel)"
             } catch {
-                status = "Target preview failed: \(error)"
+                status = "Render preview failed: \(error)"
             }
         }
     }
@@ -368,6 +421,16 @@ private enum RenderPreviewError: Error {
     case missingPointCloud
     case noFramePairs
     case missingFrameImage(Int)
+}
+
+private enum FastGSMacMLXRuntime {
+    private static let lock = NSLock()
+
+    static func run<T>(_ work: () throws -> T) rethrows -> T {
+        try lock.withLock {
+            try work()
+        }
+    }
 }
 
 private func trainingOutputURL(outputDirectory: URL, cameraIndex: Int, step: Int) -> URL {
@@ -449,7 +512,8 @@ private func initialRenderPreview(
     frameIndex: Int,
     width: Int,
     height: Int,
-    maxFrames: Int
+    maxFrames: Int,
+    parameters: FastGSTrainableParameters? = nil
 ) throws -> (target: CGImage, render: CGImage) {
     let dataset = try FastGSScannerDatasetLoader.load(
         directory: directory,
@@ -462,13 +526,63 @@ private func initialRenderPreview(
         )
     )
     let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+    let render = if let parameters, parameters.means3D.shape == [scene.manifest.pointCount, 3] {
+        FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+    } else {
+        try scene.render().outColor
+    }
     let targetRGBA = FastGSImageExport.rgbaBytes(
         outColor: try scene.targetOutColor(),
         width: width,
         height: height
     )
     let renderRGBA = FastGSImageExport.rgbaBytes(
-        outColor: try scene.render().outColor,
+        outColor: render,
+        width: width,
+        height: height
+    )
+    return (
+        target: try FastGSImageExport.cgImage(rgbaBytes: targetRGBA, width: width, height: height),
+        render: try FastGSImageExport.cgImage(rgbaBytes: renderRGBA, width: width, height: height)
+    )
+}
+
+private func initialRenderPreview(
+    cache: FastGSScannerDatasetCache,
+    frameIndex: Int,
+    width: Int,
+    height: Int,
+    maxFrames: Int,
+    parameters: FastGSTrainableParameters? = nil
+) throws -> (target: CGImage, render: CGImage) {
+    let dataset = try FastGSScannerDatasetLoader.loadDataset(
+        cache: cache,
+        frameIndex: frameIndex,
+        width: width,
+        height: height
+    )
+    return try renderPreview(dataset: dataset, width: width, height: height, parameters: parameters)
+}
+
+private func renderPreview(
+    dataset: FastGSScannerDataset,
+    width: Int,
+    height: Int,
+    parameters: FastGSTrainableParameters? = nil
+) throws -> (target: CGImage, render: CGImage) {
+    let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+    let render = if let parameters, parameters.means3D.shape == [scene.manifest.pointCount, 3] {
+        FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+    } else {
+        try scene.render().outColor
+    }
+    let targetRGBA = FastGSImageExport.rgbaBytes(
+        outColor: try scene.targetOutColor(),
+        width: width,
+        height: height
+    )
+    let renderRGBA = FastGSImageExport.rgbaBytes(
+        outColor: render,
         width: width,
         height: height
     )

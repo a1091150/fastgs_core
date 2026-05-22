@@ -102,6 +102,43 @@ public struct FastGSScannerDataset {
     }
 }
 
+public struct FastGSScannerFrameDescriptor {
+    public var index: Int
+    public var imageURL: URL
+    public var jsonURL: URL
+
+    public init(index: Int, imageURL: URL, jsonURL: URL) {
+        self.index = index
+        self.imageURL = imageURL
+        self.jsonURL = jsonURL
+    }
+}
+
+public struct FastGSScannerDatasetCache {
+    public var directory: URL
+    public var pointCloud: FastGSPointCloud
+    public var basePointCount: Int
+    public var frameDescriptors: [FastGSScannerFrameDescriptor]
+    public var normalizationTranslation: [Float]
+    public var normalizationScale: Float
+
+    public init(
+        directory: URL,
+        pointCloud: FastGSPointCloud,
+        basePointCount: Int,
+        frameDescriptors: [FastGSScannerFrameDescriptor],
+        normalizationTranslation: [Float],
+        normalizationScale: Float
+    ) {
+        self.directory = directory
+        self.pointCloud = pointCloud
+        self.basePointCount = basePointCount
+        self.frameDescriptors = frameDescriptors
+        self.normalizationTranslation = normalizationTranslation
+        self.normalizationScale = normalizationScale
+    }
+}
+
 public enum FastGSScannerDatasetLoaderError: Error, Equatable {
     case missingPointCloud(URL)
     case noFramePairs(URL)
@@ -114,6 +151,104 @@ public enum FastGSScannerDatasetLoaderError: Error, Equatable {
 }
 
 public enum FastGSScannerDatasetLoader {
+    public static func loadCache(
+        directory: URL,
+        options: FastGSScannerDatasetOptions = FastGSScannerDatasetOptions()
+    ) throws -> FastGSScannerDatasetCache {
+        let pointsURL = directory.appendingPathComponent("points.ply")
+        guard FileManager.default.fileExists(atPath: pointsURL.path) else {
+            throw FastGSScannerDatasetLoaderError.missingPointCloud(pointsURL)
+        }
+
+        let framePairs = try collectFramePairs(
+            directory: directory,
+            options: FastGSScannerDatasetOptions(
+                width: options.width,
+                height: options.height,
+                maxFrames: 0,
+                frameStep: options.frameStep,
+                startIndex: 0,
+                normalizeWithAllFramePairs: false
+            )
+        )
+        let rawPointCloud = try FastGSPLYReader.readPointCloud(url: pointsURL)
+        let axis = axisTransform3x3()
+        let normalization = try pointCloudNormalization(framePairs: framePairs, axis: axis)
+        let pointCloud = normalizedPointCloud(
+            rawPointCloud: rawPointCloud,
+            axis: axis,
+            normalization: normalization
+        )
+
+        return FastGSScannerDatasetCache(
+            directory: directory,
+            pointCloud: pointCloud,
+            basePointCount: rawPointCloud.count,
+            frameDescriptors: framePairs.map {
+                FastGSScannerFrameDescriptor(index: $0.index, imageURL: $0.imageURL, jsonURL: $0.jsonURL)
+            },
+            normalizationTranslation: normalization.translation,
+            normalizationScale: normalization.scale
+        )
+    }
+
+    public static func loadDataset(
+        cache: FastGSScannerDatasetCache,
+        frameIndex: Int,
+        width: Int,
+        height: Int
+    ) throws -> FastGSScannerDataset {
+        let frame = try loadFrame(cache: cache, frameIndex: frameIndex, width: width, height: height)
+        return FastGSScannerDataset(
+            directory: cache.directory,
+            pointCloud: cache.pointCloud,
+            basePointCount: cache.basePointCount,
+            frames: [frame],
+            normalizationTranslation: cache.normalizationTranslation,
+            normalizationScale: cache.normalizationScale
+        )
+    }
+
+    public static func loadFrame(
+        cache: FastGSScannerDatasetCache,
+        frameIndex: Int,
+        width: Int,
+        height: Int
+    ) throws -> FastGSScannerFrame {
+        let descriptor = cache.frameDescriptors.first { $0.index == frameIndex }
+            ?? cache.frameDescriptors[min(max(frameIndex, 0), max(cache.frameDescriptors.count - 1, 0))]
+        let raw = try decodeScannerFrameMetadata(url: descriptor.jsonURL)
+        guard raw.intrinsics.count == 9 else {
+            throw FastGSScannerDatasetLoaderError.invalidIntrinsics(descriptor.jsonURL, count: raw.intrinsics.count)
+        }
+        guard raw.cameraPoseARFrame.count == 16 else {
+            throw FastGSScannerDatasetLoaderError.invalidCameraPose(descriptor.jsonURL, count: raw.cameraPoseARFrame.count)
+        }
+
+        let axis = axisTransform3x3()
+        let imageSize = try imageDimensions(url: descriptor.imageURL)
+        var normalizedC2W = applyAxisTransform(axis, to4x4: raw.cameraPoseARFrame.map(Float.init))
+        normalizedC2W[3] = (normalizedC2W[3] - cache.normalizationTranslation[0]) * cache.normalizationScale
+        normalizedC2W[7] = (normalizedC2W[7] - cache.normalizationTranslation[1]) * cache.normalizationScale
+        normalizedC2W[11] = (normalizedC2W[11] - cache.normalizationTranslation[2]) * cache.normalizationScale
+
+        let camera = buildCamera(
+            intrinsics: raw.intrinsics.map(Float.init),
+            c2w: normalizedC2W,
+            rawWidth: imageSize.width,
+            rawHeight: imageSize.height,
+            width: width,
+            height: height
+        )
+        return FastGSScannerFrame(
+            index: descriptor.index,
+            imageURL: descriptor.imageURL,
+            jsonURL: descriptor.jsonURL,
+            camera: camera,
+            targetCHW: try loadTargetImageCHW(url: descriptor.imageURL, width: width, height: height)
+        )
+    }
+
     public static func load(
         directory: URL,
         options: FastGSScannerDatasetOptions = FastGSScannerDatasetOptions()
@@ -139,41 +274,8 @@ public enum FastGSScannerDatasetLoader {
             )
             : framePairs
         let axis = axisTransform3x3()
-
-        var transformedPoints = [Float]()
-        transformedPoints.reserveCapacity(rawPointCloud.points.count)
-        for index in stride(from: 0, to: rawPointCloud.points.count, by: 3) {
-            let point = [
-                rawPointCloud.points[index],
-                rawPointCloud.points[index + 1],
-                rawPointCloud.points[index + 2],
-            ]
-            transformedPoints.append(contentsOf: multiply(axis, point))
-        }
-
-        var cameraPositions = [[Float]]()
-        for pair in normalizationFramePairs {
-            let raw = try decodeScannerFrameMetadata(url: pair.jsonURL)
-            guard raw.cameraPoseARFrame.count == 16 else {
-                throw FastGSScannerDatasetLoaderError.invalidCameraPose(pair.jsonURL, count: raw.cameraPoseARFrame.count)
-            }
-            let c2wSource = raw.cameraPoseARFrame.map(Float.init)
-            let c2w = applyAxisTransform(axis, to4x4: c2wSource)
-            cameraPositions.append([c2w[3], c2w[7], c2w[11]])
-        }
-
-        let normalization = computeNormalization(cameraPositions: cameraPositions)
-        for index in stride(from: 0, to: transformedPoints.count, by: 3) {
-            transformedPoints[index] = (transformedPoints[index] - normalization.translation[0]) * normalization.scale
-            transformedPoints[index + 1] = (transformedPoints[index + 1] - normalization.translation[1]) * normalization.scale
-            transformedPoints[index + 2] = (transformedPoints[index + 2] - normalization.translation[2]) * normalization.scale
-        }
-
-        let pointCloud = FastGSPointCloud(
-            points: transformedPoints,
-            colors: rawPointCloud.colors ?? Array(repeating: 0.5, count: rawPointCloud.count * 3),
-            count: rawPointCloud.count
-        )
+        let normalization = try pointCloudNormalization(framePairs: normalizationFramePairs, axis: axis)
+        let pointCloud = normalizedPointCloud(rawPointCloud: rawPointCloud, axis: axis, normalization: normalization)
 
         let frames = try framePairs.map { pair in
             let raw = try decodeScannerFrameMetadata(url: pair.jsonURL)
@@ -225,6 +327,52 @@ public enum FastGSScannerDatasetLoader {
     private struct ScannerFrameMetadata: Decodable {
         var intrinsics: [Double]
         var cameraPoseARFrame: [Double]
+    }
+
+    private static func pointCloudNormalization(
+        framePairs: [FramePair],
+        axis: [Float]
+    ) throws -> (translation: [Float], scale: Float) {
+        var cameraPositions = [[Float]]()
+        for pair in framePairs {
+            let raw = try decodeScannerFrameMetadata(url: pair.jsonURL)
+            guard raw.cameraPoseARFrame.count == 16 else {
+                throw FastGSScannerDatasetLoaderError.invalidCameraPose(pair.jsonURL, count: raw.cameraPoseARFrame.count)
+            }
+            let c2wSource = raw.cameraPoseARFrame.map(Float.init)
+            let c2w = applyAxisTransform(axis, to4x4: c2wSource)
+            cameraPositions.append([c2w[3], c2w[7], c2w[11]])
+        }
+        return computeNormalization(cameraPositions: cameraPositions)
+    }
+
+    private static func normalizedPointCloud(
+        rawPointCloud: FastGSPointCloud,
+        axis: [Float],
+        normalization: (translation: [Float], scale: Float)
+    ) -> FastGSPointCloud {
+        var transformedPoints = [Float]()
+        transformedPoints.reserveCapacity(rawPointCloud.points.count)
+        for index in stride(from: 0, to: rawPointCloud.points.count, by: 3) {
+            let point = [
+                rawPointCloud.points[index],
+                rawPointCloud.points[index + 1],
+                rawPointCloud.points[index + 2],
+            ]
+            transformedPoints.append(contentsOf: multiply(axis, point))
+        }
+
+        for index in stride(from: 0, to: transformedPoints.count, by: 3) {
+            transformedPoints[index] = (transformedPoints[index] - normalization.translation[0]) * normalization.scale
+            transformedPoints[index + 1] = (transformedPoints[index + 1] - normalization.translation[1]) * normalization.scale
+            transformedPoints[index + 2] = (transformedPoints[index + 2] - normalization.translation[2]) * normalization.scale
+        }
+
+        return FastGSPointCloud(
+            points: transformedPoints,
+            colors: rawPointCloud.colors ?? Array(repeating: 0.5, count: rawPointCloud.count * 3),
+            count: rawPointCloud.count
+        )
     }
 
     private static func collectFramePairs(
