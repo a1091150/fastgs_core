@@ -286,8 +286,20 @@ private enum FastGSPreprocessBackwardKernelSource {
         inline float3 read_packed_float3(const device float* arr, uint idx) {
           return float3(arr[3 * idx], arr[3 * idx + 1], arr[3 * idx + 2]);
         }
+
+        inline float3 read_packed_float3(const constant float* arr, uint idx) {
+          return float3(arr[3 * idx], arr[3 * idx + 1], arr[3 * idx + 2]);
+        }
         
         inline float4 mul_mat4_vec3_h(const device float* m, float3 p) {
+          return float4(
+              m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
+              m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
+              m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14],
+              m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15]);
+        }
+
+        inline float4 mul_mat4_vec3_h(const constant float* m, float3 p) {
           return float4(
               m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
               m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
@@ -298,8 +310,16 @@ private enum FastGSPreprocessBackwardKernelSource {
         inline float3 read_packed_float3(const device float* arr, uint idx, uint stride) {
           return float3(arr[stride * idx], arr[stride * idx + 1], arr[stride * idx + 2]);
         }
+
+        inline float3 read_packed_float3(const constant float* arr, uint idx, uint stride) {
+          return float3(arr[stride * idx], arr[stride * idx + 1], arr[stride * idx + 2]);
+        }
         
         inline float4 read_packed_float4(const device float* arr, uint idx, uint stride) {
+          return float4(arr[stride * idx], arr[stride * idx + 1], arr[stride * idx + 2], arr[stride * idx + 3]);
+        }
+
+        inline float4 read_packed_float4(const constant float* arr, uint idx, uint stride) {
           return float4(arr[stride * idx], arr[stride * idx + 1], arr[stride * idx + 2], arr[stride * idx + 3]);
         }
         
@@ -309,8 +329,22 @@ private enum FastGSPreprocessBackwardKernelSource {
               matrix[1] * p.x + matrix[5] * p.y + matrix[9] * p.z + matrix[13],
               matrix[2] * p.x + matrix[6] * p.y + matrix[10] * p.z + matrix[14]);
         }
+
+        inline float3 transform_point_4x3(const float3 p, const constant float* matrix) {
+          return float3(
+              matrix[0] * p.x + matrix[4] * p.y + matrix[8] * p.z + matrix[12],
+              matrix[1] * p.x + matrix[5] * p.y + matrix[9] * p.z + matrix[13],
+              matrix[2] * p.x + matrix[6] * p.y + matrix[10] * p.z + matrix[14]);
+        }
         
         inline float3 transform_vec4x3_transpose(const float3 v, const device float* matrix) {
+          return float3(
+              matrix[0] * v.x + matrix[1] * v.y + matrix[2] * v.z,
+              matrix[4] * v.x + matrix[5] * v.y + matrix[6] * v.z,
+              matrix[8] * v.x + matrix[9] * v.y + matrix[10] * v.z);
+        }
+
+        inline float3 transform_vec4x3_transpose(const float3 v, const constant float* matrix) {
           return float3(
               matrix[0] * v.x + matrix[1] * v.y + matrix[2] * v.z,
               matrix[4] * v.x + matrix[5] * v.y + matrix[6] * v.z,

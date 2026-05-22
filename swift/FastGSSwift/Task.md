@@ -323,8 +323,22 @@ capture yet.
     - current parity checks compare gradient `sum`, `absSum`, `maxAbs`, and
       fixed samples from `fastgs_rasterize_backward_ref.py`
   - [x] wire rasterize backward output into preprocess backward smoke path
-  - [ ] port full preprocess backward math into `MLXFast.metalKernel(...)`
+  - [x] port full preprocess backward math into `MLXFast.metalKernel(...)`
     while preserving the original Metal code structure as much as possible
+    - Current `fastgs_preprocess_backward_swift_full_v1` is a full-port
+      candidate. It is dispatch-stable under Xcode, but should remain marked
+      as candidate-quality until gradient parity is broader than the first
+      synthetic fixture.
+  - [x] add a Python/C++ reference generator for preprocess backward using
+    `mx.value_and_grad` over `preprocess_forward`
+    - `swift/FastGSSwiftTools/fastgs_preprocess_backward_ref.py` writes
+      `/private/tmp/fastgs_preprocess_backward_ref.json`.
+    - The first fixture matches the Swift precomputed-color preprocess fixture
+      and compares loss plus gradient `sum`, `absSum`, `maxAbs`, and fixed
+      samples.
+  - [ ] expand preprocess backward parity beyond the first synthetic fixture:
+    SH color path, precomputed covariance path, clamping path, and recorded
+    scene subsets.
 - [x] Before continuing the full preprocess backward Metal math port, add an
   end-to-end autograd plumbing test. Single backward-kernel tests are useful,
   but they can miss argument ordering, closure, `CustomFunction`, and
