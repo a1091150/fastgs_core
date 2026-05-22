@@ -370,7 +370,7 @@ capture yet.
     - VJP calls `FastGSRasterizeBackward.forward(...)` and returns gradients for
       rasterize inputs. These become the intermediate gradients for preprocess
       outputs such as `xy`, `rgb`, `conicOpacity`, and `viewspacePoints`.
-  - [ ] `FastGSPreprocessCustomFunction`
+  - [x] `FastGSPreprocessCustomFunction`
     - Forward returns all preprocess outputs:
       `radii`, `xy`, `depths`, `cov3D`, `rgb`, `conicOpacity`,
       `tilesTouched`, `clamped`, and `viewspacePoints`.

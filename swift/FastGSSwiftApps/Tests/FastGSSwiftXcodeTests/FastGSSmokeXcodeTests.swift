@@ -561,6 +561,60 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertTrue(gradients[1].asArray(Float.self).contains { abs($0) > 1e-7 })
         XCTAssertTrue(gradients[2].asArray(Float.self).contains { abs($0) > 1e-7 })
     }
+
+    func testPreprocessCustomFunctionValueAndGradRunsUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let parameters = try scene.initialTrainableParameters()
+        let input = FastGSPreprocessInput(
+            means3D: parameters.means3D,
+            dc: parameters.dc,
+            sh: parameters.sh,
+            colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
+            opacities: parameters.opacities,
+            scales: parameters.scales,
+            rotations: parameters.rotations,
+            cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
+            viewMatrix: MLXArray(scene.manifest.viewmatrix.map(Float.init), [4, 4]),
+            projectionMatrix: MLXArray(scene.manifest.projmatrix.map(Float.init), [4, 4]),
+            cameraPosition: MLXArray(Array(scene.manifest.campos.prefix(3)).map(Float.init), [3]),
+            viewspacePoints: MLXArray.zeros([scene.manifest.pointCount, 4], dtype: .float32)
+        )
+        let params = FastGSPreprocessParams(
+            degree: scene.manifest.shDegree,
+            maxSHCoefficients: (scene.manifest.shDegree + 1) * (scene.manifest.shDegree + 1),
+            scaleModifier: 1,
+            tanFovX: Float(scene.manifest.tanFovX),
+            tanFovY: Float(scene.manifest.tanFovY),
+            imageHeight: scene.manifest.height,
+            imageWidth: scene.manifest.width,
+            tileBounds: ((scene.manifest.width + 15) / 16, (scene.manifest.height + 15) / 16, 1),
+            multiplier: 1
+        )
+        let function = FastGSPreprocessCustomFunction.make(params: params)
+        let primals = FastGSPreprocessCustomFunction.arrays(from: input)
+        let lossFunction: ([MLXArray]) -> [MLXArray] = { arrays in
+            let outputs = function(arrays)
+            return [mean(square(outputs[1]))]
+        }
+
+        let valueAndGradient = valueAndGrad(lossFunction, argumentNumbers: [0, 1, 2, 4, 5, 6])
+        let (values, gradients) = valueAndGradient(primals)
+
+        XCTAssertEqual(values[0].shape, [])
+        XCTAssertTrue(values[0].item(Float.self).isFinite)
+        XCTAssertEqual(gradients.count, 6)
+        XCTAssertEqual(gradients[0].shape, input.means3D.shape)
+        XCTAssertEqual(gradients[1].shape, input.dc.shape)
+        XCTAssertEqual(gradients[2].shape, input.sh.shape)
+        XCTAssertEqual(gradients[3].shape, input.opacities.shape)
+        XCTAssertEqual(gradients[4].shape, input.scales.shape)
+        XCTAssertEqual(gradients[5].shape, input.rotations.shape)
+        XCTAssertTrue(gradients[0].asArray(Float.self).contains { abs($0) > 1e-7 })
+    }
 }
 
 private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {
