@@ -516,6 +516,51 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             XCTAssertTrue(gradient.asArray(Float.self).allSatisfy { $0 == 0 })
         }
     }
+
+    func testRasterizeCustomFunctionValueAndGradRunsUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let stages = try scene.renderStages()
+        let params = FastGSRasterizeParams(
+            imageWidth: scene.manifest.width,
+            imageHeight: scene.manifest.height,
+            numTiles: ((scene.manifest.width + 15) / 16) * ((scene.manifest.height + 15) / 16)
+        )
+        let input = FastGSRasterizeInput(
+            ranges: stages.binning.ranges,
+            pointList: stages.binning.pointList,
+            bucketOffsets: stages.binning.bucketOffsets,
+            means2D: stages.preprocess.xy,
+            colors: stages.preprocess.rgb,
+            conicOpacity: stages.preprocess.conicOpacity,
+            background: MLXArray(scene.manifest.background.map(Float.init), [3]),
+            radii: stages.preprocess.radii,
+            metricMap: MLXArray.zeros([scene.manifest.width * scene.manifest.height], dtype: .int32),
+            metricCount: MLXArray.zeros([scene.manifest.pointCount], dtype: .int32)
+        )
+        let function = FastGSRasterizeCustomFunction.make(params: params)
+        let primals = FastGSRasterizeCustomFunction.arrays(from: input)
+        let lossFunction: ([MLXArray]) -> [MLXArray] = { arrays in
+            let outputs = function(arrays)
+            return [mean(square(outputs[7]))]
+        }
+
+        let valueAndGradient = valueAndGrad(lossFunction, argumentNumbers: [3, 4, 5])
+        let (values, gradients) = valueAndGradient(primals)
+
+        XCTAssertEqual(values[0].shape, [])
+        XCTAssertTrue(values[0].item(Float.self).isFinite)
+        XCTAssertEqual(gradients.count, 3)
+        XCTAssertEqual(gradients[0].shape, input.means2D.shape)
+        XCTAssertEqual(gradients[1].shape, input.colors.shape)
+        XCTAssertEqual(gradients[2].shape, input.conicOpacity.shape)
+        XCTAssertTrue(gradients[0].asArray(Float.self).contains { abs($0) > 1e-7 })
+        XCTAssertTrue(gradients[1].asArray(Float.self).contains { abs($0) > 1e-7 })
+        XCTAssertTrue(gradients[2].asArray(Float.self).contains { abs($0) > 1e-7 })
+    }
 }
 
 private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {

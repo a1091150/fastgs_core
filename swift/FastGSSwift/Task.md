@@ -360,7 +360,7 @@ capture yet.
 - Replace the whole-render `CustomFunction` with stage-level `CustomFunction`
   wrappers, matching the C++ primitive design where each forward primitive owns
   its VJP:
-  - [ ] `FastGSRasterizeCustomFunction`
+  - [x] `FastGSRasterizeCustomFunction`
     - Forward returns all rasterize outputs, not only `outColor`:
       `bucketToTile`, `sampledT`, `sampledAr`, `finalT`, `nContrib`,
       `maxContrib`, `pixelColors`, `outColor`, and `metricCount`.
