@@ -469,13 +469,22 @@ capture yet.
       per-step update magnitude, and the accumulated delta from the initial
       parameters.
 - Formal Swift training runner direction:
-  - [ ] Keep the first real runner Mac-App oriented rather than adding a
+  - [x] Keep the first real runner Mac-App oriented rather than adding a
     command-line executable. A CLI runner can remain a later convenience idea.
-  - [ ] Start with fixed-point training only: no densify, prune, opacity reset,
+  - [x] Start with fixed-point training only: no densify, prune, opacity reset,
     or optimizer-state migration until the rendered previews and debug logs
     look trustworthy.
   - [ ] Represent runner configuration as Swift structs so the macOS app can
     own and mutate training parameters cleanly.
+  - [x] Add a first macOS app training button that runs one 200-step
+    fixed-point training pass and displays the completed target/render result
+    in the app.
+  - [x] Generate and consume a full-point 512x512 recorded reference from
+    `/private/tmp/fastgs_recorded_reference_full_512`. The reference generator
+    rebuilds camera metadata for the requested size, so Swift receives the
+    matching `tanFovX`/`tanFovY`, image size, target tensor, and manifest.
+  - [x] Show current training progress as `Step current / total` in the macOS
+    app toolbar.
   - [ ] After fixed-point training is stable, add FastGS-style after-train
     features such as densify and prune as explicit later stages.
 
