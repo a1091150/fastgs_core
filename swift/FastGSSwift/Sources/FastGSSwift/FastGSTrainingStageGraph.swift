@@ -9,6 +9,7 @@ public enum FastGSTrainingStageGraph {
         stream: StreamOrDevice = .default
     ) -> FastGSTrainingSmokeResult {
         let primals = parameters.arrays
+        let context = FastGSTrainingRenderContext(scene: scene, stream: stream)
         let lossFunction: ([MLXArray]) -> [MLXArray] = { arrays in
             let parameters = FastGSTrainableParameters(
                 means3D: arrays[0],
@@ -18,7 +19,7 @@ public enum FastGSTrainingStageGraph {
                 scales: arrays[4],
                 rotations: arrays[5]
             )
-            let outColor = render(scene: scene, parameters: parameters, stream: stream)
+            let outColor = render(context: context, parameters: parameters, stream: stream)
             return [mean(square(outColor - target), stream: stream)]
         }
         let valueAndGradient = MLX.valueAndGrad(
@@ -34,24 +35,18 @@ public enum FastGSTrainingStageGraph {
         parameters: FastGSTrainableParameters,
         stream: StreamOrDevice = .default
     ) -> MLXArray {
-        let preprocessParams = preprocessParams(for: scene)
-        let preprocessInput = FastGSPreprocessInput(
-            means3D: parameters.means3D,
-            dc: parameters.dc,
-            sh: parameters.sh,
-            colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32, stream: stream),
-            opacities: parameters.opacities,
-            scales: parameters.scales,
-            rotations: parameters.rotations,
-            cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32, stream: stream),
-            viewMatrix: MLXArray(scene.manifest.viewmatrix.map(Float.init), [4, 4]),
-            projectionMatrix: MLXArray(scene.manifest.projmatrix.map(Float.init), [4, 4]),
-            cameraPosition: MLXArray(Array(scene.manifest.campos.prefix(3)).map(Float.init), [3]),
-            viewspacePoints: MLXArray.zeros([scene.manifest.pointCount, 4], dtype: .float32, stream: stream)
-        )
+        render(context: FastGSTrainingRenderContext(scene: scene, stream: stream), parameters: parameters, stream: stream)
+    }
+
+    public static func render(
+        context: FastGSTrainingRenderContext,
+        parameters: FastGSTrainableParameters,
+        stream: StreamOrDevice = .default
+    ) -> MLXArray {
+        let preprocessInput = context.preprocessInput(parameters: parameters)
         let preprocess = FastGSPreprocessCustomFunction.call(
             preprocessInput,
-            params: preprocessParams,
+            params: context.preprocessParams,
             stream: stream
         )
         let stoppedPreprocess = FastGSPreprocessOutput(
@@ -65,58 +60,20 @@ public enum FastGSTrainingStageGraph {
             clamped: stopGradient(preprocess.clamped, stream: stream),
             viewspacePoints: preprocess.viewspacePoints
         )
-        let tileBounds = tileBounds(for: scene)
         let binning = FastGSBinning.forward(
             preprocessOutput: stoppedPreprocess,
-            params: FastGSBinningParams(multiplier: 1, tileBounds: tileBounds),
+            params: FastGSBinningParams(multiplier: 1, tileBounds: context.tileBounds),
             stream: stream
         )
-        let rasterizeParams = FastGSRasterizeParams(
-            imageWidth: scene.manifest.width,
-            imageHeight: scene.manifest.height,
-            numTiles: tileBounds.x * tileBounds.y
-        )
-        let numPixels = scene.manifest.width * scene.manifest.height
-        let rasterizeInput = FastGSRasterizeInput(
-            ranges: stopGradient(binning.ranges, stream: stream),
-            pointList: stopGradient(binning.pointList, stream: stream),
-            bucketOffsets: stopGradient(binning.bucketOffsets, stream: stream),
-            means2D: stoppedPreprocess.xy,
-            colors: stoppedPreprocess.rgb,
-            conicOpacity: stoppedPreprocess.conicOpacity,
-            background: MLXArray(scene.manifest.background.map(Float.init), [3]),
-            radii: stopGradient(stoppedPreprocess.radii, stream: stream),
-            metricMap: MLXArray.zeros([numPixels], dtype: .int32, stream: stream),
-            metricCount: MLXArray.zeros([scene.manifest.pointCount], dtype: .int32, stream: stream)
+        let rasterizeInput = context.rasterizeInput(
+            preprocess: stoppedPreprocess,
+            binning: binning,
+            stream: stream
         )
         return FastGSRasterizeCustomFunction.call(
             rasterizeInput,
-            params: rasterizeParams,
+            params: context.rasterizeParams,
             stream: stream
         ).outColor
-    }
-
-    private static func preprocessParams(for scene: FastGSRecordedForwardScene) -> FastGSPreprocessParams {
-        let tileBounds = tileBounds(for: scene)
-        let maxSHCoefficients = (scene.manifest.shDegree + 1) * (scene.manifest.shDegree + 1)
-        return FastGSPreprocessParams(
-            degree: scene.manifest.shDegree,
-            maxSHCoefficients: maxSHCoefficients,
-            scaleModifier: 1,
-            tanFovX: Float(scene.manifest.tanFovX),
-            tanFovY: Float(scene.manifest.tanFovY),
-            imageHeight: scene.manifest.height,
-            imageWidth: scene.manifest.width,
-            tileBounds: tileBounds,
-            multiplier: 1
-        )
-    }
-
-    private static func tileBounds(for scene: FastGSRecordedForwardScene) -> (x: Int, y: Int, z: Int) {
-        (
-            x: (scene.manifest.width + 15) / 16,
-            y: (scene.manifest.height + 15) / 16,
-            z: 1
-        )
     }
 }

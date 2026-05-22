@@ -142,6 +142,40 @@ public enum FastGSRecordedTrainingPreview {
         Memory.cacheLimit = config.cacheLimitBytes
 
         let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
+        return try run(scene: scene, config: config, progress: progress, preview: preview)
+    }
+
+    public static func run(
+        scannerDatasetDirectory: URL,
+        cameraIndex: Int,
+        config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
+        progress: ((Int) -> Void)? = nil,
+        preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
+    ) throws -> FastGSRecordedTrainingPreviewResult {
+        Memory.cacheLimit = config.cacheLimitBytes
+
+        let dataset = try FastGSScannerDatasetLoader.load(
+            directory: scannerDatasetDirectory,
+            options: FastGSScannerDatasetOptions(
+                width: 512,
+                height: 512,
+                maxFrames: 1,
+                startIndex: cameraIndex,
+                normalizeWithAllFramePairs: true
+            )
+        )
+        let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+        return try run(scene: scene, config: config, progress: progress, preview: preview)
+    }
+
+    public static func run(
+        scene: FastGSRecordedForwardScene,
+        config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
+        progress: ((Int) -> Void)? = nil,
+        preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
+    ) throws -> FastGSRecordedTrainingPreviewResult {
+        Memory.cacheLimit = config.cacheLimitBytes
+
         let target = try scene.targetOutColor()
         let targetRGBA = FastGSImageExport.rgbaBytes(
             outColor: target,

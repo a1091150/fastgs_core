@@ -15,37 +15,37 @@ public enum FastGSRasterizeCustomFunction {
         params: FastGSRasterizeParams,
         stream: StreamOrDevice = .default
     ) -> ([MLXArray]) -> [MLXArray] {
-        let cache = FastGSRasterizeCustomFunctionCache()
+        let primitive = FastGSRasterizePrimitiveContext(params: params, stream: stream)
         return CustomFunction {
             Forward { primals in
-                let output = FastGSRasterize.forward(input(from: primals), params: params, stream: stream)
+                let output = FastGSRasterize.forward(input(from: primals), params: primitive.params, stream: primitive.stream)
                 let arrays = arrays(from: output)
-                cache.store(output: output)
+                primitive.store(output: output)
                 return arrays
             }
             VJP { primals, cotangents in
                 let input = input(from: primals)
-                let output = cache.output ?? output(from: cotangents.map {
-                    MLXArray.zeros($0.shape, dtype: $0.dtype, stream: stream)
+                let output = primitive.output ?? output(from: cotangents.map {
+                    MLXArray.zeros($0.shape, dtype: $0.dtype, stream: primitive.stream)
                 })
                 let gradients = FastGSRasterizeBackward.forward(
                     input: input,
                     cotangents: cotangentsFromRasterizeOutputs(cotangents),
                     forwardOutput: output,
-                    params: params,
-                    stream: stream
+                    params: primitive.params,
+                    stream: primitive.stream
                 )
                 return [
-                    MLXArray.zeros(input.ranges.shape, dtype: input.ranges.dtype, stream: stream),
-                    MLXArray.zeros(input.pointList.shape, dtype: input.pointList.dtype, stream: stream),
-                    MLXArray.zeros(input.bucketOffsets.shape, dtype: input.bucketOffsets.dtype, stream: stream),
+                    MLXArray.zeros(input.ranges.shape, dtype: input.ranges.dtype, stream: primitive.stream),
+                    MLXArray.zeros(input.pointList.shape, dtype: input.pointList.dtype, stream: primitive.stream),
+                    MLXArray.zeros(input.bucketOffsets.shape, dtype: input.bucketOffsets.dtype, stream: primitive.stream),
                     gradients.means2D,
                     gradients.colors,
                     gradients.conicOpacity,
-                    MLXArray.zeros(input.background.shape, dtype: input.background.dtype, stream: stream),
-                    MLXArray.zeros(input.radii.shape, dtype: input.radii.dtype, stream: stream),
-                    MLXArray.zeros(input.metricMap.shape, dtype: input.metricMap.dtype, stream: stream),
-                    MLXArray.zeros(input.metricCount.shape, dtype: input.metricCount.dtype, stream: stream),
+                    MLXArray.zeros(input.background.shape, dtype: input.background.dtype, stream: primitive.stream),
+                    MLXArray.zeros(input.radii.shape, dtype: input.radii.dtype, stream: primitive.stream),
+                    MLXArray.zeros(input.metricMap.shape, dtype: input.metricMap.dtype, stream: primitive.stream),
+                    MLXArray.zeros(input.metricCount.shape, dtype: input.metricCount.dtype, stream: primitive.stream),
                 ]
             }
         }
@@ -127,9 +127,16 @@ public enum FastGSRasterizeCustomFunction {
     }
 }
 
-private final class FastGSRasterizeCustomFunctionCache: @unchecked Sendable {
+private final class FastGSRasterizePrimitiveContext: @unchecked Sendable {
+    let params: FastGSRasterizeParams
+    let stream: StreamOrDevice
     private let lock = NSLock()
     private var cachedOutput: FastGSRasterizeOutput?
+
+    init(params: FastGSRasterizeParams, stream: StreamOrDevice) {
+        self.params = params
+        self.stream = stream
+    }
 
     var output: FastGSRasterizeOutput? {
         lock.withLock { cachedOutput }

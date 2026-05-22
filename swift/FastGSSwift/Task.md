@@ -294,11 +294,18 @@ Planned task order:
   - Target image loading is currently validated for shape and normalized
     `0...1` bounds. Exact target pixel parity should be added when the image
     resize path is locked to match Pillow bilinear behavior.
-- [ ] Update the macOS app to choose a dataset directory with an
+- [x] Update the macOS app to choose a dataset directory with an
   `NSOpenPanel`, while keeping the fixed directory as the test/default path.
-- [ ] Retire the Python-generated manifest dependency from the main macOS
+  - Default dataset path is
+    `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`.
+  - The app counts paired `frame_*.jpg/json` files for camera navigation and
+    uses `FastGSScannerDatasetLoader` when training starts.
+- [x] Retire the Python-generated manifest dependency from the main macOS
   training path after native loading parity is stable. Keep the generator only
   as a parity/reference tool.
+  - `FastGSRecordedForwardScene` can now hold direct Swift buffers from the
+    native dataset loader, while the manifest initializer remains available for
+    parity tests and reference workflows.
 
 ## IOSurface and Real-Time Camera Plan
 
@@ -496,7 +503,7 @@ Swift needs explicit structs for non-primal state used by forward and backward.
 The goal is to avoid hiding important backward dependencies in ad hoc closures
 or recomputing them from unrelated values.
 
-- [ ] Add a `FastGSRenderContext` / `FastGSTrainingContext` struct for stable
+- [x] Add a `FastGSRenderContext` / `FastGSTrainingContext` struct for stable
   non-primal state:
   - camera matrices
   - camera position
@@ -506,17 +513,27 @@ or recomputing them from unrelated values.
   - SH degree and max coefficients
   - scale modifier / multiplier
   - dataset/frame identity where useful for debugging
-- [ ] Add stage cache structs for forward outputs and scheduling intermediates
+- [x] Add stage cache structs for forward outputs and scheduling intermediates
   needed by VJP:
   - preprocess outputs used by rasterize and preprocess backward
   - binning outputs, tile ranges, bucket offsets, and stopped scheduling arrays
   - rasterize forward outputs consumed by rasterize backward
-- [ ] Update `FastGSPreprocessCustomFunction` and
+- [x] Update `FastGSPreprocessCustomFunction` and
   `FastGSRasterizeCustomFunction` to use the context/cache structs rather than
   relying on scattered captured values.
-- [ ] Clearly document which values are trainable primals, which are
+- [x] Clearly document which values are trainable primals, which are
   cotangents, which are stopped scheduling arrays, and which are primitive-style
   context/cache values.
+  - `FastGSTrainingRenderContext` now owns scene-derived non-primal values:
+    camera matrices, camera position, background, tile bounds, preprocess and
+    rasterize params, zero-sized optional buffers, and metric buffers.
+  - `FastGSPreprocessPrimitiveContext` and
+    `FastGSRasterizePrimitiveContext` now own params, stream, and cached forward
+    outputs for their stage-level VJP.
+  - Trainable primals remain the six `FastGSTrainableParameters` arrays:
+    `means3D`, `dc`, `sh`, `opacities`, `scales`, and `rotations`.
+  - Scheduling arrays from binning/rasterize setup remain stopped with
+    `stopGradient(...)` before entering rasterize VJP.
 - [ ] Keep the Swift API close to the C++ primitive mental model so future
   backward and native dataset loading changes do not need to reshape the graph
   again.

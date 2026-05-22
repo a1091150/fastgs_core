@@ -15,24 +15,24 @@ public enum FastGSPreprocessCustomFunction {
         params: FastGSPreprocessParams,
         stream: StreamOrDevice = .default
     ) -> ([MLXArray]) -> [MLXArray] {
-        let cache = FastGSPreprocessCustomFunctionCache()
+        let primitive = FastGSPreprocessPrimitiveContext(params: params, stream: stream)
         return CustomFunction {
             Forward { primals in
-                let output = FastGSPreprocess.forward(input(from: primals), params: params, stream: stream)
-                cache.store(output: output)
+                let output = FastGSPreprocess.forward(input(from: primals), params: primitive.params, stream: primitive.stream)
+                primitive.store(output: output)
                 return arrays(from: output)
             }
             VJP { primals, cotangents in
                 let input = input(from: primals)
-                guard let output = cache.output else {
+                guard let output = primitive.output else {
                     preconditionFailure("FastGSPreprocessCustomFunction missing cached forward output.")
                 }
                 let gradients = FastGSPreprocessBackward.forward(
                     input: input,
                     cotangents: cotangentsFromPreprocessOutputs(cotangents),
                     forwardOutput: output,
-                    params: params,
-                    stream: stream
+                    params: primitive.params,
+                    stream: primitive.stream
                 )
                 return arrays(from: gradients)
             }
@@ -136,9 +136,16 @@ public enum FastGSPreprocessCustomFunction {
     }
 }
 
-private final class FastGSPreprocessCustomFunctionCache: @unchecked Sendable {
+private final class FastGSPreprocessPrimitiveContext: @unchecked Sendable {
+    let params: FastGSPreprocessParams
+    let stream: StreamOrDevice
     private let lock = NSLock()
     private var cachedOutput: FastGSPreprocessOutput?
+
+    init(params: FastGSPreprocessParams, stream: StreamOrDevice) {
+        self.params = params
+        self.stream = stream
+    }
 
     var output: FastGSPreprocessOutput? {
         lock.withLock { cachedOutput }

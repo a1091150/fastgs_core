@@ -143,10 +143,16 @@ public enum FastGSRecordedForwardError: Error {
 public struct FastGSRecordedForwardScene {
     public var manifest: FastGSRecordedForwardManifest
     public var manifestDirectory: URL?
+    public var directMeans3D: [Float]?
+    public var directColors: [Float]?
+    public var directTarget: [Float]?
 
     public init(manifest: FastGSRecordedForwardManifest) {
         self.manifest = manifest
         self.manifestDirectory = nil
+        self.directMeans3D = nil
+        self.directColors = nil
+        self.directTarget = nil
     }
 
     public init(manifestURL: URL) throws {
@@ -155,6 +161,36 @@ public struct FastGSRecordedForwardScene {
             from: Data(contentsOf: manifestURL)
         )
         self.manifestDirectory = manifestURL.deletingLastPathComponent()
+        self.directMeans3D = nil
+        self.directColors = nil
+        self.directTarget = nil
+    }
+
+    public init(scannerDataset: FastGSScannerDataset, frameIndex: Int, shDegree: Int = 3, scale: Double = 0.02, opacity: Double = 0.82) {
+        let frame = scannerDataset.frames[min(max(frameIndex, 0), scannerDataset.frames.count - 1)]
+        self.manifest = FastGSRecordedForwardManifest(
+            width: frame.camera.imageWidth,
+            height: frame.camera.imageHeight,
+            pointCount: scannerDataset.pointCloud.count,
+            shDegree: shDegree,
+            scale: scale,
+            opacity: opacity,
+            tanFovX: Double(frame.camera.tanFovX),
+            tanFovY: Double(frame.camera.tanFovY),
+            background: [0, 0, 0],
+            viewmatrix: frame.camera.viewmatrix.map(Double.init),
+            projmatrix: frame.camera.projmatrix.map(Double.init),
+            campos: frame.camera.campos.map(Double.init),
+            means3d: [],
+            colors: [],
+            predChannelSums: [],
+            samplePixelIds: [],
+            predSamples: []
+        )
+        self.manifestDirectory = nil
+        self.directMeans3D = scannerDataset.pointCloud.points
+        self.directColors = scannerDataset.pointCloud.colors
+        self.directTarget = frame.targetCHW
     }
 
     public func render(verbose: Bool = false) throws -> FastGSRasterizeOutput {
@@ -280,8 +316,8 @@ public struct FastGSRecordedForwardScene {
 
     private func validate() throws {
         let count = manifest.pointCount
-        let meansCount = manifest.means3dBuffer == nil ? manifest.means3d.count : manifest.means3dBuffer?.shape.reduce(1, *) ?? 0
-        let colorsCount = manifest.colorsBuffer == nil ? manifest.colors.count : manifest.colorsBuffer?.shape.reduce(1, *) ?? 0
+        let meansCount = directMeans3D?.count ?? (manifest.means3dBuffer == nil ? manifest.means3d.count : manifest.means3dBuffer?.shape.reduce(1, *) ?? 0)
+        let colorsCount = directColors?.count ?? (manifest.colorsBuffer == nil ? manifest.colors.count : manifest.colorsBuffer?.shape.reduce(1, *) ?? 0)
         guard meansCount == count * 3, colorsCount == count * 3 else {
             throw FastGSRecordedForwardError.invalidPointCount(
                 expected: count,
@@ -319,6 +355,17 @@ public struct FastGSRecordedForwardScene {
         fallback: [Double],
         expectedShape: [Int]
     ) throws -> [Float] {
+        if let direct = directFloatBuffer(name: name) {
+            let expectedCount = expectedShape.reduce(1, *)
+            guard direct.count == expectedCount else {
+                throw FastGSRecordedForwardError.invalidBufferByteCount(
+                    name: name,
+                    expected: expectedCount * MemoryLayout<Float>.stride,
+                    actual: direct.count * MemoryLayout<Float>.stride
+                )
+            }
+            return direct
+        }
         guard let descriptor else {
             return fallback.map(Float.init)
         }
@@ -341,6 +388,19 @@ public struct FastGSRecordedForwardScene {
         }
         return data.withUnsafeBytes { rawBuffer in
             Array(rawBuffer.bindMemory(to: Float.self))
+        }
+    }
+
+    private func directFloatBuffer(name: String) -> [Float]? {
+        switch name {
+        case "means3d":
+            directMeans3D
+        case "colors":
+            directColors
+        case "target":
+            directTarget
+        default:
+            nil
         }
     }
 }

@@ -18,6 +18,7 @@ struct FastGSSwiftMacApp: App {
 @MainActor
 private final class RenderPreviewModel: ObservableObject {
     private var trainingConfig = FastGSRecordedTrainingRunConfig()
+    private var datasetDirectory = URL(fileURLWithPath: "/Users/yangdunfu/Downloads/2026_05_04_16_51_29", isDirectory: true)
     private let outputDirectory = URL(fileURLWithPath: "/private/tmp/fastgs_swift_mac_training", isDirectory: true)
     @Published var texture: MTLTexture?
     @Published var fallbackImage: CGImage?
@@ -30,18 +31,20 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var previewAspectRatio = 1.0
     @Published var previewMode: RenderPreviewMode = .single
     @Published var isTraining = false
+    @Published var datasetLabel = "2026_05_04_16_51_29"
+    @Published var cameraCount = 1
     let device = MTLCreateSystemDefaultDevice()
 
     init() {
-        refreshTrainingReferences()
+        refreshDataset()
         totalTrainingSteps = trainingConfig.totalSteps
-        status = trainingConfig.referenceSet.isEmpty
-            ? "No recorded references. Run make swift-recorded-full-512-reference first"
-            : "Ready for training"
+        status = cameraCount > 0
+            ? "Ready for native dataset training"
+            : "Choose a scanner dataset folder"
     }
 
     var cameraLabel: String {
-        let count = max(trainingConfig.referenceSet.count, 1)
+        let count = max(cameraCount, 1)
         return "Camera \(min(cameraIndex + 1, count)) / \(count)"
     }
 
@@ -52,10 +55,10 @@ private final class RenderPreviewModel: ObservableObject {
 
         isTraining = true
         trainingStep = 0
-        refreshTrainingReferences()
+        refreshDataset()
         totalTrainingSteps = trainingConfig.totalSteps
-        guard let manifestURL = selectedTrainingManifestURL() else {
-            status = "Training failed: run make swift-recorded-full-512-reference first"
+        guard cameraCount > 0 else {
+            status = "Training failed: choose a folder with frame_*.jpg/json and points.ply"
             isTraining = false
             return
         }
@@ -71,10 +74,12 @@ private final class RenderPreviewModel: ObservableObject {
                 }
                 let cameraIndex = cameraIndex
                 let outputDirectory = outputDirectory
+                let datasetDirectory = datasetDirectory
 
                 let trained = try await Task.detached(priority: .userInitiated) {
                     let result = try FastGSRecordedTrainingPreview.run(
-                        manifestURL: manifestURL,
+                        scannerDatasetDirectory: datasetDirectory,
+                        cameraIndex: cameraIndex,
                         config: config
                     ) { step in
                         Task { @MainActor in
@@ -134,10 +139,10 @@ private final class RenderPreviewModel: ObservableObject {
         guard !isTraining else {
             return
         }
-        refreshTrainingReferences()
-        let count = trainingConfig.referenceSet.count
+        refreshDataset()
+        let count = cameraCount
         guard count > 0 else {
-            status = "No recorded references. Run make swift-recorded-full-512-reference first"
+            status = "Choose a scanner dataset folder"
             return
         }
         cameraIndex = (cameraIndex + delta + count) % count
@@ -146,20 +151,37 @@ private final class RenderPreviewModel: ObservableObject {
         status = "Selected \(cameraLabel)"
     }
 
-    private func refreshTrainingReferences() {
-        trainingConfig.referenceSet = FastGSRecordedTrainingReferenceSet(
-            referenceDirectory: trainingConfig.referenceSet.referenceDirectory
-        )
-        let index = trainingConfig.referenceSet.clampedIndex(cameraIndex)
-        if cameraIndex != index {
-            cameraIndex = index
+    func chooseDatasetDirectory() {
+        guard !isTraining else {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = datasetDirectory
+        panel.message = "Choose a scanner dataset folder containing points.ply and frame_*.jpg/json"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            datasetDirectory = url
+            cameraIndex = 0
+            refreshDataset()
+            status = cameraCount > 0
+                ? "Selected dataset \(datasetLabel)"
+                : "Folder is missing scanner frame pairs or points.ply"
         }
     }
 
-    private func selectedTrainingManifestURL() -> URL? {
-        trainingConfig.referenceSet.manifestURL(at: cameraIndex)
+    private func refreshDataset() {
+        datasetLabel = datasetDirectory.lastPathComponent
+        cameraCount = scannerFramePairCount(directory: datasetDirectory)
+        if cameraCount > 0 {
+            cameraIndex = min(max(cameraIndex, 0), cameraCount - 1)
+        } else {
+            cameraIndex = 0
+        }
     }
-
 }
 
 private enum RenderPreviewMode {
@@ -216,6 +238,9 @@ private struct RenderPreviewView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("FastGSSwift")
                     .font(.headline)
+                Text(model.datasetLabel)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
                 Text("\(model.renderSize)  \(model.status)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -230,6 +255,14 @@ private struct RenderPreviewView: View {
             }
 
             Spacer()
+
+            Button {
+                model.chooseDatasetDirectory()
+            } label: {
+                Image(systemName: "folder")
+            }
+            .disabled(model.isTraining)
+            .help("Choose scanner dataset folder")
 
             Button {
                 model.selectCamera(delta: -1)
@@ -253,7 +286,7 @@ private struct RenderPreviewView: View {
                 Image(systemName: "play.circle")
             }
             .disabled(model.isTraining)
-            .help("Train recorded 512 x 512 frame")
+            .help("Train native scanner dataset 512 x 512 frame")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -330,6 +363,37 @@ private struct RenderPreviewView: View {
             }
         }
     }
+}
+
+private func scannerFramePairCount(directory: URL) -> Int {
+    guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("points.ply").path) else {
+        return 0
+    }
+    guard let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
+        return 0
+    }
+
+    var images = Set<Int>()
+    var jsons = Set<Int>()
+    for url in contents {
+        guard let index = scannerFrameIndex(url) else {
+            continue
+        }
+        if url.pathExtension.lowercased() == "jpg" {
+            images.insert(index)
+        } else if url.pathExtension.lowercased() == "json" {
+            jsons.insert(index)
+        }
+    }
+    return images.intersection(jsons).count
+}
+
+private func scannerFrameIndex(_ url: URL) -> Int? {
+    let stem = url.deletingPathExtension().lastPathComponent
+    guard stem.hasPrefix("frame_") else {
+        return nil
+    }
+    return Int(stem.dropFirst("frame_".count))
 }
 
 private struct MetalTexturePreview: NSViewRepresentable {
