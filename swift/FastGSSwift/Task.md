@@ -235,6 +235,38 @@ Planned Swift task order:
 - [x] Display recorded scanner target and Swift render side by side in the
   macOS app.
 
+## Native Dataset Loading Plan
+
+The current Swift training preview still depends on Python-generated reference
+manifests in `/private/tmp`. The next migration step is to let Swift read the
+scanner dataset directly, following the same assumptions as the Python scanner
+training code.
+
+Initial fixed test dataset:
+
+- `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`
+
+Planned task order:
+
+- [ ] Inspect the exact scanner dataset files used by the Python training path:
+  camera/frame metadata, target images, point cloud files, and any color fields.
+- [ ] Decide whether to use a SwiftPM PLY package or write a minimal in-repo
+  PLY reader.
+  - Prefer an in-repo minimal reader if the dataset uses a narrow PLY subset.
+  - Required first support is only the dataset's actual PLY format, likely
+    binary little-endian or ASCII with `x/y/z` and color properties.
+- [ ] Add a Swift dataset loader that can read the fixed test directory and
+  produce the same first-frame training inputs currently represented by the
+  generated manifest.
+- [ ] Add unit/Xcode tests comparing the native Swift loader output against the
+  existing Python-generated manifest for point count, camera parameters, image
+  size, target image samples, and point/color samples.
+- [ ] Update the macOS app to choose a dataset directory with an
+  `NSOpenPanel`, while keeping the fixed directory as the test/default path.
+- [ ] Retire the Python-generated manifest dependency from the main macOS
+  training path after native loading parity is stable. Keep the generator only
+  as a parity/reference tool.
+
 ## IOSurface and Real-Time Camera Plan
 
 This is a later phase after recorded-data forward rendering is working. Keep
@@ -421,6 +453,41 @@ capture yet.
   `fastgs_preprocess_backward.metal` structure, with any MLXFast-specific
   wrapper adjustments kept as small and explicit as possible.
 
+### Primitive-Style Context and Cache Plan
+
+The current Swift stage-level `CustomFunction` path passes most values through
+primals, cotangents, and forward outputs. That works for smoke tests, but it is
+not the right long-term shape. Like the C++ `mx::Primitive` implementation,
+Swift needs explicit structs for non-primal state used by forward and backward.
+
+The goal is to avoid hiding important backward dependencies in ad hoc closures
+or recomputing them from unrelated values.
+
+- [ ] Add a `FastGSRenderContext` / `FastGSTrainingContext` struct for stable
+  non-primal state:
+  - camera matrices
+  - camera position
+  - image width/height
+  - tile bounds
+  - background
+  - SH degree and max coefficients
+  - scale modifier / multiplier
+  - dataset/frame identity where useful for debugging
+- [ ] Add stage cache structs for forward outputs and scheduling intermediates
+  needed by VJP:
+  - preprocess outputs used by rasterize and preprocess backward
+  - binning outputs, tile ranges, bucket offsets, and stopped scheduling arrays
+  - rasterize forward outputs consumed by rasterize backward
+- [ ] Update `FastGSPreprocessCustomFunction` and
+  `FastGSRasterizeCustomFunction` to use the context/cache structs rather than
+  relying on scattered captured values.
+- [ ] Clearly document which values are trainable primals, which are
+  cotangents, which are stopped scheduling arrays, and which are primitive-style
+  context/cache values.
+- [ ] Keep the Swift API close to the C++ primitive mental model so future
+  backward and native dataset loading changes do not need to reshape the graph
+  again.
+
 ### Optimizer Plan
 
 - Optimizer state should live on the Swift side, matching the Python MLX model
@@ -498,6 +565,11 @@ capture yet.
   - [x] Add `make swift-recorded-full-512-camera-references` to generate
     per-camera 512x512 full-point manifests under
     `/private/tmp/fastgs_recorded_reference_full_512/camera_000...`.
+  - [ ] Clean up the macOS app so it only exposes training-related controls:
+    dataset selection, camera/frame navigation, training start, progress, and
+    target/render display.
+    - Remove static fixture forward, mock camera frame, and early reload/test
+      forward buttons from the primary app UI.
   - [ ] After fixed-point training is stable, add FastGS-style after-train
     features such as densify and prune as explicit later stages.
 
