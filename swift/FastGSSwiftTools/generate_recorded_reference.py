@@ -324,6 +324,7 @@ def main() -> None:
     manifest_path = args.out_dir / "recorded_manifest.json"
     means3d_path = args.out_dir / "recorded_means3d.f32"
     colors_path = args.out_dir / "recorded_colors.f32"
+    target_path = args.out_dir / "recorded_target.f32"
     save_chw_png(pred, pred_png)
     save_chw_png(target, target_png)
     save_side_by_side(target, pred, sbs_png)
@@ -332,6 +333,7 @@ def main() -> None:
 
     pred_np = np.array(pred, dtype=np.float32)
     target_np = np.array(target, dtype=np.float32)
+    target_buffer = write_f32_buffer(target_np.reshape(3, args.width * args.height), target_path)
     sample_ids = [
         0,
         args.width // 2,
@@ -361,6 +363,7 @@ def main() -> None:
         "campos": array_payload(camera.campos),
         "means3dBuffer": means3d_buffer,
         "colorsBuffer": colors_buffer,
+        "targetBuffer": target_buffer,
         "predChannelSums": channel_sums(pred_np),
         "targetChannelSums": channel_sums(target_np),
         "samplePixelIds": sample_ids,
@@ -380,6 +383,7 @@ def main() -> None:
     print("sbs:", sbs_png)
     print("means3d:", means3d_path)
     print("colors:", colors_path)
+    print("target f32:", target_path)
     print("points:", points.shape[0], "frames:", len(cameras))
     print("predChannelSums:", manifest["predChannelSums"])
 

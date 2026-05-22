@@ -7,6 +7,7 @@ import XCTest
 final class FastGSSmokeXcodeTests: XCTestCase {
     private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
     private let recordedLargeManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_16384/recorded_manifest.json")
+    private let recordedFullManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full/recorded_manifest.json")
     private let rasterizeBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_rasterize_backward_ref.json")
     private let preprocessBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_preprocess_backward_ref.json")
 
@@ -831,6 +832,87 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 || maxAbsDiff(parameters.rotations, initialParameters.rotations) > 0
         )
     }
+
+    func testRecordedTrainingPreview200StepsWritesSideBySidePNGsUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedFullManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedFullManifestURL.path) first.")
+        }
+
+        Memory.cacheLimit = 4 * 1024 * 1024 * 1024
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedFullManifestURL)
+        var parameters = try scene.initialTrainableParameters()
+        let initialParameters = parameters
+        let target = try scene.targetOutColor()
+        var optimizer = FastGSAdamOptimizer(
+            learningRates: FastGSAdamLearningRates(
+                means3D: 5e-5,
+                dc: 5e-4,
+                sh: 5e-4,
+                opacities: 5e-4,
+                scales: 5e-5,
+                rotations: 5e-5
+            )
+        )
+        let outputDirectory = URL(fileURLWithPath: "/private/tmp/fastgs_swift_training_preview", isDirectory: true)
+        try? FileManager.default.removeItem(at: outputDirectory)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        var firstLoss: Float?
+        var lastLoss: Float = .infinity
+        var debugRows = [[String: Any]]()
+        for step in 1...200 {
+            let previousParameters = parameters
+            let result = FastGSTrainingStageGraph.valueAndGrad(
+                scene: scene,
+                parameters: parameters,
+                target: target
+            )
+            let loss = result.loss.item(Float.self)
+            XCTAssertTrue(loss.isFinite)
+            XCTAssertGreaterThanOrEqual(loss, 0)
+            XCTAssertEqual(result.gradients.count, 6)
+            XCTAssertTrue(result.gradients.contains { hasFiniteNonZeroValues($0) })
+            firstLoss = firstLoss ?? loss
+            lastLoss = loss
+
+            parameters = optimizer.update(
+                parameters: parameters,
+                gradients: trainableGradients(from: result.gradients)
+            )
+
+            if step == 1 || step % 20 == 0 {
+                debugRows.append(
+                    trainingDebugRow(
+                        step: step,
+                        loss: loss,
+                        gradients: result.gradients,
+                        parameters: parameters,
+                        previousParameters: previousParameters,
+                        initialParameters: initialParameters,
+                        memory: Memory.snapshot()
+                    )
+                )
+            }
+
+            if step % 20 == 0 {
+                let render = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+                let url = outputDirectory.appendingPathComponent(String(format: "step_%03d_sbs.png", step))
+                try writeSideBySidePNG(
+                    target: target,
+                    render: render,
+                    width: scene.manifest.width,
+                    height: scene.manifest.height,
+                    to: url
+                )
+            }
+        }
+
+        try writeTrainingDebugSummary(debugRows, to: outputDirectory)
+        XCTAssertEqual(optimizer.state?.step, 200)
+        XCTAssertLessThanOrEqual(lastLoss, (firstLoss ?? lastLoss) * 10)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("step_200_sbs.png").path))
+    }
 }
 
 private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {
@@ -1188,6 +1270,107 @@ private func trainableGradients(from gradients: [MLXArray]) -> FastGSTrainableGr
         scales: gradients[4],
         rotations: gradients[5]
     )
+}
+
+private func writeSideBySidePNG(
+    target: MLXArray,
+    render: MLXArray,
+    width: Int,
+    height: Int,
+    to url: URL
+) throws {
+    let left = FastGSImageExport.rgbaBytes(outColor: target, width: width, height: height)
+    let right = FastGSImageExport.rgbaBytes(outColor: render, width: width, height: height)
+    var combined = [UInt8](repeating: 0, count: width * 2 * height * 4)
+    for row in 0..<height {
+        let sourceStart = row * width * 4
+        let targetStart = row * width * 2 * 4
+        combined.replaceSubrange(targetStart..<(targetStart + width * 4), with: left[sourceStart..<(sourceStart + width * 4)])
+        combined.replaceSubrange((targetStart + width * 4)..<(targetStart + width * 2 * 4), with: right[sourceStart..<(sourceStart + width * 4)])
+    }
+    try FastGSImageExport.writePNG(rgbaBytes: combined, width: width * 2, height: height, to: url)
+}
+
+private func trainingDebugRow(
+    step: Int,
+    loss: Float,
+    gradients: [MLXArray],
+    parameters: FastGSTrainableParameters,
+    previousParameters: FastGSTrainableParameters,
+    initialParameters: FastGSTrainableParameters,
+    memory: Memory.Snapshot
+) -> [String: Any] {
+    let names = ["means3D", "dc", "sh", "opacities", "scales", "rotations"]
+    let currentArrays = parameters.arrays
+    let previousArrays = previousParameters.arrays
+    let initialArrays = initialParameters.arrays
+    var fields = [String: Any]()
+    for index in names.indices {
+        fields[names[index]] = [
+            "gradient": numericSummary(gradients[index]),
+            "updateMaxAbs": maxAbsDiff(currentArrays[index], previousArrays[index]),
+            "deltaFromInitialMaxAbs": maxAbsDiff(currentArrays[index], initialArrays[index]),
+        ]
+    }
+    return [
+        "step": step,
+        "loss": loss,
+        "memory": [
+            "active": memory.activeMemory,
+            "cache": memory.cacheMemory,
+            "peak": memory.peakMemory,
+        ],
+        "fields": fields,
+    ]
+}
+
+private func numericSummary(_ array: MLXArray) -> [String: Any] {
+    let values = array.asArray(Float.self)
+    let finiteValues = values.filter(\.isFinite)
+    return [
+        "shape": array.shape,
+        "sum": finiteValues.reduce(Float(0), +),
+        "absSum": finiteValues.reduce(Float(0)) { $0 + abs($1) },
+        "maxAbs": finiteValues.map(abs).max() ?? 0,
+        "nonZeroCount": finiteValues.filter { abs($0) > 1e-7 }.count,
+    ]
+}
+
+private func writeTrainingDebugSummary(_ rows: [[String: Any]], to directory: URL) throws {
+    let jsonURL = directory.appendingPathComponent("debug_summary.json")
+    let jsonData = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
+    try jsonData.write(to: jsonURL)
+
+    let csvURL = directory.appendingPathComponent("debug_summary.csv")
+    let fieldNames = ["means3D", "dc", "sh", "opacities", "scales", "rotations"]
+    var lines = [
+        "step,loss,field,grad_sum,grad_abs_sum,grad_max_abs,grad_nonzero_count,update_max_abs,delta_from_initial_max_abs,memory_active,memory_cache,memory_peak"
+    ]
+    for row in rows {
+        let step = row["step"] as? Int ?? 0
+        let loss = row["loss"] as? Float ?? .nan
+        let memory = row["memory"] as? [String: Int] ?? [:]
+        let fields = row["fields"] as? [String: Any] ?? [:]
+        for fieldName in fieldNames {
+            let field = fields[fieldName] as? [String: Any] ?? [:]
+            let gradient = field["gradient"] as? [String: Any] ?? [:]
+            lines.append([
+                "\(step)",
+                "\(loss)",
+                fieldName,
+                "\(gradient["sum"] as? Float ?? .nan)",
+                "\(gradient["absSum"] as? Float ?? .nan)",
+                "\(gradient["maxAbs"] as? Float ?? .nan)",
+                "\(gradient["nonZeroCount"] as? Int ?? 0)",
+                "\(field["updateMaxAbs"] as? Float ?? .nan)",
+                "\(field["deltaFromInitialMaxAbs"] as? Float ?? .nan)",
+                "\(memory["active"] ?? 0)",
+                "\(memory["cache"] ?? 0)",
+                "\(memory["peak"] ?? 0)",
+            ].joined(separator: ","))
+        }
+    }
+    try lines.joined(separator: "\n").write(to: csvURL, atomically: true, encoding: .utf8)
 }
 
 private func recordedStageSummary(_ stages: FastGSRecordedForwardStages, sampleIDs: [Int]) -> [String: Any] {

@@ -455,6 +455,29 @@ capture yet.
     - `make test-swift-recorded-training-loop` runs a 3-step synthetic target
       loop and verifies losses stay finite while the final loss does not exceed
       the first loss by more than 1%.
+    - `make test-swift-recorded-training-preview` runs 200 steps against the
+      recorded target tensor and writes target/render side-by-side PNGs every
+      20 steps to `/private/tmp/fastgs_swift_training_preview`.
+    - The preview path now regenerates a full-point recorded reference under
+      `/private/tmp/fastgs_recorded_reference_full` instead of using the
+      4096/16384-point reduced fixtures.
+    - The preview path sets MLX Swift `Memory.cacheLimit` to 4 GB before the
+      training loop, matching the intended `mlx_set_cache_limit` behavior.
+    - The preview path writes `debug_summary.json` and `debug_summary.csv`
+      beside the PNGs. These logs track loss, MLX memory snapshot, each
+      trainable field's gradient `sum`/`absSum`/`maxAbs`/nonzero count, the
+      per-step update magnitude, and the accumulated delta from the initial
+      parameters.
+- Formal Swift training runner direction:
+  - [ ] Keep the first real runner Mac-App oriented rather than adding a
+    command-line executable. A CLI runner can remain a later convenience idea.
+  - [ ] Start with fixed-point training only: no densify, prune, opacity reset,
+    or optimizer-state migration until the rendered previews and debug logs
+    look trustworthy.
+  - [ ] Represent runner configuration as Swift structs so the macOS app can
+    own and mutate training parameters cleanly.
+  - [ ] After fixed-point training is stable, add FastGS-style after-train
+    features such as densify and prune as explicit later stages.
 
 ## Test Plan
 

@@ -24,6 +24,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
     public var colors: [Double]
     public var means3dBuffer: Float32Buffer?
     public var colorsBuffer: Float32Buffer?
+    public var targetBuffer: Float32Buffer?
     public var predChannelSums: [Double]
     public var samplePixelIds: [Int]
     public var predSamples: [Double]
@@ -46,6 +47,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
         case colors
         case means3dBuffer
         case colorsBuffer
+        case targetBuffer
         case predChannelSums
         case samplePixelIds
         case predSamples
@@ -69,6 +71,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
         colors: [Double],
         means3dBuffer: Float32Buffer? = nil,
         colorsBuffer: Float32Buffer? = nil,
+        targetBuffer: Float32Buffer? = nil,
         predChannelSums: [Double],
         samplePixelIds: [Int],
         predSamples: [Double],
@@ -90,6 +93,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
         self.colors = colors
         self.means3dBuffer = means3dBuffer
         self.colorsBuffer = colorsBuffer
+        self.targetBuffer = targetBuffer
         self.predChannelSums = predChannelSums
         self.samplePixelIds = samplePixelIds
         self.predSamples = predSamples
@@ -114,6 +118,7 @@ public struct FastGSRecordedForwardManifest: Decodable {
         colors = try container.decodeIfPresent([Double].self, forKey: .colors) ?? []
         means3dBuffer = try container.decodeIfPresent(Float32Buffer.self, forKey: .means3dBuffer)
         colorsBuffer = try container.decodeIfPresent(Float32Buffer.self, forKey: .colorsBuffer)
+        targetBuffer = try container.decodeIfPresent(Float32Buffer.self, forKey: .targetBuffer)
         predChannelSums = try container.decode([Double].self, forKey: .predChannelSums)
         samplePixelIds = try container.decode([Int].self, forKey: .samplePixelIds)
         predSamples = try container.decode([Double].self, forKey: .predSamples)
@@ -234,6 +239,11 @@ public struct FastGSRecordedForwardScene {
             scales: scales,
             rotations: MLXArray(rotations, [count, 4])
         )
+    }
+
+    public func targetOutColor() throws -> MLXArray {
+        let shape = [3, manifest.width * manifest.height]
+        return MLXArray(try floatBuffer(name: "target", descriptor: manifest.targetBuffer, fallback: [], expectedShape: shape), shape)
     }
 
     private func preprocessInput(parameters: FastGSTrainableParameters) throws -> FastGSPreprocessInput {

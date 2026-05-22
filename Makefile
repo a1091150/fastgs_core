@@ -8,11 +8,12 @@ FORCE ?= 0
 SWIFT_RECORDED_DATASET ?= /Users/yangdunfu/Downloads/2026_05_04_16_51_29
 SWIFT_RECORDED_REF_DIR ?= /private/tmp/fastgs_recorded_reference
 SWIFT_RECORDED_LARGE_REF_DIR ?= /private/tmp/fastgs_recorded_reference_16384
+SWIFT_RECORDED_FULL_REF_DIR ?= /private/tmp/fastgs_recorded_reference_full
 SWIFT_XCODE_DERIVED_DATA ?= /private/tmp/fastgs_swift_xcode_derived
 SWIFT_PREPROCESS_BACKWARD_REF ?= /private/tmp/fastgs_preprocess_backward_ref.json
 SWIFT_PREPROCESS_BACKWARD_DERIVED_DATA ?= /private/tmp/fastgs_swift_xcode_derived_preprocess_backward_parity
 
-.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel swift-recorded-reference swift-recorded-xcode-test swift-recorded-compare test-swift-recorded-forward swift-preprocess-backward-reference swift-preprocess-backward-parity-xcode test-swift-preprocess-backward-parity swift-recorded-training-smoke-xcode test-swift-recorded-training-smoke swift-recorded-training-loop-xcode test-swift-recorded-training-loop train-scanner-fixed train-scanner-fastgs train-scanner-fastgs2 train-scanner-fastgs2-base train-scanner-fastgs2-smoke train-scanner-fastgs-no-prune train-scanner-fastgs-smoke train-scanner-fastgs-bbox clean
+.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel swift-recorded-reference swift-recorded-full-reference swift-recorded-xcode-test swift-recorded-compare test-swift-recorded-forward swift-preprocess-backward-reference swift-preprocess-backward-parity-xcode test-swift-preprocess-backward-parity swift-recorded-training-smoke-xcode test-swift-recorded-training-smoke swift-recorded-training-loop-xcode test-swift-recorded-training-loop swift-recorded-training-preview-xcode test-swift-recorded-training-preview train-scanner-fixed train-scanner-fastgs train-scanner-fastgs2 train-scanner-fastgs2-base train-scanner-fastgs2-smoke train-scanner-fastgs-no-prune train-scanner-fastgs-smoke train-scanner-fastgs-bbox clean
 
 help:
 	@printf "Targets:\n"
@@ -31,6 +32,7 @@ help:
 	@printf "  make test-swift-preprocess-backward-parity  Generate preprocess backward refs and run slow Xcode parity tests.\n"
 	@printf "  make test-swift-recorded-training-smoke  Generate recorded Swift refs and run one-step training smoke.\n"
 	@printf "  make test-swift-recorded-training-loop  Generate recorded Swift refs and run a 3-step training loop smoke.\n"
+	@printf "  make test-swift-recorded-training-preview  Run 200-step Swift training preview and write SBS PNGs to /private/tmp.\n"
 	@printf "  make train-scanner-fixed Run scripts/train_scanner_fixed.py with the active conda python.\n"
 	@printf "  make train-scanner-fastgs Run scripts/train_scanner_fastgs.py with FastGS-style densify/prune.\n"
 	@printf "  make train-scanner-fastgs2 Run self-contained scanner FastGS2 training.\n"
@@ -90,6 +92,9 @@ swift-recorded-reference:
 	conda run -n $(CONDA_ENV) python swift/FastGSSwiftTools/generate_recorded_reference.py --dataset-dir $(SWIFT_RECORDED_DATASET) --max-points 4096 --out-dir $(SWIFT_RECORDED_REF_DIR)
 	conda run -n $(CONDA_ENV) python swift/FastGSSwiftTools/generate_recorded_reference.py --dataset-dir $(SWIFT_RECORDED_DATASET) --max-points 16384 --out-dir $(SWIFT_RECORDED_LARGE_REF_DIR)
 
+swift-recorded-full-reference:
+	conda run -n $(CONDA_ENV) python swift/FastGSSwiftTools/generate_recorded_reference.py --dataset-dir $(SWIFT_RECORDED_DATASET) --max-points 0 --out-dir $(SWIFT_RECORDED_FULL_REF_DIR)
+
 swift-recorded-xcode-test:
 	cd swift/FastGSSwiftApps && xcodebuild test -project FastGSSwift.xcodeproj -scheme FastGSSwiftMac -destination 'platform=macOS' -derivedDataPath $(SWIFT_XCODE_DERIVED_DATA)
 
@@ -116,6 +121,11 @@ swift-recorded-training-loop-xcode:
 	cd swift/FastGSSwiftApps && xcodebuild test -quiet -project FastGSSwift.xcodeproj -scheme FastGSSwiftMac -destination 'platform=macOS' -derivedDataPath $(SWIFT_XCODE_DERIVED_DATA) -test-timeouts-enabled NO -only-testing:FastGSSwiftXcodeTests/FastGSSmokeXcodeTests/testRecordedSmallTrainingLoopReducesSyntheticLossUnderXcode
 
 test-swift-recorded-training-loop: swift-recorded-reference swift-recorded-training-loop-xcode
+
+swift-recorded-training-preview-xcode:
+	cd swift/FastGSSwiftApps && xcodebuild test -quiet -project FastGSSwift.xcodeproj -scheme FastGSSwiftMac -destination 'platform=macOS' -derivedDataPath $(SWIFT_XCODE_DERIVED_DATA) -test-timeouts-enabled NO -only-testing:FastGSSwiftXcodeTests/FastGSSmokeXcodeTests/testRecordedTrainingPreview200StepsWritesSideBySidePNGsUnderXcode
+
+test-swift-recorded-training-preview: swift-recorded-full-reference swift-recorded-training-preview-xcode
 
 train-scanner-fixed:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14'
