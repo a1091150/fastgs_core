@@ -121,6 +121,36 @@ final class FastGSTrainingTests: XCTestCase {
             XCTAssertTrue(gradient.asArray(Float.self).allSatisfy { $0 == 0 })
         }
     }
+
+    func testRecordedTrainingRasterizeOnlyVJPValueAndGrad() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLXFast Metal tests require an Xcode/metallib-ready environment.")
+        }
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let parameters = try scene.initialTrainableParameters()
+        let target = try scene.render(parameters: parameters).outColor
+        let result = FastGSTrainingRenderFunction.valueAndZeroGrad(
+            scene: scene,
+            parameters: parameters,
+            target: target,
+            backwardMode: .rasterizeOnly
+        )
+
+        XCTAssertEqual(result.loss.shape, [])
+        XCTAssertTrue(result.loss.item(Float.self).isFinite)
+        XCTAssertEqual(result.gradients.count, 6)
+        XCTAssertEqual(result.gradients.count, parameters.arrays.count)
+
+        for (gradient, parameter) in zip(result.gradients, parameters.arrays) {
+            XCTAssertEqual(gradient.shape, parameter.shape)
+            XCTAssertEqual(gradient.dtype, parameter.dtype)
+            XCTAssertTrue(gradient.asArray(Float.self).allSatisfy { $0 == 0 })
+        }
+    }
 }
 
 private func assertTrainingClose(

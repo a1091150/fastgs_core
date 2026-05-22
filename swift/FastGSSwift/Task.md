@@ -341,8 +341,9 @@ capture yet.
     every trainable parameter. This is intentional: the goal is to prove the
     full forward -> loss -> backward plumbing before trusting any Metal
     gradient math.
-- [x] Add Swift `CustomFunction` wrappers before the full preprocess backward math
-  port:
+- [x] Add an initial whole-render Swift `CustomFunction` smoke wrapper before
+  the full preprocess backward math port. This proved that `valueAndGrad` can
+  enter a custom VJP, but it should not become the final training graph shape.
 
   ```swift
   let render = CustomFunction {
@@ -356,19 +357,35 @@ capture yet.
   }
   ```
 
-- The `CustomFunction` should define the autograd contract; the math inside
-  `Forward` should still use the existing MLXFast render path. The first `VJP`
-  implementation can be shape-correct zero gradients; later versions should
-  replace those zeros with rasterize backward and the full preprocess backward
-  `MLXFast.metalKernel(...)` port.
-- Keep forward intermediates available as `MLXArray` outputs so VJP can consume
-  them.
-- After zero-VJP autograd plumbing is stable, replace zero gradients stage by
+- Replace the whole-render `CustomFunction` with stage-level `CustomFunction`
+  wrappers, matching the C++ primitive design where each forward primitive owns
+  its VJP:
+  - [ ] `FastGSRasterizeCustomFunction`
+    - Forward returns all rasterize outputs, not only `outColor`:
+      `bucketToTile`, `sampledT`, `sampledAr`, `finalT`, `nContrib`,
+      `maxContrib`, `pixelColors`, `outColor`, and `metricCount`.
+    - The loss should only consume `outColor`, but the VJP can receive the
+      forward outputs through the custom function contract rather than
+      recomputing rasterize in backward.
+    - VJP calls `FastGSRasterizeBackward.forward(...)` and returns gradients for
+      rasterize inputs. These become the intermediate gradients for preprocess
+      outputs such as `xy`, `rgb`, `conicOpacity`, and `viewspacePoints`.
+  - [ ] `FastGSPreprocessCustomFunction`
+    - Forward returns all preprocess outputs:
+      `radii`, `xy`, `depths`, `cov3D`, `rgb`, `conicOpacity`,
+      `tilesTouched`, `clamped`, and `viewspacePoints`.
+    - VJP consumes cotangents from rasterize backward and calls
+      `FastGSPreprocessBackward.forward(...)` to produce gradients for
+      trainable Gaussian parameters.
+  - Binning/tile scheduling remains a forward-only/discrete bridge with
+    `stopGradient` boundaries around scheduling arrays such as offsets, sorted
+    lists, ranges, bucket counts, and bucket offsets.
+- After stage-level autograd plumbing is stable, replace zero gradients stage by
   stage and validate gradients against the existing implementation before
   attempting real training from Swift.
 - `FastGSTrainingBackwardMode` may be added as a temporary migration scaffold:
   - `.zero` keeps the current shape-correct zero-gradient VJP.
-  - `.rasterizeOnly` routes `cotangents[0]` through
+  - [x] `.rasterizeOnly` routes `cotangents[0]` through
     `FastGSRasterizeBackward.forward(...)` to prove loss cotangents reach the
     rasterize backward Metal path, while trainable parameter gradients can
     remain zero.
