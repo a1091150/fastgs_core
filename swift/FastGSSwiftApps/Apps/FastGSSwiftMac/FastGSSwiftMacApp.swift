@@ -18,8 +18,7 @@ struct FastGSSwiftMacApp: App {
 
 @MainActor
 private final class RenderPreviewModel: ObservableObject {
-    private let trainingReferenceDirectory = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full_512", isDirectory: true)
-    private let trainingTotalSteps = 200
+    private var trainingConfig = FastGSRecordedTrainingRunConfig()
     @Published var texture: MTLTexture?
     @Published var fallbackImage: CGImage?
     @Published var targetImage: CGImage?
@@ -34,30 +33,8 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var isTraining = false
     let device = MTLCreateSystemDefaultDevice()
 
-    private var cameraManifestURLs: [URL] {
-        let fileManager = FileManager.default
-        let contents = (try? fileManager.contentsOfDirectory(
-            at: trainingReferenceDirectory,
-            includingPropertiesForKeys: nil
-        )) ?? []
-        let perCameraURLs = contents
-            .filter { $0.lastPathComponent.hasPrefix("camera_") }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            .map { $0.appendingPathComponent("recorded_manifest.json") }
-            .filter { fileManager.fileExists(atPath: $0.path) }
-        if !perCameraURLs.isEmpty {
-            return perCameraURLs
-        }
-
-        let rootManifestURL = trainingReferenceDirectory.appendingPathComponent("recorded_manifest.json")
-        if fileManager.fileExists(atPath: rootManifestURL.path) {
-            return [rootManifestURL]
-        }
-        return []
-    }
-
     var cameraLabel: String {
-        let count = max(cameraManifestURLs.count, 1)
+        let count = max(trainingConfig.referenceSet.count, 1)
         return "Camera \(min(cameraIndex + 1, count)) / \(count)"
     }
 
@@ -151,7 +128,12 @@ private final class RenderPreviewModel: ObservableObject {
         }
 
         isRendering = true
-        let manifestURL = selectedTrainingManifestURL()
+        refreshTrainingReferences()
+        guard let manifestURL = selectedTrainingManifestURL() else {
+            status = "No recorded references. Run make swift-recorded-full-512-reference first"
+            isRendering = false
+            return
+        }
         status = "Rendering \(cameraLabel)..."
 
         Task {
@@ -203,9 +185,14 @@ private final class RenderPreviewModel: ObservableObject {
 
         isTraining = true
         trainingStep = 0
-        totalTrainingSteps = trainingTotalSteps
-        let manifestURL = selectedTrainingManifestURL()
-        let totalSteps = trainingTotalSteps
+        refreshTrainingReferences()
+        totalTrainingSteps = trainingConfig.totalSteps
+        guard let manifestURL = selectedTrainingManifestURL() else {
+            status = "Training failed: run make swift-recorded-full-512-reference first"
+            isTraining = false
+            return
+        }
+        let config = trainingConfig
         status = "Training \(cameraLabel)..."
 
         Task {
@@ -216,16 +203,10 @@ private final class RenderPreviewModel: ObservableObject {
                     return
                 }
 
-                guard FileManager.default.fileExists(atPath: manifestURL.path) else {
-                    status = "Training failed: run make swift-recorded-full-512-reference first"
-                    isTraining = false
-                    return
-                }
-
                 let trained = try await Task.detached(priority: .userInitiated) {
                     let result = try FastGSRecordedTrainingPreview.run(
                         manifestURL: manifestURL,
-                        config: FastGSRecordedTrainingPreviewConfig(totalSteps: totalSteps)
+                        config: config
                     ) { step in
                         Task { @MainActor in
                             self.trainingStep = step
@@ -272,30 +253,33 @@ private final class RenderPreviewModel: ObservableObject {
         guard !isRendering, !isTraining else {
             return
         }
-        let count = cameraManifestURLs.count
+        refreshTrainingReferences()
+        let count = trainingConfig.referenceSet.count
         guard count > 0 else {
             status = "No recorded references. Run make swift-recorded-full-512-reference first"
             return
         }
         cameraIndex = (cameraIndex + delta + count) % count
         trainingStep = 0
-        totalTrainingSteps = trainingTotalSteps
+        totalTrainingSteps = trainingConfig.totalSteps
         status = "Selected \(cameraLabel)"
         if previewMode == .recordedSideBySide {
             renderRecordedFrame()
         }
     }
 
-    private func selectedTrainingManifestURL() -> URL {
-        let manifests = cameraManifestURLs
-        if !manifests.isEmpty {
-            let index = min(max(cameraIndex, 0), manifests.count - 1)
-            if cameraIndex != index {
-                cameraIndex = index
-            }
-            return manifests[index]
+    private func refreshTrainingReferences() {
+        trainingConfig.referenceSet = FastGSRecordedTrainingReferenceSet(
+            referenceDirectory: trainingConfig.referenceSet.referenceDirectory
+        )
+        let index = trainingConfig.referenceSet.clampedIndex(cameraIndex)
+        if cameraIndex != index {
+            cameraIndex = index
         }
-        return trainingReferenceDirectory.appendingPathComponent("recorded_manifest.json")
+    }
+
+    private func selectedTrainingManifestURL() -> URL? {
+        trainingConfig.referenceSet.manifestURL(at: cameraIndex)
     }
 }
 

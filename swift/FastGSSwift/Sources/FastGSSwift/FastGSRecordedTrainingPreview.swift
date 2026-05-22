@@ -1,12 +1,77 @@
 import Foundation
 import MLX
 
-public struct FastGSRecordedTrainingPreviewConfig {
+public struct FastGSRecordedTrainingReferenceSet {
+    public var referenceDirectory: URL
+    public var manifests: [URL]
+
+    public init(referenceDirectory: URL, manifests: [URL]) {
+        self.referenceDirectory = referenceDirectory
+        self.manifests = manifests
+    }
+
+    public init(referenceDirectory: URL) {
+        self.referenceDirectory = referenceDirectory
+
+        let fileManager = FileManager.default
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: referenceDirectory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        let perCameraURLs = contents
+            .filter { $0.lastPathComponent.hasPrefix("camera_") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .map { $0.appendingPathComponent("recorded_manifest.json") }
+            .filter { fileManager.fileExists(atPath: $0.path) }
+
+        if !perCameraURLs.isEmpty {
+            self.manifests = perCameraURLs
+        } else {
+            let rootManifest = referenceDirectory.appendingPathComponent("recorded_manifest.json")
+            self.manifests = fileManager.fileExists(atPath: rootManifest.path) ? [rootManifest] : []
+        }
+    }
+
+    public var count: Int {
+        manifests.count
+    }
+
+    public var isEmpty: Bool {
+        manifests.isEmpty
+    }
+
+    public func clampedIndex(_ index: Int) -> Int {
+        guard !manifests.isEmpty else {
+            return 0
+        }
+        return min(max(index, 0), manifests.count - 1)
+    }
+
+    public func wrappingIndex(_ index: Int) -> Int {
+        guard !manifests.isEmpty else {
+            return 0
+        }
+        return (index % manifests.count + manifests.count) % manifests.count
+    }
+
+    public func manifestURL(at index: Int) -> URL? {
+        guard !manifests.isEmpty else {
+            return nil
+        }
+        return manifests[clampedIndex(index)]
+    }
+}
+
+public struct FastGSRecordedTrainingRunConfig {
+    public var referenceSet: FastGSRecordedTrainingReferenceSet
     public var totalSteps: Int
     public var cacheLimitBytes: Int
     public var learningRates: FastGSAdamLearningRates
 
     public init(
+        referenceSet: FastGSRecordedTrainingReferenceSet = FastGSRecordedTrainingReferenceSet(
+            referenceDirectory: URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full_512", isDirectory: true)
+        ),
         totalSteps: Int = 200,
         cacheLimitBytes: Int = 4 * 1024 * 1024 * 1024,
         learningRates: FastGSAdamLearningRates = FastGSAdamLearningRates(
@@ -18,11 +83,14 @@ public struct FastGSRecordedTrainingPreviewConfig {
             rotations: 5e-5
         )
     ) {
+        self.referenceSet = referenceSet
         self.totalSteps = totalSteps
         self.cacheLimitBytes = cacheLimitBytes
         self.learningRates = learningRates
     }
 }
+
+public typealias FastGSRecordedTrainingPreviewConfig = FastGSRecordedTrainingRunConfig
 
 public struct FastGSRecordedTrainingPreviewResult {
     public var targetRGBA: [UInt8]
@@ -48,8 +116,19 @@ public struct FastGSRecordedTrainingPreviewResult {
 
 public enum FastGSRecordedTrainingPreview {
     public static func run(
+        config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
+        cameraIndex: Int,
+        progress: ((Int) -> Void)? = nil
+    ) throws -> FastGSRecordedTrainingPreviewResult {
+        guard let manifestURL = config.referenceSet.manifestURL(at: cameraIndex) else {
+            throw FastGSRecordedTrainingPreviewError.noRecordedReference(config.referenceSet.referenceDirectory)
+        }
+        return try run(manifestURL: manifestURL, config: config, progress: progress)
+    }
+
+    public static func run(
         manifestURL: URL,
-        config: FastGSRecordedTrainingPreviewConfig = FastGSRecordedTrainingPreviewConfig(),
+        config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
         Memory.cacheLimit = config.cacheLimitBytes
@@ -111,4 +190,8 @@ public enum FastGSRecordedTrainingPreview {
             array.eval()
         }
     }
+}
+
+public enum FastGSRecordedTrainingPreviewError: Error, Equatable {
+    case noRecordedReference(URL)
 }

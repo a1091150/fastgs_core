@@ -476,8 +476,13 @@ capture yet.
   - [x] Start with fixed-point training only: no densify, prune, opacity reset,
     or optimizer-state migration until the rendered previews and debug logs
     look trustworthy.
-  - [ ] Represent runner configuration as Swift structs so the macOS app can
+  - [x] Represent runner configuration as Swift structs so the macOS app can
     own and mutate training parameters cleanly.
+    - `FastGSRecordedTrainingRunConfig` owns total steps, cache limit, learning
+      rates, and the current recorded reference set.
+    - `FastGSRecordedTrainingReferenceSet` scans per-camera
+      `recorded_manifest.json` files and falls back to the root manifest when
+      per-camera references have not been generated yet.
   - [x] Add a first macOS app training button that runs one 200-step
     fixed-point training pass and displays the completed target/render result
     in the app.
