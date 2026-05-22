@@ -19,7 +19,7 @@ struct FastGSSwiftMacApp: App {
 private final class RenderPreviewModel: ObservableObject {
     private var trainingConfig = FastGSRecordedTrainingRunConfig()
     private var datasetDirectory = URL(fileURLWithPath: "/Users/yangdunfu/Downloads/2026_05_04_16_51_29", isDirectory: true)
-    private let outputDirectory = URL(fileURLWithPath: "/private/tmp/fastgs_swift_mac_training", isDirectory: true)
+    private var outputDirectory = URL(fileURLWithPath: "/private/tmp/fastgs_swift_mac_training", isDirectory: true)
     @Published var texture: MTLTexture?
     @Published var fallbackImage: CGImage?
     @Published var targetImage: CGImage?
@@ -33,18 +33,29 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var isTraining = false
     @Published var datasetLabel = "2026_05_04_16_51_29"
     @Published var cameraCount = 1
+    @Published var outputLabel = "/private/tmp/fastgs_swift_mac_training"
+    @Published var trainingWidth = 512
+    @Published var trainingHeight = 512
+    @Published var maxFrames = 1
+    @Published var trainingSteps = 200
+    @Published var isDatasetLoaded = false
+    @Published var isLoadingDataset = false
+    private var frameIndices = [Int]()
     let device = MTLCreateSystemDefaultDevice()
 
     init() {
-        refreshDataset()
+        refreshOutputLabel()
+        refreshTrainingConfig()
         totalTrainingSteps = trainingConfig.totalSteps
-        status = cameraCount > 0
-            ? "Ready for native dataset training"
-            : "Choose a scanner dataset folder"
+        cameraCount = 0
+        status = "Press Load to read scanner frames"
     }
 
     var cameraLabel: String {
         let count = max(cameraCount, 1)
+        if frameIndices.indices.contains(cameraIndex) {
+            return "Camera \(cameraIndex + 1) / \(count)  frame_\(String(format: "%05d", frameIndices[cameraIndex]))"
+        }
         return "Camera \(min(cameraIndex + 1, count)) / \(count)"
     }
 
@@ -52,10 +63,14 @@ private final class RenderPreviewModel: ObservableObject {
         guard !isTraining else {
             return
         }
+        guard isDatasetLoaded else {
+            status = "Press Load before training"
+            return
+        }
 
         isTraining = true
         trainingStep = 0
-        refreshDataset()
+        refreshTrainingConfig()
         totalTrainingSteps = trainingConfig.totalSteps
         guard cameraCount > 0 else {
             status = "Training failed: choose a folder with frame_*.jpg/json and points.ply"
@@ -63,6 +78,10 @@ private final class RenderPreviewModel: ObservableObject {
             return
         }
         let config = trainingConfig
+        let trainingWidth = max(16, trainingWidth)
+        let trainingHeight = max(16, trainingHeight)
+        let maxFrames = max(1, maxFrames)
+        let selectedFrameIndex = frameIndices.indices.contains(cameraIndex) ? frameIndices[cameraIndex] : cameraIndex
         status = "Training \(cameraLabel)..."
 
         Task {
@@ -72,14 +91,20 @@ private final class RenderPreviewModel: ObservableObject {
                     isTraining = false
                     return
                 }
-                let cameraIndex = cameraIndex
                 let outputDirectory = outputDirectory
                 let datasetDirectory = datasetDirectory
+                let trainingWidth = trainingWidth
+                let trainingHeight = trainingHeight
+                let maxFrames = maxFrames
+                let selectedFrameIndex = selectedFrameIndex
 
                 let trained = try await Task.detached(priority: .userInitiated) {
                     let result = try FastGSRecordedTrainingPreview.run(
                         scannerDatasetDirectory: datasetDirectory,
-                        cameraIndex: cameraIndex,
+                        cameraIndex: selectedFrameIndex,
+                        width: trainingWidth,
+                        height: trainingHeight,
+                        maxFrames: maxFrames,
                         config: config
                     ) { step in
                         Task { @MainActor in
@@ -94,7 +119,7 @@ private final class RenderPreviewModel: ObservableObject {
                             height: preview.height,
                             to: trainingOutputURL(
                                 outputDirectory: outputDirectory,
-                                cameraIndex: cameraIndex,
+                                cameraIndex: selectedFrameIndex,
                                 step: preview.step
                             )
                         )
@@ -139,7 +164,10 @@ private final class RenderPreviewModel: ObservableObject {
         guard !isTraining else {
             return
         }
-        refreshDataset()
+        guard isDatasetLoaded else {
+            status = "Press Load before switching cameras"
+            return
+        }
         let count = cameraCount
         guard count > 0 else {
             status = "Choose a scanner dataset folder"
@@ -149,6 +177,7 @@ private final class RenderPreviewModel: ObservableObject {
         trainingStep = 0
         totalTrainingSteps = trainingConfig.totalSteps
         status = "Selected \(cameraLabel)"
+        loadSelectedTargetPreview()
     }
 
     func chooseDatasetDirectory() {
@@ -166,20 +195,165 @@ private final class RenderPreviewModel: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url {
             datasetDirectory = url
             cameraIndex = 0
-            refreshDataset()
-            status = cameraCount > 0
-                ? "Selected dataset \(datasetLabel)"
-                : "Folder is missing scanner frame pairs or points.ply"
+            resetLoadedDataset()
+            datasetLabel = datasetDirectory.lastPathComponent
+            status = "Press Load to read \(datasetLabel)"
+        }
+    }
+
+    func chooseOutputDirectory() {
+        guard !isTraining else {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = outputDirectory
+        panel.message = "Choose where training preview PNGs should be written"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            outputDirectory = url
+            refreshOutputLabel()
+            status = "Selected output \(outputLabel)"
+        }
+    }
+
+    func applySettings() {
+        trainingWidth = max(16, trainingWidth)
+        trainingHeight = max(16, trainingHeight)
+        maxFrames = max(1, maxFrames)
+        trainingSteps = max(1, trainingSteps)
+        refreshTrainingConfig()
+        totalTrainingSteps = trainingConfig.totalSteps
+        renderSize = "\(trainingWidth) x \(trainingHeight)"
+        if isDatasetLoaded {
+            status = "Updated training settings"
+            loadSelectedTargetPreview()
+        } else {
+            status = "Updated settings. Press Load to read scanner frames"
+        }
+    }
+
+    func loadDataset() {
+        guard !isTraining, !isLoadingDataset else {
+            return
+        }
+
+        resetLoadedDataset(clearStatus: false)
+        isLoadingDataset = true
+        datasetLabel = datasetDirectory.lastPathComponent
+        status = "Loading scanner frames and initial render..."
+        let datasetDirectory = datasetDirectory
+        let width = max(16, trainingWidth)
+        let height = max(16, trainingHeight)
+        let maxFrames = max(1, maxFrames)
+
+        Task {
+            do {
+                let loaded = try await Task.detached(priority: .userInitiated) {
+                    let indices = scannerFramePairIndices(directory: datasetDirectory)
+                    guard !indices.isEmpty else {
+                        throw RenderPreviewError.noFramePairs
+                    }
+                    guard FileManager.default.fileExists(atPath: datasetDirectory.appendingPathComponent("points.ply").path) else {
+                        throw RenderPreviewError.missingPointCloud
+                    }
+                    let firstIndex = indices[0]
+                    let preview = try initialRenderPreview(
+                        directory: datasetDirectory,
+                        frameIndex: firstIndex,
+                        width: width,
+                        height: height,
+                        maxFrames: maxFrames
+                    )
+                    return (indices, preview)
+                }.value
+
+                frameIndices = loaded.0
+                cameraCount = loaded.0.count
+                cameraIndex = 0
+                targetImage = loaded.1.target
+                texture = nil
+                fallbackImage = loaded.1.render
+                renderSize = "\(width) x \(height)"
+                previewAspectRatio = Double(width) / Double(height)
+                previewMode = .recordedSideBySide
+                isDatasetLoaded = true
+                status = "Loaded \(cameraCount) scanner frames with initial render"
+            } catch {
+                resetLoadedDataset(clearStatus: false)
+                status = "Load failed: \(error)"
+            }
+            isLoadingDataset = false
         }
     }
 
     private func refreshDataset() {
         datasetLabel = datasetDirectory.lastPathComponent
-        cameraCount = scannerFramePairCount(directory: datasetDirectory)
+        frameIndices = scannerFramePairIndices(directory: datasetDirectory)
+        cameraCount = frameIndices.count
         if cameraCount > 0 {
             cameraIndex = min(max(cameraIndex, 0), cameraCount - 1)
         } else {
             cameraIndex = 0
+        }
+    }
+
+    private func refreshOutputLabel() {
+        outputLabel = outputDirectory.path
+    }
+
+    private func resetLoadedDataset(clearStatus: Bool = true) {
+        isDatasetLoaded = false
+        frameIndices = []
+        cameraCount = 0
+        cameraIndex = 0
+        targetImage = nil
+        texture = nil
+        fallbackImage = nil
+        previewMode = .single
+        if clearStatus {
+            status = "Press Load to read scanner frames"
+        }
+    }
+
+    private func refreshTrainingConfig() {
+        trainingConfig.totalSteps = max(1, trainingSteps)
+    }
+
+    private func loadSelectedTargetPreview() {
+        guard !isTraining, isDatasetLoaded, cameraCount > 0 else {
+            return
+        }
+        let selectedFrameIndex = frameIndices.indices.contains(cameraIndex) ? frameIndices[cameraIndex] : cameraIndex
+        let datasetDirectory = datasetDirectory
+        let width = max(16, trainingWidth)
+        let height = max(16, trainingHeight)
+
+        Task {
+            do {
+                let image = try await Task.detached(priority: .userInitiated) {
+                    try targetPreviewCGImage(
+                        directory: datasetDirectory,
+                        frameIndex: selectedFrameIndex,
+                        width: width,
+                        height: height
+                    )
+                }.value
+
+                targetImage = image
+                texture = nil
+                fallbackImage = nil
+                renderSize = "\(width) x \(height)"
+                previewAspectRatio = Double(width) / Double(height)
+                previewMode = .recordedSideBySide
+                status = "Selected \(cameraLabel)"
+            } catch {
+                status = "Target preview failed: \(error)"
+            }
         }
     }
 }
@@ -191,6 +365,9 @@ private enum RenderPreviewMode {
 
 private enum RenderPreviewError: Error {
     case textureCreationFailed
+    case missingPointCloud
+    case noFramePairs
+    case missingFrameImage(Int)
 }
 
 private func trainingOutputURL(outputDirectory: URL, cameraIndex: Int, step: Int) -> URL {
@@ -222,8 +399,88 @@ private func writeSideBySidePNG(
     try FastGSImageExport.writePNG(rgbaBytes: combined, width: width * 2, height: height, to: url)
 }
 
+private func rgbaBytes(chw: [Float], width: Int, height: Int) -> [UInt8] {
+    let pixels = width * height
+    var rgba = [UInt8](repeating: 255, count: pixels * 4)
+    guard chw.count >= pixels * 3 else {
+        return rgba
+    }
+    for pixel in 0..<pixels {
+        rgba[pixel * 4] = UInt8(min(max(chw[pixel], 0), 1) * 255)
+        rgba[pixel * 4 + 1] = UInt8(min(max(chw[pixels + pixel], 0), 1) * 255)
+        rgba[pixel * 4 + 2] = UInt8(min(max(chw[pixels * 2 + pixel], 0), 1) * 255)
+        rgba[pixel * 4 + 3] = 255
+    }
+    return rgba
+}
+
+private func targetPreviewCGImage(directory: URL, frameIndex: Int, width: Int, height: Int) throws -> CGImage {
+    guard let imageURL = scannerFrameImageURL(directory: directory, frameIndex: frameIndex) else {
+        throw RenderPreviewError.missingFrameImage(frameIndex)
+    }
+    guard
+        let source = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+        let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    else {
+        throw RenderPreviewError.missingFrameImage(frameIndex)
+    }
+
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    var rgba = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+    guard let context = CGContext(
+        data: &rgba,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: bytesPerRow,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else {
+        throw RenderPreviewError.missingFrameImage(frameIndex)
+    }
+    context.interpolationQuality = .high
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return try FastGSImageExport.cgImage(rgbaBytes: rgba, width: width, height: height)
+}
+
+private func initialRenderPreview(
+    directory: URL,
+    frameIndex: Int,
+    width: Int,
+    height: Int,
+    maxFrames: Int
+) throws -> (target: CGImage, render: CGImage) {
+    let dataset = try FastGSScannerDatasetLoader.load(
+        directory: directory,
+        options: FastGSScannerDatasetOptions(
+            width: width,
+            height: height,
+            maxFrames: maxFrames,
+            startIndex: frameIndex,
+            normalizeWithAllFramePairs: true
+        )
+    )
+    let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+    let targetRGBA = FastGSImageExport.rgbaBytes(
+        outColor: try scene.targetOutColor(),
+        width: width,
+        height: height
+    )
+    let renderRGBA = FastGSImageExport.rgbaBytes(
+        outColor: try scene.render().outColor,
+        width: width,
+        height: height
+    )
+    return (
+        target: try FastGSImageExport.cgImage(rgbaBytes: targetRGBA, width: width, height: height),
+        render: try FastGSImageExport.cgImage(rgbaBytes: renderRGBA, width: width, height: height)
+    )
+}
+
 private struct RenderPreviewView: View {
     @StateObject private var model = RenderPreviewModel()
+    @State private var showingSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -231,62 +488,72 @@ private struct RenderPreviewView: View {
             Divider()
             preview
         }
+        .sheet(isPresented: $showingSettings) {
+            TrainingSettingsView(model: model)
+        }
     }
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("FastGSSwift")
-                    .font(.headline)
-                Text(model.datasetLabel)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                Text("\(model.renderSize)  \(model.status)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if model.totalTrainingSteps > 0 {
-                    Text("Step \(model.trainingStep) / \(model.totalTrainingSteps)")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("FastGSSwift")
+                        .font(.headline)
+                    Text("\(model.renderSize)  \(model.status)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if model.totalTrainingSteps > 0 {
+                        Text("Step \(model.trainingStep) / \(model.totalTrainingSteps)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(model.isTraining ? .primary : .secondary)
+                    }
+                    Text(model.cameraLabel)
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(model.isTraining ? .primary : .secondary)
+                        .foregroundStyle(.secondary)
                 }
-                Text(model.cameraLabel)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
 
-            Spacer()
+                Spacer()
 
-            Button {
-                model.chooseDatasetDirectory()
-            } label: {
-                Image(systemName: "folder")
-            }
-            .disabled(model.isTraining)
-            .help("Choose scanner dataset folder")
+                Button {
+                    showingSettings = true
+                } label: {
+                    Label("Settings", systemImage: "slider.horizontal.3")
+                }
+                .disabled(model.isTraining)
+                .help("Training settings")
 
-            Button {
-                model.selectCamera(delta: -1)
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .disabled(model.isTraining)
-            .help("Previous recorded camera")
+                Button {
+                    model.loadDataset()
+                } label: {
+                    Label("Load", systemImage: "tray.and.arrow.down")
+                }
+                .disabled(model.isTraining || model.isLoadingDataset)
+                .help("Load scanner frame list and target preview")
 
-            Button {
-                model.selectCamera(delta: 1)
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-            .disabled(model.isTraining)
-            .help("Next recorded camera")
+                Button {
+                    model.selectCamera(delta: -1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(model.isTraining || !model.isDatasetLoaded)
+                .help("Previous recorded camera")
 
-            Button {
-                model.trainRecordedFrame()
-            } label: {
-                Image(systemName: "play.circle")
+                Button {
+                    model.selectCamera(delta: 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(model.isTraining || !model.isDatasetLoaded)
+                .help("Next recorded camera")
+
+                Button {
+                    model.trainRecordedFrame()
+                } label: {
+                    Label("Train", systemImage: "play.circle")
+                }
+                .disabled(model.isTraining || !model.isDatasetLoaded)
+                .help("Train native scanner dataset frame")
             }
-            .disabled(model.isTraining)
-            .help("Train native scanner dataset 512 x 512 frame")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -344,7 +611,9 @@ private struct RenderPreviewView: View {
                         .resizable()
                         .scaledToFit()
                 } else {
-                    ProgressView()
+                    Text("Render not trained")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -365,12 +634,100 @@ private struct RenderPreviewView: View {
     }
 }
 
-private func scannerFramePairCount(directory: URL) -> Int {
+private struct TrainingSettingsView: View {
+    @ObservedObject var model: RenderPreviewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Training Settings")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    model.applySettings()
+                    dismiss()
+                } label: {
+                    Label("Done", systemImage: "checkmark")
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+
+            folderControl(
+                title: "Dataset",
+                value: model.datasetLabel,
+                systemImage: "folder",
+                action: model.chooseDatasetDirectory
+            )
+
+            folderControl(
+                title: "Output",
+                value: model.outputLabel,
+                systemImage: "square.and.arrow.down",
+                action: model.chooseOutputDirectory
+            )
+
+            HStack(spacing: 12) {
+                numericField(title: "Width", value: $model.trainingWidth, range: 16...4096)
+                numericField(title: "Height", value: $model.trainingHeight, range: 16...4096)
+                numericField(title: "Max Frames", value: $model.maxFrames, range: 1...9999)
+                numericField(title: "Training Steps", value: $model.trainingSteps, range: 1...100000)
+            }
+        }
+        .padding(20)
+        .frame(width: 620)
+    }
+
+    private func folderControl(
+        title: String,
+        value: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(value)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: action) {
+                    Image(systemName: systemImage)
+                }
+                .disabled(model.isTraining)
+            }
+        }
+    }
+
+    private func numericField(title: String, value: Binding<Int>, range: ClosedRange<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField(title, value: clamped(value, range: range), format: .number)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 116)
+                .disabled(model.isTraining)
+        }
+    }
+
+    private func clamped(_ value: Binding<Int>, range: ClosedRange<Int>) -> Binding<Int> {
+        Binding(
+            get: { value.wrappedValue },
+            set: { value.wrappedValue = min(max($0, range.lowerBound), range.upperBound) }
+        )
+    }
+}
+
+private func scannerFramePairIndices(directory: URL) -> [Int] {
     guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("points.ply").path) else {
-        return 0
+        return []
     }
     guard let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
-        return 0
+        return []
     }
 
     var images = Set<Int>()
@@ -385,7 +742,23 @@ private func scannerFramePairCount(directory: URL) -> Int {
             jsons.insert(index)
         }
     }
-    return images.intersection(jsons).count
+    return images.intersection(jsons).sorted()
+}
+
+private func scannerFrameImageURL(directory: URL, frameIndex: Int) -> URL? {
+    let candidates = [
+        String(format: "frame_%05d.jpg", frameIndex),
+        String(format: "frame_%05d.jpeg", frameIndex),
+        "frame_\(frameIndex).jpg",
+        "frame_\(frameIndex).jpeg",
+    ]
+    for candidate in candidates {
+        let url = directory.appendingPathComponent(candidate)
+        if FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
+    }
+    return nil
 }
 
 private func scannerFrameIndex(_ url: URL) -> Int? {

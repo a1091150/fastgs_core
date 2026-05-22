@@ -148,6 +148,9 @@ public enum FastGSRecordedTrainingPreview {
     public static func run(
         scannerDatasetDirectory: URL,
         cameraIndex: Int,
+        width: Int = 512,
+        height: Int = 512,
+        maxFrames: Int = 1,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
@@ -157,9 +160,9 @@ public enum FastGSRecordedTrainingPreview {
         let dataset = try FastGSScannerDatasetLoader.load(
             directory: scannerDatasetDirectory,
             options: FastGSScannerDatasetOptions(
-                width: 512,
-                height: 512,
-                maxFrames: 1,
+                width: width,
+                height: height,
+                maxFrames: maxFrames,
                 startIndex: cameraIndex,
                 normalizeWithAllFramePairs: true
             )

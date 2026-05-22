@@ -612,6 +612,11 @@ or recomputing them from unrelated values.
   - [x] Add previous/next camera buttons in the macOS app toolbar. These switch
     the selected recorded camera target/render pair for the fixed 512x512
     training preview.
+    - [x] Switch by sorted scanner frame-pair offset instead of treating the UI
+      camera index as a raw file frame index.
+    - [x] Load the selected frame target preview immediately when switching, and
+      clear the stale render so the UI does not show the previous training
+      result as if it belonged to the new camera.
   - [x] Add `make swift-recorded-full-512-camera-references` to generate
     per-camera 512x512 full-point manifests under
     `/private/tmp/fastgs_recorded_reference_full_512/camera_000...`.
@@ -620,6 +625,30 @@ or recomputing them from unrelated values.
     target/render display.
     - [x] Remove static fixture forward, mock camera frame, and early reload/test
       forward buttons from the primary app UI.
+  - [x] Add macOS app training settings controls:
+    - dataset directory picker, defaulting to
+      `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`
+    - output directory picker, defaulting to
+      `/private/tmp/fastgs_swift_mac_training`
+    - editable training width and height
+    - editable `maxFrames` loader setting
+    - editable training step count
+    - settings now live in a SwiftUI sheet opened from the toolbar, keeping the
+      main toolbar focused on camera navigation and training start.
+    - [x] Add an explicit `Load` button. The app no longer scans or previews the
+      dataset implicitly after settings changes; camera navigation and training
+      stay disabled until Load succeeds.
+    - [x] Make camera switching use a target-only JPEG preview path instead of
+      `FastGSScannerDatasetLoader.load(...)`, so switching frames does not
+      re-read `points.ply`.
+    - [x] Run one initial forward render during Load so the right-hand Swift
+      Render pane shows the current untrained Gaussian render before pressing
+      Train.
+    - explicit Train button
+    - Current training remains single-view: `maxFrames` controls how many
+      frames the native loader reads from the selected start frame, but the
+      fixed-point training scene still uses the first loaded frame until
+      multi-view training is implemented.
   - [ ] After fixed-point training is stable, add FastGS-style after-train
     features such as densify and prune as explicit later stages.
 
