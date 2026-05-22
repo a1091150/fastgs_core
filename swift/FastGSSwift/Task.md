@@ -672,11 +672,15 @@ or recomputing them from unrelated values.
       frames the native loader reads from the selected start frame, but the
       fixed-point training scene still uses the first loaded frame until
       multi-view training is implemented.
-    - Next UI wiring: if camera switching or a future preview-refresh button is
-      allowed while training is active, it should call
-      `FastGSRenderPreviewScheduler.requestRender()` and let the training loop
-      perform the render between steps instead of launching a concurrent MLX
-      render task.
+    - [x] Allow camera switching during training as a queued preview request.
+      The left/right buttons update the requested camera and call
+      `FastGSRenderPreviewScheduler.requestRender()`. The training loop consumes
+      the request only after finishing the current optimization step, renders
+      that camera with the current trainable parameters, updates the Mac App
+      preview, then continues training. This preview does not change the
+      single-view training target yet.
+    - Next UI wiring: any future preview-refresh button should follow the same
+      scheduler path instead of launching a concurrent MLX render task.
     - [x] Add a manual performance report test for camera switching:
       `FASTGS_RUN_PERF_REPORT=1 swift test --filter FastGSScannerDatasetLoaderTests/testFixedScannerCameraSwitchPerformanceReport`.
       On the fixed dataset, full loader time was about 3.8s because
