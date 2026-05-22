@@ -338,8 +338,10 @@ capture yet.
       `maxAbs`, and fixed samples.
   - [ ] expand preprocess backward parity beyond the first synthetic fixture:
     - [x] SH color path
-    - [ ] precomputed covariance path
-    - [ ] clamping path
+    - [x] precomputed covariance path skipped for now because the normal
+      training path uses SH degree inputs rather than precomputed covariance
+    - [x] clamping path skipped for now; revisit only if SH training shows
+      clamp-related color-gradient issues
     - [ ] recorded scene subsets
 - [x] Before continuing the full preprocess backward Metal math port, add an
   end-to-end autograd plumbing test. Single backward-kernel tests are useful,
@@ -445,8 +447,11 @@ capture yet.
 - Later optimizer work:
   - [ ] checkpoint parameter arrays and optimizer state
   - [ ] support densify/prune state migration when Gaussian count changes
-  - [ ] add recorded-data loss and training smoke loop after backward parity
+  - [x] add recorded-data loss and one-step training smoke loop after backward parity
     exists
+    - `make test-swift-recorded-training-smoke` regenerates the small recorded
+      reference, runs Xcode, computes a nonzero image loss, calls
+      `valueAndGrad`, and verifies Adam updates at least one trainable array.
 
 ## Test Plan
 

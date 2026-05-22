@@ -739,6 +739,65 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(result.gradients[4].shape, parameters.scales.shape)
         XCTAssertEqual(result.gradients[5].shape, parameters.rotations.shape)
     }
+
+    func testRecordedSmallTrainingStepUpdatesParametersUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let parameters = try scene.initialTrainableParameters()
+        let initialRender = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+        let target = 0.9 * initialRender
+        let result = FastGSTrainingStageGraph.valueAndGrad(
+            scene: scene,
+            parameters: parameters,
+            target: target
+        )
+
+        XCTAssertEqual(result.loss.shape, [])
+        XCTAssertTrue(result.loss.item(Float.self).isFinite)
+        XCTAssertGreaterThan(result.loss.item(Float.self), 0)
+        XCTAssertEqual(result.gradients.count, 6)
+        XCTAssertEqual(result.gradients[0].shape, parameters.means3D.shape)
+        XCTAssertEqual(result.gradients[1].shape, parameters.dc.shape)
+        XCTAssertEqual(result.gradients[2].shape, parameters.sh.shape)
+        XCTAssertEqual(result.gradients[3].shape, parameters.opacities.shape)
+        XCTAssertEqual(result.gradients[4].shape, parameters.scales.shape)
+        XCTAssertEqual(result.gradients[5].shape, parameters.rotations.shape)
+        XCTAssertTrue(result.gradients.contains { hasFiniteNonZeroValues($0) })
+
+        var optimizer = FastGSAdamOptimizer(
+            learningRates: FastGSAdamLearningRates(
+                means3D: 1e-4,
+                dc: 1e-3,
+                sh: 1e-3,
+                opacities: 1e-3,
+                scales: 1e-4,
+                rotations: 1e-4
+            )
+        )
+        let gradientStruct = FastGSTrainableGradients(
+            means3D: result.gradients[0],
+            dc: result.gradients[1],
+            sh: result.gradients[2],
+            opacities: result.gradients[3],
+            scales: result.gradients[4],
+            rotations: result.gradients[5]
+        )
+        let updated = optimizer.update(parameters: parameters, gradients: gradientStruct)
+
+        XCTAssertEqual(optimizer.state?.step, 1)
+        XCTAssertFalse(optimizer.stateArrays().isEmpty)
+        XCTAssertTrue(
+            maxAbsDiff(updated.means3D, parameters.means3D) > 0
+                || maxAbsDiff(updated.dc, parameters.dc) > 0
+                || maxAbsDiff(updated.sh, parameters.sh) > 0
+                || maxAbsDiff(updated.opacities, parameters.opacities) > 0
+                || maxAbsDiff(updated.scales, parameters.scales) > 0
+                || maxAbsDiff(updated.rotations, parameters.rotations) > 0
+        )
+    }
 }
 
 private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {
@@ -1063,6 +1122,16 @@ private func samples(_ values: [Float], ids: [Int], channels: Int) -> [Float] {
     return (0..<channels).flatMap { channel in
         ids.map { values[channel * count + $0] }
     }
+}
+
+private func hasFiniteNonZeroValues(_ array: MLXArray) -> Bool {
+    array.asArray(Float.self).contains { $0.isFinite && abs($0) > 1e-7 }
+}
+
+private func maxAbsDiff(_ lhs: MLXArray, _ rhs: MLXArray) -> Float {
+    let left = lhs.asArray(Float.self)
+    let right = rhs.asArray(Float.self)
+    return zip(left, right).map { abs($0 - $1) }.max() ?? 0
 }
 
 private func recordedStageSummary(_ stages: FastGSRecordedForwardStages, sampleIDs: [Int]) -> [String: Any] {

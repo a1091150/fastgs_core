@@ -12,7 +12,7 @@ SWIFT_XCODE_DERIVED_DATA ?= /private/tmp/fastgs_swift_xcode_derived
 SWIFT_PREPROCESS_BACKWARD_REF ?= /private/tmp/fastgs_preprocess_backward_ref.json
 SWIFT_PREPROCESS_BACKWARD_DERIVED_DATA ?= /private/tmp/fastgs_swift_xcode_derived_preprocess_backward_parity
 
-.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel swift-recorded-reference swift-recorded-xcode-test swift-recorded-compare test-swift-recorded-forward swift-preprocess-backward-reference swift-preprocess-backward-parity-xcode test-swift-preprocess-backward-parity train-scanner-fixed train-scanner-fastgs train-scanner-fastgs2 train-scanner-fastgs2-base train-scanner-fastgs2-smoke train-scanner-fastgs-no-prune train-scanner-fastgs-smoke train-scanner-fastgs-bbox clean
+.PHONY: help env-check gen-primitive cmake-configure pyext-build test-build test-run xcode-configure xcode-build pip-install pip-develop pip-wheel swift-recorded-reference swift-recorded-xcode-test swift-recorded-compare test-swift-recorded-forward swift-preprocess-backward-reference swift-preprocess-backward-parity-xcode test-swift-preprocess-backward-parity swift-recorded-training-smoke-xcode test-swift-recorded-training-smoke train-scanner-fixed train-scanner-fastgs train-scanner-fastgs2 train-scanner-fastgs2-base train-scanner-fastgs2-smoke train-scanner-fastgs-no-prune train-scanner-fastgs-smoke train-scanner-fastgs-bbox clean
 
 help:
 	@printf "Targets:\n"
@@ -29,6 +29,7 @@ help:
 	@printf "  make pip-wheel         Build wheel/sdist via python -m build.\n"
 	@printf "  make test-swift-recorded-forward  Regenerate recorded Swift refs, run Xcode tests, compare stage summaries.\n"
 	@printf "  make test-swift-preprocess-backward-parity  Generate preprocess backward refs and run slow Xcode parity tests.\n"
+	@printf "  make test-swift-recorded-training-smoke  Generate recorded Swift refs and run one-step training smoke.\n"
 	@printf "  make train-scanner-fixed Run scripts/train_scanner_fixed.py with the active conda python.\n"
 	@printf "  make train-scanner-fastgs Run scripts/train_scanner_fastgs.py with FastGS-style densify/prune.\n"
 	@printf "  make train-scanner-fastgs2 Run self-contained scanner FastGS2 training.\n"
@@ -104,6 +105,11 @@ swift-preprocess-backward-parity-xcode:
 	cd swift/FastGSSwiftApps && FASTGS_RUN_SLOW_PARITY=1 xcodebuild test -quiet -project FastGSSwift.xcodeproj -scheme FastGSSwiftMac -destination 'platform=macOS' -derivedDataPath $(SWIFT_PREPROCESS_BACKWARD_DERIVED_DATA) -test-timeouts-enabled NO -only-testing:FastGSSwiftXcodeTests/FastGSSmokeXcodeTests/testPreprocessBackwardMatchesReferenceSummaryUnderXcode -only-testing:FastGSSwiftXcodeTests/FastGSSmokeXcodeTests/testPreprocessBackwardSHDegree3MatchesReferenceSummaryUnderXcode
 
 test-swift-preprocess-backward-parity: swift-preprocess-backward-reference swift-preprocess-backward-parity-xcode
+
+swift-recorded-training-smoke-xcode:
+	cd swift/FastGSSwiftApps && xcodebuild test -quiet -project FastGSSwift.xcodeproj -scheme FastGSSwiftMac -destination 'platform=macOS' -derivedDataPath $(SWIFT_XCODE_DERIVED_DATA) -test-timeouts-enabled NO -only-testing:FastGSSwiftXcodeTests/FastGSSmokeXcodeTests/testRecordedSmallTrainingStepUpdatesParametersUnderXcode
+
+test-swift-recorded-training-smoke: swift-recorded-reference swift-recorded-training-smoke-xcode
 
 train-scanner-fixed:
 	/bin/zsh -lc 'source "$(CONDA_BASE)/etc/profile.d/conda.sh" && conda activate $(CONDA_ENV) && python scripts/train_scanner_fixed.py --data /Users/yangdunfu/Downloads/2026_03_01_16_36_14'
