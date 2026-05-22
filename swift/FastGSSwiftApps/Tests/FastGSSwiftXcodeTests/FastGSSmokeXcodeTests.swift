@@ -615,6 +615,32 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(gradients[5].shape, input.rotations.shape)
         XCTAssertTrue(gradients[0].asArray(Float.self).contains { abs($0) > 1e-7 })
     }
+
+    func testTrainingStageGraphValueAndGradRunsUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let parameters = try scene.initialTrainableParameters()
+        let target = FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+        let result = FastGSTrainingStageGraph.valueAndGrad(
+            scene: scene,
+            parameters: parameters,
+            target: target
+        )
+
+        XCTAssertEqual(result.loss.shape, [])
+        XCTAssertTrue(result.loss.item(Float.self).isFinite)
+        XCTAssertEqual(result.loss.item(Float.self), 0, accuracy: 1e-7)
+        XCTAssertEqual(result.gradients.count, 6)
+        XCTAssertEqual(result.gradients[0].shape, parameters.means3D.shape)
+        XCTAssertEqual(result.gradients[1].shape, parameters.dc.shape)
+        XCTAssertEqual(result.gradients[2].shape, parameters.sh.shape)
+        XCTAssertEqual(result.gradients[3].shape, parameters.opacities.shape)
+        XCTAssertEqual(result.gradients[4].shape, parameters.scales.shape)
+        XCTAssertEqual(result.gradients[5].shape, parameters.rotations.shape)
+    }
 }
 
 private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {

@@ -380,6 +380,11 @@ capture yet.
   - Binning/tile scheduling remains a forward-only/discrete bridge with
     `stopGradient` boundaries around scheduling arrays such as offsets, sorted
     lists, ranges, bucket counts, and bucket offsets.
+- [x] Add a full stage-level training graph smoke test:
+  `FastGSPreprocessCustomFunction -> FastGSBinning.forward with stopGradient
+  scheduling -> FastGSRasterizeCustomFunction -> MSE loss -> valueAndGrad`.
+  This confirms the Swift graph can pass through rasterize VJP and preprocess
+  VJP and return the six recorded-path trainable gradients.
 - After stage-level autograd plumbing is stable, replace zero gradients stage by
   stage and validate gradients against the existing implementation before
   attempting real training from Swift.
