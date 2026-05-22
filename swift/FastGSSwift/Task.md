@@ -487,6 +487,12 @@ capture yet.
     matching `tanFovX`/`tanFovY`, image size, target tensor, and manifest.
   - [x] Show current training progress as `Step current / total` in the macOS
     app toolbar.
+  - [x] Add previous/next camera buttons in the macOS app toolbar. These switch
+    the selected recorded camera target/render pair for the fixed 512x512
+    training preview.
+  - [x] Add `make swift-recorded-full-512-camera-references` to generate
+    per-camera 512x512 full-point manifests under
+    `/private/tmp/fastgs_recorded_reference_full_512/camera_000...`.
   - [ ] After fixed-point training is stable, add FastGS-style after-train
     features such as densify and prune as explicit later stages.
 

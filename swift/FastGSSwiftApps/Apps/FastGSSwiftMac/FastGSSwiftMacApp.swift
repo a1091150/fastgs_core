@@ -18,8 +18,7 @@ struct FastGSSwiftMacApp: App {
 
 @MainActor
 private final class RenderPreviewModel: ObservableObject {
-    private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
-    private let trainingManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full_512/recorded_manifest.json")
+    private let trainingReferenceDirectory = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full_512", isDirectory: true)
     private let trainingTotalSteps = 200
     @Published var texture: MTLTexture?
     @Published var fallbackImage: CGImage?
@@ -27,12 +26,40 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var status = "Ready"
     @Published var trainingStep = 0
     @Published var totalTrainingSteps = 0
+    @Published var cameraIndex = 0
     @Published var renderSize = "80 x 48"
     @Published var previewAspectRatio = 80.0 / 48.0
     @Published var previewMode: RenderPreviewMode = .single
     @Published var isRendering = false
     @Published var isTraining = false
     let device = MTLCreateSystemDefaultDevice()
+
+    private var cameraManifestURLs: [URL] {
+        let fileManager = FileManager.default
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: trainingReferenceDirectory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        let perCameraURLs = contents
+            .filter { $0.lastPathComponent.hasPrefix("camera_") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .map { $0.appendingPathComponent("recorded_manifest.json") }
+            .filter { fileManager.fileExists(atPath: $0.path) }
+        if !perCameraURLs.isEmpty {
+            return perCameraURLs
+        }
+
+        let rootManifestURL = trainingReferenceDirectory.appendingPathComponent("recorded_manifest.json")
+        if fileManager.fileExists(atPath: rootManifestURL.path) {
+            return [rootManifestURL]
+        }
+        return []
+    }
+
+    var cameraLabel: String {
+        let count = max(cameraManifestURLs.count, 1)
+        return "Camera \(min(cameraIndex + 1, count)) / \(count)"
+    }
 
     func render() {
         guard !isRendering, !isTraining else {
@@ -124,8 +151,8 @@ private final class RenderPreviewModel: ObservableObject {
         }
 
         isRendering = true
-        let manifestURL = recordedManifestURL
-        status = "Rendering recorded scanner frame..."
+        let manifestURL = selectedTrainingManifestURL()
+        status = "Rendering \(cameraLabel)..."
 
         Task {
             do {
@@ -161,7 +188,7 @@ private final class RenderPreviewModel: ObservableObject {
                 renderSize = "\(rendered.3) x \(rendered.4)"
                 previewAspectRatio = Double(rendered.3) / Double(rendered.4)
                 previewMode = .recordedSideBySide
-                status = "Rendered recorded scanner frame, \(rendered.5) points"
+                status = "Rendered \(cameraLabel), \(rendered.5) points"
             } catch {
                 status = "Recorded render failed: \(error)"
             }
@@ -177,9 +204,9 @@ private final class RenderPreviewModel: ObservableObject {
         isTraining = true
         trainingStep = 0
         totalTrainingSteps = trainingTotalSteps
-        let manifestURL = trainingManifestURL
+        let manifestURL = selectedTrainingManifestURL()
         let totalSteps = trainingTotalSteps
-        status = "Training recorded 512 x 512 frame..."
+        status = "Training \(cameraLabel)..."
 
         Task {
             do {
@@ -202,7 +229,7 @@ private final class RenderPreviewModel: ObservableObject {
                     ) { step in
                         Task { @MainActor in
                             self.trainingStep = step
-                            self.status = "Training recorded 512 x 512 frame..."
+                            self.status = "Training \(self.cameraLabel)..."
                         }
                     }
 
@@ -233,12 +260,42 @@ private final class RenderPreviewModel: ObservableObject {
                 renderSize = "\(trained.3) x \(trained.4)"
                 previewAspectRatio = Double(trained.3) / Double(trained.4)
                 previewMode = .recordedSideBySide
-                status = "Training completed, \(trained.5) points"
+                status = "Training completed for \(cameraLabel), \(trained.5) points"
             } catch {
                 status = "Training failed: \(error)"
             }
             isTraining = false
         }
+    }
+
+    func selectCamera(delta: Int) {
+        guard !isRendering, !isTraining else {
+            return
+        }
+        let count = cameraManifestURLs.count
+        guard count > 0 else {
+            status = "No recorded references. Run make swift-recorded-full-512-reference first"
+            return
+        }
+        cameraIndex = (cameraIndex + delta + count) % count
+        trainingStep = 0
+        totalTrainingSteps = trainingTotalSteps
+        status = "Selected \(cameraLabel)"
+        if previewMode == .recordedSideBySide {
+            renderRecordedFrame()
+        }
+    }
+
+    private func selectedTrainingManifestURL() -> URL {
+        let manifests = cameraManifestURLs
+        if !manifests.isEmpty {
+            let index = min(max(cameraIndex, 0), manifests.count - 1)
+            if cameraIndex != index {
+                cameraIndex = index
+            }
+            return manifests[index]
+        }
+        return trainingReferenceDirectory.appendingPathComponent("recorded_manifest.json")
     }
 }
 
@@ -282,9 +339,28 @@ private struct RenderPreviewView: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(model.isTraining ? .primary : .secondary)
                 }
+                Text(model.cameraLabel)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
+
+            Button {
+                model.selectCamera(delta: -1)
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .disabled(model.isRendering || model.isTraining)
+            .help("Previous recorded camera")
+
+            Button {
+                model.selectCamera(delta: 1)
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(model.isRendering || model.isTraining)
+            .help("Next recorded camera")
 
             Button {
                 model.renderMockCameraFrame()
