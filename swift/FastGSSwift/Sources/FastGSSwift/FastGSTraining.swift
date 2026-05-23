@@ -293,6 +293,10 @@ public struct FastGSAdamOptimizer {
         state?.arrays ?? []
     }
 
+    public mutating func replaceState(_ state: FastGSAdamState?) {
+        self.state = state
+    }
+
     private mutating func updateField(
         parameter: MLXArray,
         gradient: MLXArray,

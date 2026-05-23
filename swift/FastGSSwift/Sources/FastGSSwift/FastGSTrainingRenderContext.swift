@@ -76,7 +76,7 @@ public struct FastGSTrainingRenderContext {
             viewMatrix: viewMatrix,
             projectionMatrix: projectionMatrix,
             cameraPosition: cameraPosition,
-            viewspacePoints: viewspacePoints
+            viewspacePoints: MLXArray.zeros([parameters.gaussianCount, 4], dtype: .float32, stream: stream)
         )
     }
 
@@ -95,7 +95,7 @@ public struct FastGSTrainingRenderContext {
             background: background,
             radii: stopGradient(preprocess.radii, stream: stream),
             metricMap: metricMap,
-            metricCount: metricCount
+            metricCount: MLXArray.zeros([preprocess.radii.shape[0]], dtype: .int32, stream: stream)
         )
     }
 }

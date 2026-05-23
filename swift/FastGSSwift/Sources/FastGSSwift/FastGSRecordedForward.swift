@@ -447,7 +447,7 @@ public struct FastGSRecordedForwardScene {
     private func preprocessInput(parameters: FastGSTrainableParameters) throws -> FastGSPreprocessInput {
         try validate(parameters: parameters)
 
-        let count = manifest.pointCount
+        let count = parameters.gaussianCount
         return FastGSPreprocessInput(
             means3D: parameters.means3D,
             dc: parameters.dc,
@@ -504,7 +504,7 @@ public struct FastGSRecordedForwardScene {
     }
 
     private func validate(parameters: FastGSTrainableParameters) throws {
-        let count = manifest.pointCount
+        let count = parameters.gaussianCount
         let maxSHCoefficients = maxSHCoefficients()
         precondition(parameters.means3D.shape == [count, 3], "means3D must have shape [N, 3].")
         precondition(parameters.dc.shape == [count, 3], "dc must have shape [N, 3].")

@@ -68,6 +68,7 @@ public struct FastGSRecordedTrainingRunConfig {
     public var previewInterval: Int
     public var cacheLimitBytes: Int
     public var learningRates: FastGSAdamLearningRates
+    public var densification: FastGSDensificationConfig
 
     public init(
         referenceSet: FastGSRecordedTrainingReferenceSet = FastGSRecordedTrainingReferenceSet(
@@ -83,13 +84,15 @@ public struct FastGSRecordedTrainingRunConfig {
             opacityLogits: 5e-4,
             scales: 5e-5,
             rotations: 5e-5
-        )
+        ),
+        densification: FastGSDensificationConfig = FastGSDensificationConfig()
     ) {
         self.referenceSet = referenceSet
         self.totalSteps = totalSteps
         self.previewInterval = previewInterval
         self.cacheLimitBytes = cacheLimitBytes
         self.learningRates = learningRates
+        self.densification = densification
     }
 }
 
@@ -126,11 +129,46 @@ public struct FastGSRecordedTrainingPreviewResult {
     }
 }
 
+public struct FastGSRecordedTrainingPruneSummary: Sendable {
+    public var step: Int
+    public var reason: String
+    public var beforeCount: Int
+    public var afterCount: Int
+    public var opacityHits: Int
+    public var screenSizeHits: Int
+    public var worldScaleHits: Int
+    public var prunedCount: Int
+    public var keptCount: Int
+
+    public init(
+        step: Int,
+        reason: String,
+        beforeCount: Int,
+        afterCount: Int,
+        opacityHits: Int,
+        screenSizeHits: Int,
+        worldScaleHits: Int,
+        prunedCount: Int,
+        keptCount: Int
+    ) {
+        self.step = step
+        self.reason = reason
+        self.beforeCount = beforeCount
+        self.afterCount = afterCount
+        self.opacityHits = opacityHits
+        self.screenSizeHits = screenSizeHits
+        self.worldScaleHits = worldScaleHits
+        self.prunedCount = prunedCount
+        self.keptCount = keptCount
+    }
+}
+
 public enum FastGSRecordedTrainingPreview {
     public static func run(
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         cameraIndex: Int,
         progress: ((Int) -> Void)? = nil,
+        pruneSummary: ((FastGSRecordedTrainingPruneSummary) -> Void)? = nil,
         previewScheduler: FastGSRenderPreviewScheduler? = nil,
         scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
@@ -138,13 +176,14 @@ public enum FastGSRecordedTrainingPreview {
         guard let manifestURL = config.referenceSet.manifestURL(at: cameraIndex) else {
             throw FastGSRecordedTrainingPreviewError.noRecordedReference(config.referenceSet.referenceDirectory)
         }
-        return try run(manifestURL: manifestURL, config: config, progress: progress, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
+        return try run(manifestURL: manifestURL, config: config, progress: progress, pruneSummary: pruneSummary, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
     }
 
     public static func run(
         manifestURL: URL,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil,
+        pruneSummary: ((FastGSRecordedTrainingPruneSummary) -> Void)? = nil,
         previewScheduler: FastGSRenderPreviewScheduler? = nil,
         scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
@@ -152,7 +191,7 @@ public enum FastGSRecordedTrainingPreview {
         Memory.cacheLimit = config.cacheLimitBytes
 
         let scene = try FastGSRecordedForwardScene(manifestURL: manifestURL)
-        return try run(scene: scene, config: config, progress: progress, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
+        return try run(scene: scene, config: config, progress: progress, pruneSummary: pruneSummary, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
     }
 
     public static func run(
@@ -163,6 +202,7 @@ public enum FastGSRecordedTrainingPreview {
         maxFrames: Int = 1,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil,
+        pruneSummary: ((FastGSRecordedTrainingPruneSummary) -> Void)? = nil,
         previewScheduler: FastGSRenderPreviewScheduler? = nil,
         scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
@@ -182,18 +222,19 @@ public enum FastGSRecordedTrainingPreview {
         let scenes = dataset.frames.indices.map {
             FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: $0)
         }
-        return try run(scenes: scenes, config: config, progress: progress, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
+        return try run(scenes: scenes, config: config, progress: progress, pruneSummary: pruneSummary, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
     }
 
     public static func run(
         scene: FastGSRecordedForwardScene,
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         progress: ((Int) -> Void)? = nil,
+        pruneSummary: ((FastGSRecordedTrainingPruneSummary) -> Void)? = nil,
         previewScheduler: FastGSRenderPreviewScheduler? = nil,
         scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
     ) throws -> FastGSRecordedTrainingPreviewResult {
-        try run(scenes: [scene], config: config, progress: progress, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
+        try run(scenes: [scene], config: config, progress: progress, pruneSummary: pruneSummary, previewScheduler: previewScheduler, scheduledPreview: scheduledPreview, preview: preview)
     }
 
     public static func run(
@@ -201,6 +242,7 @@ public enum FastGSRecordedTrainingPreview {
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         initialParameters: FastGSTrainableParameters? = nil,
         progress: ((Int) -> Void)? = nil,
+        pruneSummary: ((FastGSRecordedTrainingPruneSummary) -> Void)? = nil,
         previewScheduler: FastGSRenderPreviewScheduler? = nil,
         scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
         preview: ((FastGSRecordedTrainingPreviewResult) throws -> Void)? = nil
@@ -211,6 +253,10 @@ public enum FastGSRecordedTrainingPreview {
         let targets = try scenes.map { try $0.targetOutColor() }
         var parameters = try initialParameters ?? scenes[0].initialTrainableParameters()
         var optimizer = FastGSAdamOptimizer(learningRates: config.learningRates)
+        var densificationState = FastGSDensificationState(
+            count: parameters.gaussianCount,
+            sceneExtent: estimatedSceneExtent(parameters: parameters)
+        )
         var lastScene = scenes[0]
         var lastTarget = targets[0]
 
@@ -231,6 +277,17 @@ public enum FastGSRecordedTrainingPreview {
                 gradients: trainableGradients(from: result.gradients)
             )
             eval(parameters: parameters, optimizer: optimizer)
+
+            if let summary = applyPruneOnlyIfNeeded(
+                step: step,
+                config: config.densification,
+                parameters: &parameters,
+                optimizer: &optimizer,
+                densificationState: &densificationState
+            ) {
+                eval(parameters: parameters, optimizer: optimizer)
+                pruneSummary?(summary)
+            }
             progress?(step)
 
             let shouldRenderScheduledPreview = previewScheduler?.consumeRenderRequest() == true
@@ -256,7 +313,7 @@ public enum FastGSRecordedTrainingPreview {
                         ),
                         width: scene.manifest.width,
                         height: scene.manifest.height,
-                        pointCount: scene.manifest.pointCount,
+                        pointCount: parameters.gaussianCount,
                         frameIndex: scene.scannerFrameIndex
                     )
                 )
@@ -278,7 +335,7 @@ public enum FastGSRecordedTrainingPreview {
             ),
             width: lastScene.manifest.width,
             height: lastScene.manifest.height,
-            pointCount: lastScene.manifest.pointCount,
+            pointCount: parameters.gaussianCount,
             parameters: parameters,
             frameIndex: lastScene.scannerFrameIndex
         )
@@ -310,6 +367,78 @@ public enum FastGSRecordedTrainingPreview {
         for array in optimizer.stateArrays() {
             array.eval()
         }
+    }
+
+    private static func applyPruneOnlyIfNeeded(
+        step: Int,
+        config: FastGSDensificationConfig,
+        parameters: inout FastGSTrainableParameters,
+        optimizer: inout FastGSAdamOptimizer,
+        densificationState: inout FastGSDensificationState
+    ) -> FastGSRecordedTrainingPruneSummary? {
+        guard config.pruneGaussians else {
+            return nil
+        }
+
+        let reason: String
+        let minOpacity: Float
+        let minGaussians: Int
+        if config.shouldFinalPrune(step: step) {
+            reason = "final_prune"
+            minOpacity = config.finalPruneMinOpacity
+            minGaussians = config.finalPruneMinGaussians
+        } else if config.shouldDensifyAndPrune(step: step) {
+            reason = "densify_prune"
+            minOpacity = config.minOpacity
+            minGaussians = 1
+        } else {
+            return nil
+        }
+
+        let beforeCount = parameters.gaussianCount
+        let result = FastGSAfterTraining.pruneOnly(
+            parameters: parameters,
+            optimizerState: optimizer.state,
+            densificationState: densificationState,
+            minOpacity: minOpacity,
+            maxScreenSize: config.maxScreenSize,
+            maxWorldScaleFactor: config.maxWorldScaleFactor,
+            minGaussians: minGaussians
+        )
+        parameters = result.parameters
+        optimizer.replaceState(result.optimizerState)
+        if let prunedDensificationState = result.densificationState {
+            densificationState = prunedDensificationState
+        } else {
+            densificationState.reset(count: parameters.gaussianCount)
+        }
+
+        return FastGSRecordedTrainingPruneSummary(
+            step: step,
+            reason: reason,
+            beforeCount: beforeCount,
+            afterCount: parameters.gaussianCount,
+            opacityHits: result.opacityHits,
+            screenSizeHits: result.screenSizeHits,
+            worldScaleHits: result.worldScaleHits,
+            prunedCount: result.prunedCount,
+            keptCount: result.keptCount
+        )
+    }
+
+    private static func estimatedSceneExtent(parameters: FastGSTrainableParameters) -> Float {
+        let means = parameters.means3D.asArray(Float.self)
+        guard means.count >= 3 else {
+            return 1
+        }
+        var maxRadius: Float = 0
+        for index in stride(from: 0, to: means.count - 2, by: 3) {
+            let x = means[index]
+            let y = means[index + 1]
+            let z = means[index + 2]
+            maxRadius = max(maxRadius, (x * x + y * y + z * z).squareRoot())
+        }
+        return max(1, maxRadius)
     }
 }
 

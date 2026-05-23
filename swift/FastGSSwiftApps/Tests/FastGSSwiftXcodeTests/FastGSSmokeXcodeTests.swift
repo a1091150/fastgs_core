@@ -1124,6 +1124,46 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         )
     }
 
+    func testRecordedTrainingLoopAppliesPruneOnlyUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        var summaries = [FastGSRecordedTrainingPruneSummary]()
+        let config = FastGSRecordedTrainingRunConfig(
+            totalSteps: 1,
+            previewInterval: 0,
+            learningRates: recordedTrainingSmokeLearningRates(),
+            densification: FastGSDensificationConfig(
+                densifyFromStep: 0,
+                densifyUntilStep: 10,
+                densificationInterval: 1,
+                minOpacity: 0.99,
+                maxScreenSize: 0,
+                maxWorldScaleFactor: 0,
+                pruneGaussians: true
+            )
+        )
+
+        let result = try FastGSRecordedTrainingPreview.run(
+            scene: scene,
+            config: config,
+            pruneSummary: { summaries.append($0) }
+        )
+
+        let summary = try XCTUnwrap(summaries.first)
+        XCTAssertEqual(summary.step, 1)
+        XCTAssertEqual(summary.reason, "densify_prune")
+        XCTAssertEqual(summary.beforeCount, scene.manifest.pointCount)
+        XCTAssertEqual(summary.afterCount, 1)
+        XCTAssertEqual(summary.prunedCount, scene.manifest.pointCount - 1)
+        XCTAssertEqual(summary.keptCount, 1)
+        XCTAssertEqual(result.pointCount, 1)
+        XCTAssertEqual(result.parameters?.gaussianCount, 1)
+        XCTAssertEqual(result.renderRGBA.count, scene.manifest.width * scene.manifest.height * 4)
+    }
+
     func testRecordedTrainingPreview200StepsWritesSideBySidePNGsUnderXcode() throws {
         guard FileManager.default.fileExists(atPath: recordedFullManifestURL.path) else {
             throw XCTSkip("Generate \(recordedFullManifestURL.path) first.")

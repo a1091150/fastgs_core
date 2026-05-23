@@ -142,6 +142,11 @@ private final class RenderPreviewModel: ObservableObject {
                                 self.status = "\(mode.statusVerb) \(trainingFrameCount) frames..."
                             }
                         }
+                        let pruneSummary: (FastGSRecordedTrainingPruneSummary) -> Void = { summary in
+                            Task { @MainActor in
+                                self.status = "Pruned \(summary.prunedCount) Gaussians at step \(summary.step): \(summary.beforeCount) -> \(summary.afterCount)"
+                            }
+                        }
                         let preview: (FastGSRecordedTrainingPreviewResult) throws -> Void = { preview in
                             guard shouldSaveTrainingArtifacts, let runDirectory else {
                                 return
@@ -210,6 +215,7 @@ private final class RenderPreviewModel: ObservableObject {
                             config: config,
                             initialParameters: initialParameters,
                             progress: progress,
+                            pruneSummary: pruneSummary,
                             previewScheduler: previewScheduler,
                             scheduledPreview: scheduledPreview,
                             preview: preview

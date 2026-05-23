@@ -716,6 +716,10 @@ or recomputing them from unrelated values.
         state, and densification state.
       - [x] Add a minimum-Gaussian guard that keeps the highest-opacity rows
         when a prune pass would remove too many Gaussians.
+      - [x] Wire prune-only into the recorded training loop after optimizer
+        updates and before scheduled/file preview rendering.
+      - [x] Emit prune summaries with before/after Gaussian count and
+        opacity/screen/world hit counts.
       - Then add final multi-view score pruning with a minimum-Gaussian guard.
     - [ ] Add densification stat accumulation.
       - Requires a stable way to access `radii` and `d_viewspace` /
