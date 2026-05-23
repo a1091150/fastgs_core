@@ -65,6 +65,60 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(optimizer.stateArrays().count, 14)
     }
 
+    func testCheckpointRoundTripsParametersAndInfoUnderXcode() throws {
+        let checkpointDirectory = URL(
+            fileURLWithPath: "/private/tmp/fastgs_swift_checkpoint_roundtrip",
+            isDirectory: true
+        )
+        try? FileManager.default.removeItem(at: checkpointDirectory)
+
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
+            dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 1, 3]),
+            sh: MLXArray([Float](repeating: 0.1, count: 12), [2, 2, 3]),
+            opacities: MLXArray([Float(0.5), 0.7], [2]),
+            scales: MLXArray([Float](repeating: 0.3, count: 6), [2, 3]),
+            rotations: MLXArray([Float(1), 0, 0, 0, 1, 0, 0, 0], [2, 4]),
+            cov3DPrecomputed: MLXArray([Float](repeating: 0.05, count: 12), [2, 6])
+        )
+        let info = FastGSTrainingCheckpointInfo(
+            createdAt: "2026-05-23T00:00:00Z",
+            datasetDirectory: "/tmp/fastgs_dataset",
+            outputDirectory: checkpointDirectory.deletingLastPathComponent().path,
+            imageWidth: 512,
+            imageHeight: 512,
+            maxFrames: 9999,
+            trainingSteps: 200,
+            completedStep: 200,
+            frameCount: 42,
+            pointCount: 2
+        )
+
+        try FastGSCheckpoint.save(parameters: parameters, info: info, directory: checkpointDirectory)
+        let loaded = try FastGSCheckpoint.load(directory: checkpointDirectory)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: FastGSCheckpoint.parameterURL(in: checkpointDirectory).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: FastGSCheckpoint.infoURL(in: checkpointDirectory).path))
+        XCTAssertEqual(loaded.info, info)
+        XCTAssertEqual(loaded.parameters.means3D.shape, parameters.means3D.shape)
+        XCTAssertEqual(loaded.parameters.dc.shape, parameters.dc.shape)
+        XCTAssertEqual(loaded.parameters.sh.shape, parameters.sh.shape)
+        XCTAssertEqual(loaded.parameters.opacities.shape, parameters.opacities.shape)
+        XCTAssertEqual(loaded.parameters.scales.shape, parameters.scales.shape)
+        XCTAssertEqual(loaded.parameters.rotations.shape, parameters.rotations.shape)
+        XCTAssertEqual(loaded.parameters.cov3DPrecomputed?.shape, parameters.cov3DPrecomputed?.shape)
+        assertClose(loaded.parameters.means3D.asArray(Float.self), parameters.means3D.asArray(Float.self))
+        assertClose(loaded.parameters.dc.asArray(Float.self), parameters.dc.asArray(Float.self))
+        assertClose(loaded.parameters.sh.asArray(Float.self), parameters.sh.asArray(Float.self))
+        assertClose(loaded.parameters.opacities.asArray(Float.self), parameters.opacities.asArray(Float.self))
+        assertClose(loaded.parameters.scales.asArray(Float.self), parameters.scales.asArray(Float.self))
+        assertClose(loaded.parameters.rotations.asArray(Float.self), parameters.rotations.asArray(Float.self))
+        assertClose(
+            loaded.parameters.cov3DPrecomputed?.asArray(Float.self) ?? [],
+            parameters.cov3DPrecomputed?.asArray(Float.self) ?? []
+        )
+    }
+
     func testImageExportRGBABytes() {
         let outColor = MLXArray([
             Float(0), 0.5,

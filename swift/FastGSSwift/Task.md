@@ -562,7 +562,19 @@ or recomputing them from unrelated values.
   - [x] keep optimizer state as `MLXArray` buffers so updates remain on device
   - [x] test one synthetic gradient step before connecting to real backward
 - Later optimizer work:
-  - [ ] checkpoint parameter arrays and optimizer state
+  - [x] checkpoint trainable parameter arrays after Mac App training
+    - MLX Swift exposes `save(array:url:)` for `.npy` and
+      `save(arrays:metadata:url:)` / `loadArraysAndMetadata(url:)` for
+      `.safetensors`; it does not provide Python-style `.npz` save/load.
+    - FastGS checkpoints now save trainable Gaussian arrays to
+      `parameters.safetensors` with stable names: `means3D`, `dc`, `sh`,
+      `opacities`, `scales`, `rotations`, and optional `cov3DPrecomputed`.
+    - Training/run metadata is saved separately as `training_info.json`,
+      including dataset directory, output directory, image size, `maxFrames`,
+      training step count, completed step, frame count, and point count.
+    - Current Mac App behavior: after training completes, write the checkpoint
+      under `<output directory>/checkpoint/`.
+  - [ ] checkpoint optimizer state
   - [ ] support densify/prune state migration when Gaussian count changes
   - [x] add recorded-data loss and one-step training smoke loop after backward parity
     exists

@@ -215,7 +215,34 @@ private final class RenderPreviewModel: ObservableObject {
                             width: result.width,
                             height: result.height
                         )
-                        return (texture, image, targetImage, result.width, result.height, result.pointCount, result.parameters)
+                        let checkpointDirectory = outputDirectory.appendingPathComponent("checkpoint", isDirectory: true)
+                        if let parameters = result.parameters {
+                            try FastGSCheckpoint.save(
+                                parameters: parameters,
+                                info: FastGSTrainingCheckpointInfo(
+                                    datasetDirectory: datasetDirectory.path,
+                                    outputDirectory: outputDirectory.path,
+                                    imageWidth: result.width,
+                                    imageHeight: result.height,
+                                    maxFrames: maxFrames,
+                                    trainingSteps: config.totalSteps,
+                                    completedStep: result.step,
+                                    frameCount: scannerCache?.frameDescriptors.count,
+                                    pointCount: result.pointCount
+                                ),
+                                directory: checkpointDirectory
+                            )
+                        }
+                        return (
+                            texture,
+                            image,
+                            targetImage,
+                            result.width,
+                            result.height,
+                            result.pointCount,
+                            result.parameters,
+                            checkpointDirectory
+                        )
                     }
                 }.value
 
@@ -226,7 +253,7 @@ private final class RenderPreviewModel: ObservableObject {
                 previewAspectRatio = Double(trained.3) / Double(trained.4)
                 previewMode = .recordedSideBySide
                 trainedParameters = trained.6
-                status = "Training completed, wrote previews to \(outputDirectory.path)"
+                status = "Training completed, wrote previews and checkpoint to \(trained.7.path)"
             } catch {
                 status = "Training failed: \(error)"
             }
