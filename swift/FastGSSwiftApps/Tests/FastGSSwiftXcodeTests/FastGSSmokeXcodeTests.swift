@@ -119,6 +119,58 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         )
     }
 
+    func testCloneAfterTrainingAppendsRowsUnderXcode() {
+        let opacityLogits = FastGSOpacity.logits(fromProbabilities: MLXArray([Float(0.2), 0.4, 0.6, 0.8], [4]))
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray((0..<12).map { Float($0) }, [4, 3]),
+            dc: MLXArray([Float](repeating: 0.1, count: 12), [4, 1, 3]),
+            sh: MLXArray([Float](repeating: 0.2, count: 24), [4, 2, 3]),
+            opacityLogits: opacityLogits,
+            scales: MLXArray([
+                Foundation.log(Float(0.1)), Foundation.log(Float(0.1)), Foundation.log(Float(0.1)),
+                Foundation.log(Float(0.2)), Foundation.log(Float(0.2)), Foundation.log(Float(0.2)),
+                Foundation.log(Float(3.0)), Foundation.log(Float(3.0)), Foundation.log(Float(3.0)),
+                Foundation.log(Float(0.3)), Foundation.log(Float(0.3)), Foundation.log(Float(0.3)),
+            ], [4, 3]),
+            rotations: MLXArray([Float](repeating: 0, count: 16), [4, 4]),
+            cov3DPrecomputed: MLXArray([Float](repeating: 0.4, count: 24), [4, 6])
+        )
+        let optimizerState = FastGSAdamState(step: 13, parameters: parameters)
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.xyzGradAccum = [0.01, 0.03, 0.50, 0.60]
+        densificationState.xyzGradAccumAbs = [1, 2, 3, 4]
+        densificationState.denom = [100, 100, 100, 100]
+        densificationState.maxRadii2D = [4, 5, 6, 7]
+        densificationState.tmpRadii = [8, 9, 10, 11]
+
+        let result = FastGSAfterTraining.clone(
+            parameters: parameters,
+            optimizerState: optimizerState,
+            densificationState: densificationState,
+            gradThreshold: 2.0e-4,
+            dense: 0.02,
+            importanceScores: [9, 11, 12, 13],
+            importanceScoreThreshold: 10
+        )
+
+        XCTAssertEqual(result.cloneMask, [false, true, false, false])
+        XCTAssertEqual(result.clonedCount, 1)
+        XCTAssertEqual(result.parameters.gaussianCount, 5)
+        XCTAssertEqual(result.optimizerState?.step, 13)
+        XCTAssertEqual(result.densificationState.count, 5)
+        XCTAssertEqual(result.densificationState.maxRadii2D, [0, 0, 0, 0, 0])
+        XCTAssertNil(result.densificationState.tmpRadii)
+        assertClose(result.parameters.means3D.asArray(Float.self), [
+            0, 1, 2,
+            3, 4, 5,
+            6, 7, 8,
+            9, 10, 11,
+            3, 4, 5,
+        ])
+        assertClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.4, 0.6, 0.8, 0.4])
+        assertClose(result.optimizerState?.means3D.firstMoment.asArray(Float.self) ?? [], [Float](repeating: 0, count: 15))
+    }
+
     func testImageExportRGBABytes() {
         let outColor = MLXArray([
             Float(0), 0.5,

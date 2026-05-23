@@ -43,6 +43,27 @@ public struct FastGSPruneOnlyResult {
     }
 }
 
+public struct FastGSCloneResult {
+    public var parameters: FastGSTrainableParameters
+    public var optimizerState: FastGSAdamState?
+    public var densificationState: FastGSDensificationState
+    public var cloneMask: [Bool]
+    public var clonedCount: Int
+
+    public init(
+        parameters: FastGSTrainableParameters,
+        optimizerState: FastGSAdamState?,
+        densificationState: FastGSDensificationState,
+        cloneMask: [Bool]
+    ) {
+        self.parameters = parameters
+        self.optimizerState = optimizerState
+        self.densificationState = densificationState
+        self.cloneMask = cloneMask
+        self.clonedCount = cloneMask.filter(\.self).count
+    }
+}
+
 public enum FastGSAfterTraining {
     public static func capOpacity(
         parameters: FastGSTrainableParameters,
@@ -155,6 +176,74 @@ public enum FastGSAfterTraining {
             worldScaleHits: worldScaleHits
         )
     }
+
+    public static func clone(
+        parameters: FastGSTrainableParameters,
+        optimizerState: FastGSAdamState? = nil,
+        densificationState: FastGSDensificationState,
+        gradThreshold: Float,
+        dense: Float,
+        sceneExtent: Float? = nil,
+        importanceScores: [Float]? = nil,
+        importanceScoreThreshold: Float = -.infinity,
+        stream: StreamOrDevice = .default
+    ) -> FastGSCloneResult {
+        precondition(gradThreshold >= 0, "gradThreshold must be non-negative")
+        precondition(dense >= 0, "dense must be non-negative")
+        parameters.validateTopology()
+        optimizerState?.validateTopology(parameters: parameters)
+        densificationState.validate(count: parameters.gaussianCount)
+
+        let count = parameters.gaussianCount
+        if let importanceScores {
+            precondition(importanceScores.count == count, "importance score count mismatch")
+        }
+        guard count > 0 else {
+            return FastGSCloneResult(
+                parameters: parameters,
+                optimizerState: optimizerState,
+                densificationState: densificationState,
+                cloneMask: []
+            )
+        }
+
+        let resolvedSceneExtent = sceneExtent ?? densificationState.sceneExtent
+        precondition(resolvedSceneExtent >= 0, "sceneExtent must be non-negative")
+        let averages = densificationState.averageGradients()
+        let maxScales = gaussianMaxScales(parameters: parameters, count: count)
+        let scaleThreshold = dense * resolvedSceneExtent
+        let cloneMask = (0..<count).map { index in
+            let gradientPass = averages.gradient[index] >= gradThreshold
+            let scalePass = maxScales[index] <= scaleThreshold
+            let scorePass = importanceScores.map { $0[index] > importanceScoreThreshold } ?? true
+            return gradientPass && scalePass && scorePass
+        }
+        let cloneIndices = cloneMask.enumerated().compactMap { index, shouldClone in
+            shouldClone ? index : nil
+        }
+        guard !cloneIndices.isEmpty else {
+            return FastGSCloneResult(
+                parameters: parameters,
+                optimizerState: optimizerState,
+                densificationState: densificationState,
+                cloneMask: cloneMask
+            )
+        }
+
+        let clonedTail = parameters.take(indices: cloneIndices, stream: stream)
+        let clonedParameters = parameters.appending(clonedTail, stream: stream)
+        let clonedOptimizerState = optimizerState?.appendingZeroRows(like: clonedTail, stream: stream)
+        let clonedDensificationState = densificationState.appendingResetRows(count: cloneIndices.count)
+        clonedOptimizerState?.validateTopology(parameters: clonedParameters)
+        clonedDensificationState.validate(count: clonedParameters.gaussianCount)
+
+        return FastGSCloneResult(
+            parameters: clonedParameters,
+            optimizerState: clonedOptimizerState,
+            densificationState: clonedDensificationState,
+            cloneMask: cloneMask
+        )
+    }
 }
 
 private func makeScreenSizeMask(
@@ -178,15 +267,19 @@ private func makeWorldScaleMask(
     guard let sceneExtent, let maxWorldScaleFactor, sceneExtent > 0, maxWorldScaleFactor > 0 else {
         return [Bool](repeating: false, count: count)
     }
+    let maxScales = gaussianMaxScales(parameters: parameters, count: count)
+    let threshold = sceneExtent * maxWorldScaleFactor
+    return maxScales.map { $0 > threshold }
+}
+
+private func gaussianMaxScales(parameters: FastGSTrainableParameters, count: Int) -> [Float] {
     let scales = parameters.scales.asArray(Float.self)
     precondition(scales.count % count == 0, "scale count mismatch")
     let width = scales.count / count
     precondition(width > 0, "scale width mismatch")
-    let threshold = sceneExtent * maxWorldScaleFactor
     return (0..<count).map { index in
         let base = index * width
-        let maxScale = scales[base..<(base + width)].map { Foundation.exp($0) }.max() ?? 0
-        return maxScale > threshold
+        return scales[base..<(base + width)].map { Foundation.exp($0) }.max() ?? 0
     }
 }
 

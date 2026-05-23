@@ -215,6 +215,17 @@ public struct FastGSDensificationState: Codable, Equatable, Sendable {
     public mutating func prune(mask: [Bool]) {
         self = pruned(mask: mask)
     }
+
+    public func appendingResetRows(count appendedCount: Int) -> FastGSDensificationState {
+        precondition(appendedCount >= 0, "appendedCount must be non-negative")
+        var result = self
+        result.reset(count: count + appendedCount)
+        return result
+    }
+
+    public mutating func appendResetRows(count appendedCount: Int) {
+        self = appendingResetRows(count: appendedCount)
+    }
 }
 
 private extension FastGSDensificationState {

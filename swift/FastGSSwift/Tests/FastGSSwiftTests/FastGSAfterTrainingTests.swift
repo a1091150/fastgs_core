@@ -102,6 +102,56 @@ final class FastGSAfterTrainingTests: XCTestCase {
         XCTAssertEqual(result.parameters.gaussianCount, 2)
         assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.3])
     }
+
+    func testCloneAppendsSmallHighGradientRowsAndResetsState() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")
+        }
+
+        let parameters = makePruneOnlyParameters(opacityProbabilities: [0.2, 0.4, 0.6, 0.8])
+        let optimizerState = FastGSAdamState(step: 13, parameters: parameters)
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.xyzGradAccum = [0.01, 0.03, 0.50, 0.60]
+        densificationState.xyzGradAccumAbs = [1, 2, 3, 4]
+        densificationState.denom = [100, 100, 100, 100]
+        densificationState.maxRadii2D = [4, 5, 6, 7]
+        densificationState.tmpRadii = [8, 9, 10, 11]
+
+        let result = FastGSAfterTraining.clone(
+            parameters: parameters,
+            optimizerState: optimizerState,
+            densificationState: densificationState,
+            gradThreshold: 2.0e-4,
+            dense: 0.02,
+            importanceScores: [9, 11, 12, 13],
+            importanceScoreThreshold: 10
+        )
+
+        XCTAssertEqual(result.cloneMask, [false, true, false, false])
+        XCTAssertEqual(result.clonedCount, 1)
+        XCTAssertEqual(result.parameters.gaussianCount, 5)
+        XCTAssertEqual(result.optimizerState?.step, 13)
+        XCTAssertEqual(result.densificationState.count, 5)
+        XCTAssertEqual(result.densificationState.maxRadii2D, [0, 0, 0, 0, 0])
+        XCTAssertEqual(result.densificationState.xyzGradAccum, [0, 0, 0, 0, 0])
+        XCTAssertNil(result.densificationState.tmpRadii)
+
+        assertAfterTrainingClose(result.parameters.means3D.asArray(Float.self), [
+            0, 1, 2,
+            3, 4, 5,
+            6, 7, 8,
+            9, 10, 11,
+            3, 4, 5
+        ])
+        assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.4, 0.6, 0.8, 0.4])
+        assertAfterTrainingClose(result.optimizerState?.means3D.firstMoment.asArray(Float.self) ?? [], [
+            0, 0, 0,
+            0, 0, 0,
+            0, 0, 0,
+            0, 0, 0,
+            0, 0, 0
+        ])
+    }
 }
 
 private func makeAfterTrainingParameters() -> FastGSTrainableParameters {

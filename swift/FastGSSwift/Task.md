@@ -741,9 +741,16 @@ or recomputing them from unrelated values.
         `FastGSRasterizeCustomFunction` should cache or expose
         `rasterizeBackward.viewspacePoints`, allowing the training loop to avoid
         the second manual rasterize backward used by the first working version.
-    - [ ] Add clone support.
-      - Clone small-scale high-gradient, high-importance Gaussians.
-      - Append cloned parameter rows and zero optimizer state rows.
+    - [x] Add clone support.
+      - [x] Clone small-scale high-gradient Gaussians, with optional
+        importance-score filtering for the later multi-view scoring task.
+      - [x] Append cloned parameter rows and zero optimizer state rows.
+      - [x] Reset densification buffers after Gaussian count changes.
+      - [x] Add unit/Xcode smoke coverage for cloned parameter rows,
+        optimizer-state growth, and densification-state reset.
+      - Follow-up: wire clone into the scheduled densify/prune training pass once
+        split and multi-view Gaussian scoring are ready, so clone/split/prune can
+        share one topology-change summary.
     - [ ] Add split support last.
       - Split large-scale high-gradient Gaussians.
       - Generate child Gaussian offsets from scale/rotation, shrink child
