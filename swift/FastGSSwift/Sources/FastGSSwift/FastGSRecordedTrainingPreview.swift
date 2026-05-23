@@ -139,6 +139,12 @@ public struct FastGSRecordedTrainingPruneSummary: Sendable {
     public var worldScaleHits: Int
     public var prunedCount: Int
     public var keptCount: Int
+    public var clonedCount: Int
+    public var splitSourceCount: Int
+    public var splitChildCount: Int
+    public var scoringSampleCount: Int
+    public var opacityCapped: Bool
+    public var opacityReset: Bool
 
     public init(
         step: Int,
@@ -149,7 +155,13 @@ public struct FastGSRecordedTrainingPruneSummary: Sendable {
         screenSizeHits: Int,
         worldScaleHits: Int,
         prunedCount: Int,
-        keptCount: Int
+        keptCount: Int,
+        clonedCount: Int = 0,
+        splitSourceCount: Int = 0,
+        splitChildCount: Int = 0,
+        scoringSampleCount: Int = 0,
+        opacityCapped: Bool = false,
+        opacityReset: Bool = false
     ) {
         self.step = step
         self.reason = reason
@@ -160,6 +172,12 @@ public struct FastGSRecordedTrainingPruneSummary: Sendable {
         self.worldScaleHits = worldScaleHits
         self.prunedCount = prunedCount
         self.keptCount = keptCount
+        self.clonedCount = clonedCount
+        self.splitSourceCount = splitSourceCount
+        self.splitChildCount = splitChildCount
+        self.scoringSampleCount = scoringSampleCount
+        self.opacityCapped = opacityCapped
+        self.opacityReset = opacityReset
     }
 }
 
@@ -293,9 +311,11 @@ public enum FastGSRecordedTrainingPreview {
             )
             eval(parameters: parameters, optimizer: optimizer)
 
-            if let summary = applyPruneOnlyIfNeeded(
+            if let summary = try applyAfterTrainingIfNeeded(
                 step: step,
                 config: config.densification,
+                scenes: scenes,
+                targets: targets,
                 parameters: &parameters,
                 optimizer: &optimizer,
                 densificationState: &densificationState
@@ -384,61 +404,205 @@ public enum FastGSRecordedTrainingPreview {
         }
     }
 
-    private static func applyPruneOnlyIfNeeded(
+    private static func applyAfterTrainingIfNeeded(
         step: Int,
         config: FastGSDensificationConfig,
+        scenes: [FastGSRecordedForwardScene],
+        targets: [MLXArray],
         parameters: inout FastGSTrainableParameters,
         optimizer: inout FastGSAdamOptimizer,
         densificationState: inout FastGSDensificationState
-    ) -> FastGSRecordedTrainingPruneSummary? {
-        guard config.pruneGaussians else {
-            return nil
-        }
-
-        let reason: String
-        let minOpacity: Float
-        let minGaussians: Int
-        if config.shouldFinalPrune(step: step) {
-            reason = "final_prune"
-            minOpacity = config.finalPruneMinOpacity
-            minGaussians = config.finalPruneMinGaussians
-        } else if config.shouldDensifyAndPrune(step: step) {
-            reason = "densify_prune"
-            minOpacity = config.minOpacity
-            minGaussians = 1
-        } else {
-            return nil
-        }
-
+    ) throws -> FastGSRecordedTrainingPruneSummary? {
         let beforeCount = parameters.gaussianCount
-        let result = FastGSAfterTraining.pruneOnly(
-            parameters: parameters,
-            optimizerState: optimizer.state,
-            densificationState: densificationState,
-            minOpacity: minOpacity,
-            maxScreenSize: config.maxScreenSize,
-            maxWorldScaleFactor: config.maxWorldScaleFactor,
-            minGaussians: minGaussians
-        )
-        parameters = result.parameters
-        optimizer.replaceState(result.optimizerState)
-        if let prunedDensificationState = result.densificationState {
-            densificationState = prunedDensificationState
-        } else {
-            densificationState.reset(count: parameters.gaussianCount)
+        let sceneExtent = densificationState.sceneExtent
+
+        if config.shouldDensifyAndPrune(step: step) {
+            let sampleIndices = FastGSGaussianScoring.evenlySpacedSceneIndices(
+                sceneCount: scenes.count,
+                sampleCount: config.densifyCameraSampleCount
+            )
+            let scoring = try FastGSGaussianScoring.compute(
+                scenes: scenes,
+                parameters: parameters,
+                sceneIndices: sampleIndices,
+                targets: targets,
+                lossThreshold: config.lossThreshold,
+                densify: true
+            )
+            let cloneResult = FastGSAfterTraining.clone(
+                parameters: parameters,
+                optimizerState: optimizer.state,
+                densificationState: densificationState,
+                gradThreshold: config.gradThreshold,
+                dense: config.dense,
+                sceneExtent: sceneExtent,
+                importanceScores: scoring.importanceScores,
+                importanceScoreThreshold: config.importanceScoreThreshold,
+                resetDensificationState: false
+            )
+            parameters = cloneResult.parameters
+            optimizer.replaceState(cloneResult.optimizerState)
+            densificationState = cloneResult.densificationState
+
+            let paddedImportance = scoring.importanceScores.map {
+                paddedScores($0, count: parameters.gaussianCount)
+            }
+            let splitResult = FastGSAfterTraining.split(
+                parameters: parameters,
+                optimizerState: optimizer.state,
+                densificationState: densificationState,
+                gradAbsThreshold: config.gradAbsThreshold,
+                dense: config.dense,
+                splitFactor: config.splitFactor,
+                sceneExtent: sceneExtent,
+                importanceScores: paddedImportance,
+                importanceScoreThreshold: config.importanceScoreThreshold
+            )
+            parameters = splitResult.parameters
+            optimizer.replaceState(splitResult.optimizerState)
+            densificationState = splitResult.densificationState
+
+            var opacityHits = 0
+            var screenSizeHits = 0
+            var worldScaleHits = 0
+            var prunedCount = 0
+            var keptCount = parameters.gaussianCount
+            if config.pruneGaussians {
+                let pruneResult = FastGSAfterTraining.pruneOnly(
+                    parameters: parameters,
+                    optimizerState: optimizer.state,
+                    densificationState: densificationState,
+                    minOpacity: config.minOpacity,
+                    maxScreenSize: config.maxScreenSize,
+                    maxWorldScaleFactor: config.maxWorldScaleFactor,
+                    sceneExtent: sceneExtent,
+                    minGaussians: 1
+                )
+                parameters = pruneResult.parameters
+                optimizer.replaceState(pruneResult.optimizerState)
+                if let prunedDensificationState = pruneResult.densificationState {
+                    densificationState = prunedDensificationState
+                } else {
+                    densificationState.reset(count: parameters.gaussianCount, sceneExtent: sceneExtent)
+                }
+                opacityHits = pruneResult.opacityHits
+                screenSizeHits = pruneResult.screenSizeHits
+                worldScaleHits = pruneResult.worldScaleHits
+                prunedCount = pruneResult.prunedCount
+                keptCount = pruneResult.keptCount
+            }
+
+            let capped = FastGSAfterTraining.capOpacity(
+                parameters: parameters,
+                optimizerState: optimizer.state,
+                maxOpacity: config.opacityCapAfterDensify
+            )
+            parameters = capped.parameters
+            optimizer.replaceState(capped.optimizerState)
+            let shouldResetOpacity = config.shouldResetOpacity(step: step)
+            if shouldResetOpacity {
+                let reset = FastGSAfterTraining.resetOpacity(
+                    parameters: parameters,
+                    optimizerState: optimizer.state,
+                    resetValue: config.opacityResetValue
+                )
+                parameters = reset.parameters
+                optimizer.replaceState(reset.optimizerState)
+            }
+            densificationState.reset(count: parameters.gaussianCount, sceneExtent: sceneExtent)
+
+            return FastGSRecordedTrainingPruneSummary(
+                step: step,
+                reason: "densify_prune",
+                beforeCount: beforeCount,
+                afterCount: parameters.gaussianCount,
+                opacityHits: opacityHits,
+                screenSizeHits: screenSizeHits,
+                worldScaleHits: worldScaleHits,
+                prunedCount: prunedCount,
+                keptCount: keptCount,
+                clonedCount: cloneResult.clonedCount,
+                splitSourceCount: splitResult.sourceCount,
+                splitChildCount: splitResult.childCount,
+                scoringSampleCount: scoring.sampledFrameCount,
+                opacityCapped: true,
+                opacityReset: shouldResetOpacity
+            )
         }
 
-        return FastGSRecordedTrainingPruneSummary(
-            step: step,
-            reason: reason,
-            beforeCount: beforeCount,
-            afterCount: parameters.gaussianCount,
-            opacityHits: result.opacityHits,
-            screenSizeHits: result.screenSizeHits,
-            worldScaleHits: result.worldScaleHits,
-            prunedCount: result.prunedCount,
-            keptCount: result.keptCount
-        )
+        if config.shouldFinalPrune(step: step), config.pruneGaussians {
+            let sampleIndices = FastGSGaussianScoring.evenlySpacedSceneIndices(
+                sceneCount: scenes.count,
+                sampleCount: config.densifyCameraSampleCount
+            )
+            let scoring = try FastGSGaussianScoring.compute(
+                scenes: scenes,
+                parameters: parameters,
+                sceneIndices: sampleIndices,
+                targets: targets,
+                lossThreshold: config.lossThreshold,
+                densify: false
+            )
+            let result = FastGSAfterTraining.pruneOnly(
+                parameters: parameters,
+                optimizerState: optimizer.state,
+                densificationState: densificationState,
+                minOpacity: config.finalPruneMinOpacity,
+                maxScreenSize: config.maxScreenSize,
+                maxWorldScaleFactor: config.maxWorldScaleFactor,
+                sceneExtent: sceneExtent,
+                minGaussians: config.finalPruneMinGaussians
+            )
+            parameters = result.parameters
+            optimizer.replaceState(result.optimizerState)
+            if let prunedDensificationState = result.densificationState {
+                densificationState = prunedDensificationState
+            } else {
+                densificationState.reset(count: parameters.gaussianCount, sceneExtent: sceneExtent)
+            }
+
+            return FastGSRecordedTrainingPruneSummary(
+                step: step,
+                reason: "final_prune",
+                beforeCount: beforeCount,
+                afterCount: parameters.gaussianCount,
+                opacityHits: result.opacityHits,
+                screenSizeHits: result.screenSizeHits,
+                worldScaleHits: result.worldScaleHits,
+                prunedCount: result.prunedCount,
+                keptCount: result.keptCount,
+                scoringSampleCount: scoring.sampledFrameCount
+            )
+        }
+
+        if config.shouldResetOpacity(step: step) {
+            let reset = FastGSAfterTraining.resetOpacity(
+                parameters: parameters,
+                optimizerState: optimizer.state,
+                resetValue: config.opacityResetValue
+            )
+            parameters = reset.parameters
+            optimizer.replaceState(reset.optimizerState)
+            return FastGSRecordedTrainingPruneSummary(
+                step: step,
+                reason: "opacity_reset",
+                beforeCount: beforeCount,
+                afterCount: parameters.gaussianCount,
+                opacityHits: 0,
+                screenSizeHits: 0,
+                worldScaleHits: 0,
+                prunedCount: 0,
+                keptCount: parameters.gaussianCount,
+                opacityReset: true
+            )
+        }
+
+        return nil
+    }
+
+    private static func paddedScores(_ scores: [Float], count: Int) -> [Float] {
+        precondition(scores.count <= count, "scores cannot be longer than gaussian count")
+        return scores + [Float](repeating: 0, count: count - scores.count)
     }
 
     private static func estimatedSceneExtent(parameters: FastGSTrainableParameters) -> Float {

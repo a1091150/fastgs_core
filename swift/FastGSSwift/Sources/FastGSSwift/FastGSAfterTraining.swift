@@ -210,6 +210,7 @@ public enum FastGSAfterTraining {
         sceneExtent: Float? = nil,
         importanceScores: [Float]? = nil,
         importanceScoreThreshold: Float = -.infinity,
+        resetDensificationState: Bool = true,
         stream: StreamOrDevice = .default
     ) -> FastGSCloneResult {
         precondition(gradThreshold >= 0, "gradThreshold must be non-negative")
@@ -257,7 +258,9 @@ public enum FastGSAfterTraining {
         let clonedTail = parameters.take(indices: cloneIndices, stream: stream)
         let clonedParameters = parameters.appending(clonedTail, stream: stream)
         let clonedOptimizerState = optimizerState?.appendingZeroRows(like: clonedTail, stream: stream)
-        let clonedDensificationState = densificationState.appendingResetRows(count: cloneIndices.count)
+        let clonedDensificationState = resetDensificationState
+            ? densificationState.appendingResetRows(count: cloneIndices.count)
+            : densificationState.appendingZeroRows(count: cloneIndices.count)
         clonedOptimizerState?.validateTopology(parameters: clonedParameters)
         clonedDensificationState.validate(count: clonedParameters.gaussianCount)
 

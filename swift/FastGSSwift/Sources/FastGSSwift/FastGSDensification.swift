@@ -226,6 +226,23 @@ public struct FastGSDensificationState: Codable, Equatable, Sendable {
     public mutating func appendResetRows(count appendedCount: Int) {
         self = appendingResetRows(count: appendedCount)
     }
+
+    public func appendingZeroRows(count appendedCount: Int) -> FastGSDensificationState {
+        precondition(appendedCount >= 0, "appendedCount must be non-negative")
+        validate()
+        return FastGSDensificationState(
+            maxRadii2D: maxRadii2D + [Float](repeating: 0, count: appendedCount),
+            xyzGradAccum: xyzGradAccum + [Float](repeating: 0, count: appendedCount),
+            xyzGradAccumAbs: xyzGradAccumAbs + [Float](repeating: 0, count: appendedCount),
+            denom: denom + [Float](repeating: 0, count: appendedCount),
+            tmpRadii: tmpRadii.map { $0 + [Float](repeating: 0, count: appendedCount) },
+            sceneExtent: sceneExtent
+        )
+    }
+
+    public mutating func appendZeroRows(count appendedCount: Int) {
+        self = appendingZeroRows(count: appendedCount)
+    }
 }
 
 private extension FastGSDensificationState {

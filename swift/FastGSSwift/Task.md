@@ -709,7 +709,7 @@ or recomputing them from unrelated values.
       - Checkpoints save `opacityLogits`; legacy checkpoint arrays named
         `opacities` are treated as probability values and converted to logits
         on load.
-    - [ ] Add prune-only support before clone/split.
+    - [x] Add prune-only support before clone/split.
       - [x] Start with opacity threshold pruning.
       - [x] Then add screen-size and world-scale pruning.
       - [x] Synchronize prune across trainable parameters, Adam optimizer
@@ -720,7 +720,9 @@ or recomputing them from unrelated values.
         updates and before scheduled/file preview rendering.
       - [x] Emit prune summaries with before/after Gaussian count and
         opacity/screen/world hit counts.
-      - Then add final multi-view score pruning with a minimum-Gaussian guard.
+      - Follow-up: add final multi-view score pruning with a minimum-Gaussian
+        guard. The current final prune schedule computes scoring but still
+        applies opacity/screen/world prune-only rules.
     - [x] Add densification stat accumulation.
       - [x] Add `FastGSTrainingStageGraph.valueAndGradWithDensificationStats(...)`
         so recorded training returns normal trainable gradients plus
@@ -772,9 +774,21 @@ or recomputing them from unrelated values.
         metric count, pruning score = normalized accumulated score, importance =
         floor(metric counts / sampled frame count).
       - [x] Add Xcode smoke coverage for recorded scanner scoring.
-      - Follow-up: wire scoring into scheduled densify/prune and final-prune
-        passes, then compare score distributions against the Python reference on
+      - [x] Wire scoring into scheduled densify/prune and final-prune passes.
+      - Follow-up: compare score distributions against the Python reference on
         the fixed scanner dataset.
+    - [x] Wire the scheduled densify/prune training pass.
+      - [x] During `shouldDensifyAndPrune`, compute multi-view importance
+        scores, clone small high-gradient Gaussians, split large high-absolute
+        gradient Gaussians, then apply prune-only rules and opacity cap/reset.
+      - [x] Preserve accumulated densification stats across clone by appending
+        zero rows for cloned Gaussians, so split can still consume the original
+        gradient accumulators in the same scheduled pass.
+      - [x] Emit one topology-change summary with clone, split, prune, scoring,
+        opacity cap, and opacity reset fields for Mac App status/debugging.
+      - Follow-up: compare the combined pass against original PyTorch FastGS on
+        the fixed scanner dataset, then tighten final pruning with normalized
+        `pruningScore` and `final_prune_score_thresh`.
     - [ ] Extend checkpoint format for topology-changing training.
       - Save Gaussian count, after-train config, optimizer state, and current
         densification state when available.

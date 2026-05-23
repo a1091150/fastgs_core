@@ -144,7 +144,7 @@ private final class RenderPreviewModel: ObservableObject {
                         }
                         let pruneSummary: (FastGSRecordedTrainingPruneSummary) -> Void = { summary in
                             Task { @MainActor in
-                                self.status = "Pruned \(summary.prunedCount) Gaussians at step \(summary.step): \(summary.beforeCount) -> \(summary.afterCount)"
+                                self.status = "\(summary.reason) step \(summary.step): \(summary.beforeCount) -> \(summary.afterCount), clone \(summary.clonedCount), split \(summary.splitChildCount), prune \(summary.prunedCount)"
                             }
                         }
                         let preview: (FastGSRecordedTrainingPreviewResult) throws -> Void = { preview in

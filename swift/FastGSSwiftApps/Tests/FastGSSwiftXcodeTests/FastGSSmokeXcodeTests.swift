@@ -1307,6 +1307,8 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 densifyFromStep: 0,
                 densifyUntilStep: 10,
                 densificationInterval: 1,
+                gradThreshold: Float.greatestFiniteMagnitude,
+                gradAbsThreshold: Float.greatestFiniteMagnitude,
                 minOpacity: 0.99,
                 maxScreenSize: 0,
                 maxWorldScaleFactor: 0,
@@ -1327,6 +1329,10 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(summary.afterCount, 1)
         XCTAssertEqual(summary.prunedCount, scene.manifest.pointCount - 1)
         XCTAssertEqual(summary.keptCount, 1)
+        XCTAssertEqual(summary.clonedCount, 0)
+        XCTAssertEqual(summary.splitSourceCount, 0)
+        XCTAssertEqual(summary.splitChildCount, 0)
+        XCTAssertEqual(summary.scoringSampleCount, 1)
         XCTAssertEqual(result.pointCount, 1)
         XCTAssertEqual(result.parameters?.gaussianCount, 1)
         XCTAssertEqual(result.renderRGBA.count, scene.manifest.width * scene.manifest.height * 4)
