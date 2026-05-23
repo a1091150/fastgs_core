@@ -721,11 +721,26 @@ or recomputing them from unrelated values.
       - [x] Emit prune summaries with before/after Gaussian count and
         opacity/screen/world hit counts.
       - Then add final multi-view score pruning with a minimum-Gaussian guard.
-    - [ ] Add densification stat accumulation.
-      - Requires a stable way to access `radii` and `d_viewspace` /
-        viewspace-point gradients from Swift training.
-      - Keep this separate from optimizer update so parameter topology changes
-        can skip the normal optimizer step when needed.
+    - [x] Add densification stat accumulation.
+      - [x] Add `FastGSTrainingStageGraph.valueAndGradWithDensificationStats(...)`
+        so recorded training returns normal trainable gradients plus
+        densification stats.
+      - [x] Accumulate visible `radii` and rasterize backward
+        `dL_dviewspace_points` before the optimizer update in
+        `FastGSRecordedTrainingPreview.run(...)`.
+      - [x] Use the extra stats path only while the densification schedule says
+        stats should accumulate; ordinary training steps keep the normal
+        `valueAndGrad(...)` path.
+      - [x] Add an Xcode smoke test proving recorded training can produce
+        non-zero view-space gradients for densification.
+      - Current implementation intentionally computes stats through an extra
+        staged forward + rasterize backward pass; later cache/primitive work can
+        remove that duplicate pass once the topology-changing path is stable.
+      - Follow-up: refactor the Swift CustomFunction/primitive cache so one
+        backward pass produces both trainable gradients and densification stats.
+        `FastGSRasterizeCustomFunction` should cache or expose
+        `rasterizeBackward.viewspacePoints`, allowing the training loop to avoid
+        the second manual rasterize backward used by the first working version.
     - [ ] Add clone support.
       - Clone small-scale high-gradient, high-importance Gaussians.
       - Append cloned parameter rows and zero optimizer state rows.

@@ -267,11 +267,26 @@ public enum FastGSRecordedTrainingPreview {
             lastScene = scene
             lastTarget = target
 
-            let result = FastGSTrainingStageGraph.valueAndGrad(
-                scene: scene,
-                parameters: parameters,
-                target: target
-            )
+            let shouldAccumulateStats = config.densification.shouldAccumulateStats(step: step)
+            let result: FastGSTrainingSmokeResult
+            if shouldAccumulateStats {
+                let resultWithStats = FastGSTrainingStageGraph.valueAndGradWithDensificationStats(
+                    scene: scene,
+                    parameters: parameters,
+                    target: target
+                )
+                densificationState.update(
+                    radii: resultWithStats.densificationStats.radii,
+                    viewspaceGradients: resultWithStats.densificationStats.viewspaceGradients
+                )
+                result = FastGSTrainingSmokeResult(loss: resultWithStats.loss, gradients: resultWithStats.gradients)
+            } else {
+                result = FastGSTrainingStageGraph.valueAndGrad(
+                    scene: scene,
+                    parameters: parameters,
+                    target: target
+                )
+            }
             parameters = optimizer.update(
                 parameters: parameters,
                 gradients: trainableGradients(from: result.gradients)

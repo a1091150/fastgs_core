@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 
 public struct FastGSDensificationConfig: Codable, Equatable, Sendable {
     public var densifyFromStep: Int
@@ -174,6 +175,18 @@ public struct FastGSDensificationState: Codable, Equatable, Sendable {
             xyzGradAccumAbs[index] += (gz * gz + gw * gw).squareRoot()
             denom[index] += 1
         }
+    }
+
+    public mutating func update(
+        radii: MLXArray,
+        viewspaceGradients: MLXArray
+    ) {
+        let radiiValues = radii.asArray(Int32.self).map(Float.init)
+        update(
+            radii: radiiValues,
+            viewspaceGradients: viewspaceGradients.asArray(Float.self),
+            viewspaceGradientWidth: viewspaceGradients.shape.count > 1 ? viewspaceGradients.shape[1] : 4
+        )
     }
 
     public func averageGradients() -> (gradient: [Float], gradientAbs: [Float]) {

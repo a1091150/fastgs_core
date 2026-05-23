@@ -64,6 +64,18 @@ public struct FastGSTrainingRenderContext {
         parameters: FastGSTrainableParameters,
         stream: StreamOrDevice = .default
     ) -> FastGSPreprocessInput {
+        preprocessInput(
+            parameters: parameters,
+            viewspacePoints: MLXArray.zeros([parameters.gaussianCount, 4], dtype: .float32, stream: stream),
+            stream: stream
+        )
+    }
+
+    public func preprocessInput(
+        parameters: FastGSTrainableParameters,
+        viewspacePoints: MLXArray,
+        stream: StreamOrDevice = .default
+    ) -> FastGSPreprocessInput {
         FastGSPreprocessInput(
             means3D: parameters.means3D,
             dc: parameters.dc,
@@ -76,7 +88,7 @@ public struct FastGSTrainingRenderContext {
             viewMatrix: viewMatrix,
             projectionMatrix: projectionMatrix,
             cameraPosition: cameraPosition,
-            viewspacePoints: MLXArray.zeros([parameters.gaussianCount, 4], dtype: .float32, stream: stream)
+            viewspacePoints: viewspacePoints
         )
     }
 

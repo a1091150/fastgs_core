@@ -1032,6 +1032,29 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(result.gradients[5].shape, parameters.rotations.shape)
     }
 
+    func testTrainingStageGraphDensificationStatsUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let parameters = try scene.initialTrainableParameters()
+        let target = 0.9 * FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+        let result = FastGSTrainingStageGraph.valueAndGradWithDensificationStats(
+            scene: scene,
+            parameters: parameters,
+            target: target
+        )
+
+        XCTAssertEqual(result.loss.shape, [])
+        XCTAssertTrue(result.loss.item(Float.self).isFinite)
+        XCTAssertEqual(result.gradients.count, 6)
+        XCTAssertEqual(result.densificationStats.radii.shape, [parameters.gaussianCount])
+        XCTAssertEqual(result.densificationStats.viewspaceGradients.shape, [parameters.gaussianCount, 4])
+        XCTAssertTrue(result.densificationStats.radii.asArray(Int32.self).contains { $0 > 0 })
+        XCTAssertTrue(result.densificationStats.viewspaceGradients.asArray(Float.self).contains { abs($0) > 1e-7 })
+    }
+
     func testRecordedSmallTrainingStepUpdatesParametersUnderXcode() throws {
         guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
             throw XCTSkip("Generate \(recordedManifestURL.path) first.")
