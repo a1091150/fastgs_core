@@ -787,8 +787,19 @@ or recomputing them from unrelated values.
       - [x] Emit one topology-change summary with clone, split, prune, scoring,
         opacity cap, and opacity reset fields for Mac App status/debugging.
       - Follow-up: compare the combined pass against original PyTorch FastGS on
-        the fixed scanner dataset, then tighten final pruning with normalized
-        `pruningScore` and `final_prune_score_thresh`.
+        the fixed scanner dataset.
+    - [x] Add final score-based prune.
+      - [x] Add `FastGSAfterTraining.finalPrune(...)` with normalized
+        `pruningScores` and `finalPruneScoreThreshold`.
+      - [x] Combine low-score pruning with opacity, screen-size, and world-scale
+        masks, while preserving parameter/Adam/densification topology.
+      - [x] Use score-based ranking for the minimum-Gaussian guard, so final
+        prune keeps the highest-scored rows when the threshold would remove too
+        many Gaussians.
+      - [x] Wire final prune schedule to the score-based API and report
+        `scoreHits` in training summaries / Mac App status.
+      - Follow-up: compare score distributions and final-prune counts against
+        the Python/PyTorch reference on the fixed scanner dataset.
     - [ ] Extend checkpoint format for topology-changing training.
       - Save Gaussian count, after-train config, optimizer state, and current
         densification state when available.

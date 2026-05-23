@@ -137,6 +137,7 @@ public struct FastGSRecordedTrainingPruneSummary: Sendable {
     public var opacityHits: Int
     public var screenSizeHits: Int
     public var worldScaleHits: Int
+    public var scoreHits: Int
     public var prunedCount: Int
     public var keptCount: Int
     public var clonedCount: Int
@@ -154,6 +155,7 @@ public struct FastGSRecordedTrainingPruneSummary: Sendable {
         opacityHits: Int,
         screenSizeHits: Int,
         worldScaleHits: Int,
+        scoreHits: Int = 0,
         prunedCount: Int,
         keptCount: Int,
         clonedCount: Int = 0,
@@ -170,6 +172,7 @@ public struct FastGSRecordedTrainingPruneSummary: Sendable {
         self.opacityHits = opacityHits
         self.screenSizeHits = screenSizeHits
         self.worldScaleHits = worldScaleHits
+        self.scoreHits = scoreHits
         self.prunedCount = prunedCount
         self.keptCount = keptCount
         self.clonedCount = clonedCount
@@ -543,10 +546,12 @@ public enum FastGSRecordedTrainingPreview {
                 lossThreshold: config.lossThreshold,
                 densify: false
             )
-            let result = FastGSAfterTraining.pruneOnly(
+            let result = FastGSAfterTraining.finalPrune(
                 parameters: parameters,
                 optimizerState: optimizer.state,
                 densificationState: densificationState,
+                pruningScores: scoring.pruningScores,
+                scoreThreshold: config.finalPruneScoreThreshold,
                 minOpacity: config.finalPruneMinOpacity,
                 maxScreenSize: config.maxScreenSize,
                 maxWorldScaleFactor: config.maxWorldScaleFactor,
@@ -569,6 +574,7 @@ public enum FastGSRecordedTrainingPreview {
                 opacityHits: result.opacityHits,
                 screenSizeHits: result.screenSizeHits,
                 worldScaleHits: result.worldScaleHits,
+                scoreHits: result.scoreHits,
                 prunedCount: result.prunedCount,
                 keptCount: result.keptCount,
                 scoringSampleCount: scoring.sampledFrameCount

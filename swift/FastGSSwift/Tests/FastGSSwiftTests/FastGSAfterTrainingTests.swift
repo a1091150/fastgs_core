@@ -103,6 +103,39 @@ final class FastGSAfterTrainingTests: XCTestCase {
         assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.3])
     }
 
+    func testFinalPruneUsesScoresAndKeepsHighestScoredRows() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")
+        }
+
+        let parameters = makePruneOnlyParameters(opacityProbabilities: [0.2, 0.3, 0.4, 0.5])
+        let state = FastGSAdamState(step: 19, parameters: parameters)
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.maxRadii2D = [1, 1, 1, 1]
+        densificationState.xyzGradAccum = [10, 20, 30, 40]
+        densificationState.xyzGradAccumAbs = [11, 21, 31, 41]
+        densificationState.denom = [1, 2, 3, 4]
+
+        let result = FastGSAfterTraining.finalPrune(
+            parameters: parameters,
+            optimizerState: state,
+            densificationState: densificationState,
+            pruningScores: [0.1, 0.95, 0.2, 0.8],
+            scoreThreshold: 0.9,
+            minOpacity: 0,
+            minGaussians: 2
+        )
+
+        XCTAssertEqual(result.pruneMask, [true, false, true, false])
+        XCTAssertEqual(result.scoreHits, 3)
+        XCTAssertEqual(result.prunedCount, 2)
+        XCTAssertEqual(result.keptCount, 2)
+        XCTAssertEqual(result.parameters.gaussianCount, 2)
+        XCTAssertEqual(result.optimizerState?.step, 19)
+        XCTAssertEqual(result.densificationState?.xyzGradAccum, [20, 40])
+        assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.3, 0.5])
+    }
+
     func testCloneAppendsSmallHighGradientRowsAndResetsState() throws {
         guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
             throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")

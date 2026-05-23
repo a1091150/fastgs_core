@@ -65,6 +65,47 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(optimizer.stateArrays().count, 14)
     }
 
+    func testFinalPruneUsesScoresAndKeepsHighestScoredRowsUnderXcode() {
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray((0..<12).map { Float($0) }, [4, 3]),
+            dc: MLXArray([Float](repeating: 0.1, count: 12), [4, 1, 3]),
+            sh: MLXArray([Float](repeating: 0.2, count: 24), [4, 2, 3]),
+            opacityLogits: FastGSOpacity.logits(fromProbabilities: MLXArray([Float(0.2), 0.3, 0.4, 0.5], [4])),
+            scales: MLXArray([Float](repeating: log(0.1), count: 12), [4, 3]),
+            rotations: MLXArray([
+                Float(1), 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+            ], [4, 4]),
+            cov3DPrecomputed: MLXArray([Float](repeating: 0.4, count: 24), [4, 6])
+        )
+        let optimizerState = FastGSAdamState(step: 19, parameters: parameters)
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.xyzGradAccum = [10, 20, 30, 40]
+        densificationState.xyzGradAccumAbs = [11, 21, 31, 41]
+        densificationState.denom = [1, 2, 3, 4]
+
+        let result = FastGSAfterTraining.finalPrune(
+            parameters: parameters,
+            optimizerState: optimizerState,
+            densificationState: densificationState,
+            pruningScores: [0.1, 0.95, 0.2, 0.8],
+            scoreThreshold: 0.9,
+            minOpacity: 0,
+            minGaussians: 2
+        )
+
+        XCTAssertEqual(result.pruneMask, [true, false, true, false])
+        XCTAssertEqual(result.scoreHits, 3)
+        XCTAssertEqual(result.prunedCount, 2)
+        XCTAssertEqual(result.keptCount, 2)
+        XCTAssertEqual(result.parameters.gaussianCount, 2)
+        XCTAssertEqual(result.optimizerState?.step, 19)
+        XCTAssertEqual(result.densificationState?.xyzGradAccum, [20, 40])
+        assertClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.3, 0.5])
+    }
+
     func testCheckpointRoundTripsParametersAndInfoUnderXcode() throws {
         let checkpointDirectory = URL(
             fileURLWithPath: "/private/tmp/fastgs_swift_checkpoint_roundtrip",

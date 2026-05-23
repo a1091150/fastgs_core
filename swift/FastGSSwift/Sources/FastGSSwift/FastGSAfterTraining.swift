@@ -19,6 +19,7 @@ public struct FastGSPruneOnlyResult {
     public var opacityHits: Int
     public var screenSizeHits: Int
     public var worldScaleHits: Int
+    public var scoreHits: Int
     public var prunedCount: Int
     public var keptCount: Int
 
@@ -29,7 +30,8 @@ public struct FastGSPruneOnlyResult {
         pruneMask: [Bool],
         opacityHits: Int,
         screenSizeHits: Int,
-        worldScaleHits: Int
+        worldScaleHits: Int,
+        scoreHits: Int = 0
     ) {
         self.parameters = parameters
         self.optimizerState = optimizerState
@@ -38,6 +40,7 @@ public struct FastGSPruneOnlyResult {
         self.opacityHits = opacityHits
         self.screenSizeHits = screenSizeHits
         self.worldScaleHits = worldScaleHits
+        self.scoreHits = scoreHits
         self.prunedCount = pruneMask.filter(\.self).count
         self.keptCount = pruneMask.count - prunedCount
     }
@@ -198,6 +201,91 @@ public enum FastGSAfterTraining {
             opacityHits: opacityHits,
             screenSizeHits: screenSizeHits,
             worldScaleHits: worldScaleHits
+        )
+    }
+
+    public static func finalPrune(
+        parameters: FastGSTrainableParameters,
+        optimizerState: FastGSAdamState? = nil,
+        densificationState: FastGSDensificationState? = nil,
+        pruningScores: [Float],
+        scoreThreshold: Float,
+        minOpacity: Float,
+        maxScreenSize: Float? = nil,
+        maxWorldScaleFactor: Float? = nil,
+        sceneExtent: Float? = nil,
+        minGaussians: Int,
+        stream: StreamOrDevice = .default
+    ) -> FastGSPruneOnlyResult {
+        precondition(scoreThreshold >= 0, "scoreThreshold must be non-negative")
+        precondition(minOpacity >= 0 && minOpacity <= 1, "minOpacity must be in [0, 1]")
+        precondition(minGaussians >= 0, "minGaussians must be non-negative")
+        if let maxScreenSize {
+            precondition(maxScreenSize >= 0, "maxScreenSize must be non-negative")
+        }
+        if let maxWorldScaleFactor {
+            precondition(maxWorldScaleFactor >= 0, "maxWorldScaleFactor must be non-negative")
+        }
+        parameters.validateTopology()
+        optimizerState?.validateTopology(parameters: parameters)
+        densificationState?.validate(count: parameters.gaussianCount)
+
+        let count = parameters.gaussianCount
+        precondition(pruningScores.count == count, "pruning score count mismatch")
+        guard count > 0 else {
+            return FastGSPruneOnlyResult(
+                parameters: parameters,
+                optimizerState: optimizerState,
+                densificationState: densificationState,
+                pruneMask: [],
+                opacityHits: 0,
+                screenSizeHits: 0,
+                worldScaleHits: 0,
+                scoreHits: 0
+            )
+        }
+
+        let opacities = parameters.opacityProbabilities(stream: stream).asArray(Float.self)
+        precondition(opacities.count == count, "opacity count mismatch")
+
+        let opacityMask = opacities.map { $0 < minOpacity }
+        let screenMask = makeScreenSizeMask(
+            densificationState: densificationState,
+            maxScreenSize: maxScreenSize,
+            count: count
+        )
+        let worldMask = makeWorldScaleMask(
+            parameters: parameters,
+            sceneExtent: sceneExtent ?? densificationState?.sceneExtent,
+            maxWorldScaleFactor: maxWorldScaleFactor,
+            count: count
+        )
+        let scoreMask = pruningScores.map { $0 < scoreThreshold }
+
+        let opacityHits = opacityMask.filter(\.self).count
+        let screenSizeHits = screenMask.filter(\.self).count
+        let worldScaleHits = worldMask.filter(\.self).count
+        let scoreHits = scoreMask.filter(\.self).count
+        var pruneMask = (0..<count).map { index in
+            opacityMask[index] || screenMask[index] || worldMask[index] || scoreMask[index]
+        }
+        enforceMinimumGaussians(mask: &pruneMask, rankScores: pruningScores, minGaussians: min(minGaussians, count))
+
+        let prunedParameters = parameters.prune(mask: pruneMask, stream: stream)
+        let prunedOptimizerState = optimizerState?.prune(mask: pruneMask, stream: stream)
+        let prunedDensificationState = densificationState?.pruned(mask: pruneMask)
+        prunedOptimizerState?.validateTopology(parameters: prunedParameters)
+        prunedDensificationState?.validate(count: prunedParameters.gaussianCount)
+
+        return FastGSPruneOnlyResult(
+            parameters: prunedParameters,
+            optimizerState: prunedOptimizerState,
+            densificationState: prunedDensificationState,
+            pruneMask: pruneMask,
+            opacityHits: opacityHits,
+            screenSizeHits: screenSizeHits,
+            worldScaleHits: worldScaleHits,
+            scoreHits: scoreHits
         )
     }
 
@@ -521,18 +609,22 @@ private func rotate(_ vector: [Float], byWXYZQuaternion quaternion: [Float]) -> 
 }
 
 private func enforceMinimumGaussians(mask: inout [Bool], opacities: [Float], minGaussians: Int) {
+    enforceMinimumGaussians(mask: &mask, rankScores: opacities, minGaussians: minGaussians)
+}
+
+private func enforceMinimumGaussians(mask: inout [Bool], rankScores: [Float], minGaussians: Int) {
     guard minGaussians > 0 else { return }
-    precondition(mask.count == opacities.count, "minimum Gaussian guard count mismatch")
+    precondition(mask.count == rankScores.count, "minimum Gaussian guard count mismatch")
     var keptCount = mask.filter { !$0 }.count
     guard keptCount < minGaussians else { return }
 
-    let indicesByOpacity = opacities.indices.sorted { lhs, rhs in
-        if opacities[lhs] == opacities[rhs] {
+    let indicesByScore = rankScores.indices.sorted { lhs, rhs in
+        if rankScores[lhs] == rankScores[rhs] {
             return lhs < rhs
         }
-        return opacities[lhs] > opacities[rhs]
+        return rankScores[lhs] > rankScores[rhs]
     }
-    for index in indicesByOpacity where mask[index] {
+    for index in indicesByScore where mask[index] {
         mask[index] = false
         keptCount += 1
         if keptCount >= minGaussians {
