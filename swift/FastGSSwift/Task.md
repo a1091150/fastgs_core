@@ -751,12 +751,17 @@ or recomputing them from unrelated values.
       - Follow-up: wire clone into the scheduled densify/prune training pass once
         split and multi-view Gaussian scoring are ready, so clone/split/prune can
         share one topology-change summary.
-    - [ ] Add split support last.
-      - Split large-scale high-gradient Gaussians.
-      - Generate child Gaussian offsets from scale/rotation, shrink child
+    - [x] Add split support last.
+      - [x] Split large-scale high-gradient Gaussians using accumulated absolute
+        gradients, with optional importance-score filtering for the later
+        multi-view scoring task.
+      - [x] Generate child Gaussian offsets from scale/rotation, shrink child
         scales, append children, then prune source rows.
-      - This is the highest-risk topology change and should follow prune/clone
-        tests.
+      - [x] Migrate optimizer state by appending zero child rows and pruning split
+        source rows.
+      - [x] Reset/prune densification buffers after the topology change.
+      - Follow-up: wire split together with clone and prune into the scheduled
+        densify/prune training pass after multi-view scoring exists.
     - [ ] Add multi-view Gaussian scoring.
       - Re-render sampled cameras with a loss/metric map.
       - Produce `importanceScore` for densify and `pruningScore` for final
