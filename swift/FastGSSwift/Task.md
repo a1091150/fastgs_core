@@ -680,12 +680,14 @@ or recomputing them from unrelated values.
       - First pass is pure Swift state/config with unit tests for scheduling
         and visible-Gaussian gradient/radius accumulation. Wiring into the
         training loop follows after topology helpers exist.
-    - [ ] Add trainable parameter topology helpers.
+    - [x] Add trainable parameter topology helpers.
       - `FastGSTrainableParameters.take(indices:)`
       - `FastGSTrainableParameters.prune(mask:)`
       - `FastGSTrainableParameters.append(...)`
       - Shape checks for means, DC, SH, opacity, scales, rotations, and
         optional precomputed covariance.
+      - Implemented as `take(indices:)`, `prune(mask:)`, and `appending(_:)`
+        with Gaussian-axis validation and MLX row concatenation/take tests.
     - [ ] Add optimizer state topology helpers and tests.
       - Prune Adam state rows when Gaussian rows are removed.
       - Append zero-initialized Adam state rows when Gaussian rows are cloned or
