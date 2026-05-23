@@ -122,6 +122,26 @@ public struct FastGSAdamState {
     public var rotations: FastGSAdamFieldState
     public var cov3DPrecomputed: FastGSAdamFieldState?
 
+    public init(
+        step: Int = 0,
+        means3D: FastGSAdamFieldState,
+        dc: FastGSAdamFieldState,
+        sh: FastGSAdamFieldState,
+        opacities: FastGSAdamFieldState,
+        scales: FastGSAdamFieldState,
+        rotations: FastGSAdamFieldState,
+        cov3DPrecomputed: FastGSAdamFieldState? = nil
+    ) {
+        self.step = step
+        self.means3D = means3D
+        self.dc = dc
+        self.sh = sh
+        self.opacities = opacities
+        self.scales = scales
+        self.rotations = rotations
+        self.cov3DPrecomputed = cov3DPrecomputed
+    }
+
     public init(step: Int = 0, parameters: FastGSTrainableParameters) {
         self.step = step
         self.means3D = FastGSAdamFieldState(zerosLike: parameters.means3D)

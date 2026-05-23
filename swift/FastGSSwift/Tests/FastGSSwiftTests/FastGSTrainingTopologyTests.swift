@@ -61,6 +61,67 @@ final class FastGSTrainingTopologyTests: XCTestCase {
         ])
         assertTopologyClose(appended.opacities.asArray(Float.self), [100, 101, 1_100])
     }
+
+    func testAdamStatePruneRows() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX topology tests require an Xcode/metallib-ready environment.")
+        }
+
+        let state = makeAdamTopologyState(count: 4, step: 12)
+        let pruned = state.prune(mask: [false, true, false, true])
+
+        XCTAssertEqual(pruned.step, 12)
+        XCTAssertEqual(pruned.means3D.firstMoment.shape, [2, 3])
+        XCTAssertEqual(pruned.opacities.firstMoment.shape, [2])
+        XCTAssertEqual(pruned.cov3DPrecomputed?.firstMoment.shape, [2, 6])
+        assertTopologyClose(pruned.means3D.firstMoment.asArray(Float.self), [0, 1, 2, 20, 21, 22])
+        assertTopologyClose(pruned.means3D.secondMoment.asArray(Float.self), [1_000, 1_001, 1_002, 1_020, 1_021, 1_022])
+        assertTopologyClose(pruned.opacities.firstMoment.asArray(Float.self), [100, 102])
+    }
+
+    func testAdamStateAppendsZeroRows() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX topology tests require an Xcode/metallib-ready environment.")
+        }
+
+        let state = makeAdamTopologyState(count: 2, step: 18)
+        let tailParameters = makeTopologyParameters(count: 1, offset: 1_000)
+        let appended = state.appendingZeroRows(like: tailParameters)
+
+        XCTAssertEqual(appended.step, 18)
+        XCTAssertEqual(appended.means3D.firstMoment.shape, [3, 3])
+        XCTAssertEqual(appended.cov3DPrecomputed?.firstMoment.shape, [3, 6])
+        assertTopologyClose(appended.means3D.firstMoment.asArray(Float.self), [
+            0, 1, 2,
+            10, 11, 12,
+            0, 0, 0
+        ])
+        assertTopologyClose(appended.means3D.secondMoment.asArray(Float.self), [
+            1_000, 1_001, 1_002,
+            1_010, 1_011, 1_012,
+            0, 0, 0
+        ])
+        assertTopologyClose(appended.opacities.firstMoment.asArray(Float.self), [100, 101, 0])
+    }
+
+    func testAdamStateResettingOpacityStateOnlyClearsOpacityMoments() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX topology tests require an Xcode/metallib-ready environment.")
+        }
+
+        let parameters = makeTopologyParameters(count: 2)
+        let state = makeAdamTopologyState(count: 2, step: 21)
+        let reset = state.resettingOpacityState(like: parameters)
+
+        XCTAssertEqual(reset.step, 21)
+        assertTopologyClose(reset.means3D.firstMoment.asArray(Float.self), [0, 1, 2, 10, 11, 12])
+        assertTopologyClose(reset.opacities.firstMoment.asArray(Float.self), [0, 0])
+        assertTopologyClose(reset.opacities.secondMoment.asArray(Float.self), [0, 0])
+        assertTopologyClose(reset.scales.secondMoment.asArray(Float.self), [
+            1_300, 1_301, 1_302,
+            1_310, 1_311, 1_312
+        ])
+    }
 }
 
 private func makeTopologyParameters(count: Int, offset: Float = 0) -> FastGSTrainableParameters {
@@ -81,6 +142,26 @@ private func makeTopologyRows(count: Int, width: Int, offset: Float) -> [Float] 
             offset + Float(row * 10 + column)
         }
     }
+}
+
+private func makeAdamTopologyState(count: Int, step: Int) -> FastGSAdamState {
+    FastGSAdamState(
+        step: step,
+        means3D: makeAdamField(count: count, shape: [count, 3], width: 3, offset: 0),
+        dc: makeAdamField(count: count, shape: [count, 1, 3], width: 3, offset: 100),
+        sh: makeAdamField(count: count, shape: [count, 2, 3], width: 6, offset: 200),
+        opacities: makeAdamField(count: count, shape: [count], width: 1, offset: 100),
+        scales: makeAdamField(count: count, shape: [count, 3], width: 3, offset: 300),
+        rotations: makeAdamField(count: count, shape: [count, 4], width: 4, offset: 400),
+        cov3DPrecomputed: makeAdamField(count: count, shape: [count, 6], width: 6, offset: 500)
+    )
+}
+
+private func makeAdamField(count: Int, shape: [Int], width: Int, offset: Float) -> FastGSAdamFieldState {
+    FastGSAdamFieldState(
+        firstMoment: MLXArray(makeTopologyRows(count: count, width: width, offset: offset), shape),
+        secondMoment: MLXArray(makeTopologyRows(count: count, width: width, offset: offset + 1_000), shape)
+    )
 }
 
 private func assertTopologyClose(

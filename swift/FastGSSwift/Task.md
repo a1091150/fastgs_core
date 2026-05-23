@@ -688,12 +688,15 @@ or recomputing them from unrelated values.
         optional precomputed covariance.
       - Implemented as `take(indices:)`, `prune(mask:)`, and `appending(_:)`
         with Gaussian-axis validation and MLX row concatenation/take tests.
-    - [ ] Add optimizer state topology helpers and tests.
+    - [x] Add optimizer state topology helpers and tests.
       - Prune Adam state rows when Gaussian rows are removed.
       - Append zero-initialized Adam state rows when Gaussian rows are cloned or
         split.
       - Reset opacity optimizer state when opacity logits are reset/capped.
       - Preserve global optimizer step and learning-rate schedule metadata.
+      - Implemented for `FastGSAdamFieldState` and `FastGSAdamState`, including
+        opacity moment reset and shape validation against current trainable
+        parameters.
     - [ ] Add opacity cap/reset first.
       - This does not change Gaussian count, so it is the safest after-train
         operation to port first.
