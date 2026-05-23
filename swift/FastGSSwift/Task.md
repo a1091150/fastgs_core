@@ -697,11 +697,16 @@ or recomputing them from unrelated values.
       - Implemented for `FastGSAdamFieldState` and `FastGSAdamState`, including
         opacity moment reset and shape validation against current trainable
         parameters.
-    - [ ] Add opacity cap/reset first.
+    - [x] Add opacity cap/reset first.
       - This does not change Gaussian count, so it is the safest after-train
         operation to port first.
       - Match original reset behavior by clamping opacity then converting back
         to logits.
+      - Swift currently stores `FastGSTrainableParameters.opacities` as direct
+        opacity probabilities passed into preprocess, not opacity logits like
+        the Python scanner script. The first Swift implementation therefore
+        clamps probability values directly and resets opacity Adam moments.
+        Revisit this if Swift trainable opacity storage moves to logits.
     - [ ] Add prune-only support before clone/split.
       - Start with opacity threshold pruning.
       - Then add screen-size and world-scale pruning.
