@@ -22,8 +22,13 @@ public enum FastGSAfterTraining {
         optimizerState?.validateTopology(parameters: parameters)
 
         var updated = parameters
-        updated.opacities = minimum(parameters.opacities, maxOpacity, stream: stream)
-        let updatedState = optimizerState?.resettingOpacityState(like: updated, stream: stream)
+        let cappedProbabilities = minimum(
+            parameters.opacityProbabilities(stream: stream),
+            maxOpacity,
+            stream: stream
+        )
+        updated.opacityLogits = FastGSOpacity.logits(fromProbabilities: cappedProbabilities, stream: stream)
+        let updatedState = optimizerState?.resettingOpacityLogitState(like: updated, stream: stream)
         return FastGSOpacityAfterTrainResult(parameters: updated, optimizerState: updatedState)
     }
 

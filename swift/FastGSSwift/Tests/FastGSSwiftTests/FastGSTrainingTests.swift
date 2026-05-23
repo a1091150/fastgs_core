@@ -14,7 +14,7 @@ final class FastGSTrainingTests: XCTestCase {
             means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
             dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 1, 3]),
             sh: MLXArray([Float](repeating: 0.1, count: 12), [2, 2, 3]),
-            opacities: MLXArray([Float(0.5), 0.7], [2]),
+            opacityLogits: MLXArray([Float(0.5), 0.7], [2]),
             scales: MLXArray([Float](repeating: 0.3, count: 6), [2, 3]),
             rotations: MLXArray([Float(1), 0, 0, 0, 1, 0, 0, 0], [2, 4]),
             cov3DPrecomputed: MLXArray([Float](repeating: 0.05, count: 12), [2, 6])
@@ -23,7 +23,7 @@ final class FastGSTrainingTests: XCTestCase {
             means3D: MLXArray([Float](repeating: 1, count: 6), [2, 3]),
             dc: MLXArray([Float](repeating: -1, count: 6), [2, 1, 3]),
             sh: MLXArray([Float](repeating: 0.5, count: 12), [2, 2, 3]),
-            opacities: MLXArray([Float](repeating: 1, count: 2), [2]),
+            opacityLogits: MLXArray([Float](repeating: 1, count: 2), [2]),
             scales: MLXArray([Float](repeating: -1, count: 6), [2, 3]),
             rotations: MLXArray([Float](repeating: 1, count: 8), [2, 4]),
             cov3DPrecomputed: MLXArray([Float](repeating: -1, count: 12), [2, 6])
@@ -34,7 +34,7 @@ final class FastGSTrainingTests: XCTestCase {
                 means3D: 0.01,
                 dc: 0.02,
                 sh: 0.03,
-                opacities: 0.04,
+                opacityLogits: 0.04,
                 scales: 0.05,
                 rotations: 0.06,
                 cov3DPrecomputed: 0.07
@@ -46,7 +46,7 @@ final class FastGSTrainingTests: XCTestCase {
         XCTAssertEqual(updated.means3D.shape, parameters.means3D.shape)
         XCTAssertEqual(updated.dc.shape, parameters.dc.shape)
         XCTAssertEqual(updated.sh.shape, parameters.sh.shape)
-        XCTAssertEqual(updated.opacities.shape, parameters.opacities.shape)
+        XCTAssertEqual(updated.opacityLogits.shape, parameters.opacityLogits.shape)
         XCTAssertEqual(updated.scales.shape, parameters.scales.shape)
         XCTAssertEqual(updated.rotations.shape, parameters.rotations.shape)
         XCTAssertEqual(updated.cov3DPrecomputed?.shape, parameters.cov3DPrecomputed?.shape)
@@ -54,7 +54,7 @@ final class FastGSTrainingTests: XCTestCase {
         assertTrainingClose(updated.means3D.asArray(Float.self), [0.99, 1.99, 2.99, 3.99, 4.99, 5.99])
         assertTrainingClose(updated.dc.asArray(Float.self), [0.22, 0.42, 0.62, 0.82, 1.02, 1.22])
         assertTrainingClose(updated.sh.asArray(Float.self), [Float](repeating: 0.07, count: 12))
-        assertTrainingClose(updated.opacities.asArray(Float.self), [0.46, 0.66])
+        assertTrainingClose(updated.opacityLogits.asArray(Float.self), [0.46, 0.66])
         assertTrainingClose(updated.scales.asArray(Float.self), [Float](repeating: 0.35, count: 6))
         assertTrainingClose(updated.rotations.asArray(Float.self), [0.94, -0.06, -0.06, -0.06, 0.94, -0.06, -0.06, -0.06])
         assertTrainingClose(updated.cov3DPrecomputed?.asArray(Float.self) ?? [], [Float](repeating: 0.12, count: 12))
@@ -72,7 +72,7 @@ final class FastGSTrainingTests: XCTestCase {
             means3D: MLXArray([Float](repeating: 1, count: 3), [1, 3]),
             dc: MLXArray([Float](repeating: 1, count: 3), [1, 1, 3]),
             sh: MLXArray([Float](repeating: 1, count: 3), [1, 1, 3]),
-            opacities: MLXArray([Float](repeating: 1, count: 1), [1]),
+            opacityLogits: MLXArray([Float](repeating: 1, count: 1), [1]),
             scales: MLXArray([Float](repeating: 1, count: 3), [1, 3]),
             rotations: MLXArray([Float](repeating: 1, count: 4), [1, 4])
         )
@@ -80,7 +80,7 @@ final class FastGSTrainingTests: XCTestCase {
             means3D: MLXArray([Float](repeating: 1, count: 3), [1, 3]),
             dc: MLXArray([Float](repeating: 1, count: 3), [1, 1, 3]),
             sh: MLXArray([Float](repeating: 1, count: 3), [1, 1, 3]),
-            opacities: MLXArray([Float](repeating: 1, count: 1), [1]),
+            opacityLogits: MLXArray([Float](repeating: 1, count: 1), [1]),
             scales: MLXArray([Float](repeating: 1, count: 3), [1, 3]),
             rotations: MLXArray([Float](repeating: 1, count: 4), [1, 4])
         )
@@ -224,7 +224,7 @@ final class FastGSTrainingTests: XCTestCase {
         XCTAssertEqual(result.gradients[0].shape, parameters.means3D.shape)
         XCTAssertEqual(result.gradients[1].shape, parameters.dc.shape)
         XCTAssertEqual(result.gradients[2].shape, parameters.sh.shape)
-        XCTAssertEqual(result.gradients[3].shape, parameters.opacities.shape)
+        XCTAssertEqual(result.gradients[3].shape, parameters.opacityLogits.shape)
         XCTAssertEqual(result.gradients[4].shape, parameters.scales.shape)
         XCTAssertEqual(result.gradients[5].shape, parameters.rotations.shape)
     }

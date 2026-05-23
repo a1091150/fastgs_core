@@ -78,12 +78,12 @@ public enum FastGSTrainingRenderFunction {
     }
 
     private static func trainableParameters(from arrays: [MLXArray]) -> FastGSTrainableParameters {
-        precondition(arrays.count == 6, "Expected means3D, dc, sh, opacities, scales, and rotations.")
+        precondition(arrays.count == 6, "Expected means3D, dc, sh, opacityLogits, scales, and rotations.")
         return FastGSTrainableParameters(
             means3D: arrays[0],
             dc: arrays[1],
             sh: arrays[2],
-            opacities: arrays[3],
+            opacityLogits: arrays[3],
             scales: arrays[4],
             rotations: arrays[5]
         )

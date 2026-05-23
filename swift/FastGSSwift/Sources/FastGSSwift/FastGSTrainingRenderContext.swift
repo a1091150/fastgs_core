@@ -60,13 +60,16 @@ public struct FastGSTrainingRenderContext {
         self.metricCount = MLXArray.zeros([pointCount], dtype: .int32, stream: stream)
     }
 
-    public func preprocessInput(parameters: FastGSTrainableParameters) -> FastGSPreprocessInput {
+    public func preprocessInput(
+        parameters: FastGSTrainableParameters,
+        stream: StreamOrDevice = .default
+    ) -> FastGSPreprocessInput {
         FastGSPreprocessInput(
             means3D: parameters.means3D,
             dc: parameters.dc,
             sh: parameters.sh,
             colorsPrecomputed: emptyColorsPrecomputed,
-            opacities: parameters.opacities,
+            opacities: parameters.opacityProbabilities(stream: stream),
             scales: parameters.scales,
             rotations: parameters.rotations,
             cov3DPrecomputed: emptyCov3DPrecomputed,

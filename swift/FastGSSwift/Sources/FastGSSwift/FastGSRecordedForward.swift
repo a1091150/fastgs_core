@@ -422,6 +422,7 @@ public struct FastGSRecordedForwardScene {
         let dc = MLXArray(colors.map { ($0 - 0.5) / shC0 }, [count, 3])
         let sh = MLXArray.zeros([count, maxSHCoefficients, 3], dtype: .float32)
         let opacities = MLXArray(Array(repeating: Float(manifest.opacity), count: count), [count])
+        let opacityLogits = FastGSOpacity.logits(fromProbabilities: opacities)
         let scales = MLXArray(Array(repeating: Float(manifest.scale), count: count * 3), [count, 3])
         var rotations = [Float](repeating: 0, count: count * 4)
         for index in 0..<count {
@@ -432,7 +433,7 @@ public struct FastGSRecordedForwardScene {
             means3D: means,
             dc: dc,
             sh: sh,
-            opacities: opacities,
+            opacityLogits: opacityLogits,
             scales: scales,
             rotations: MLXArray(rotations, [count, 4])
         )
@@ -452,7 +453,7 @@ public struct FastGSRecordedForwardScene {
             dc: parameters.dc,
             sh: parameters.sh,
             colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
-            opacities: parameters.opacities,
+            opacities: parameters.opacityProbabilities(),
             scales: parameters.scales,
             rotations: parameters.rotations,
             cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
@@ -508,7 +509,7 @@ public struct FastGSRecordedForwardScene {
         precondition(parameters.means3D.shape == [count, 3], "means3D must have shape [N, 3].")
         precondition(parameters.dc.shape == [count, 3], "dc must have shape [N, 3].")
         precondition(parameters.sh.shape == [count, maxSHCoefficients, 3], "sh must have shape [N, C, 3].")
-        precondition(parameters.opacities.shape == [count], "opacities must have shape [N].")
+        precondition(parameters.opacityLogits.shape == [count], "opacityLogits must have shape [N].")
         precondition(parameters.scales.shape == [count, 3], "scales must have shape [N, 3].")
         precondition(parameters.rotations.shape == [count, 4], "rotations must have shape [N, 4].")
         precondition(parameters.cov3DPrecomputed == nil, "recorded training smoke path currently uses scale/rotation covariance.")

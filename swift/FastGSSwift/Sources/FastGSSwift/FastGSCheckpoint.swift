@@ -145,7 +145,7 @@ public enum FastGSCheckpoint {
             "means3D": parameters.means3D,
             "dc": parameters.dc,
             "sh": parameters.sh,
-            "opacities": parameters.opacities,
+            "opacityLogits": parameters.opacityLogits,
             "scales": parameters.scales,
             "rotations": parameters.rotations,
         ]
@@ -160,7 +160,7 @@ public enum FastGSCheckpoint {
             means3D: try requiredArray("means3D", in: arrays),
             dc: try requiredArray("dc", in: arrays),
             sh: try requiredArray("sh", in: arrays),
-            opacities: try requiredArray("opacities", in: arrays),
+            opacityLogits: try opacityLogitsArray(in: arrays),
             scales: try requiredArray("scales", in: arrays),
             rotations: try requiredArray("rotations", in: arrays),
             cov3DPrecomputed: arrays["cov3DPrecomputed"]
@@ -172,5 +172,15 @@ public enum FastGSCheckpoint {
             throw FastGSCheckpointError.missingParameter(name)
         }
         return array
+    }
+
+    private static func opacityLogitsArray(in arrays: [String: MLXArray]) throws -> MLXArray {
+        if let opacityLogits = arrays["opacityLogits"] {
+            return opacityLogits
+        }
+        if let legacyOpacities = arrays["opacities"] {
+            return FastGSOpacity.logits(fromProbabilities: legacyOpacities, stream: .cpu)
+        }
+        throw FastGSCheckpointError.missingParameter("opacityLogits")
     }
 }

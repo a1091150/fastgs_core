@@ -16,7 +16,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
             dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 1, 3]),
             sh: MLXArray([Float](repeating: 0.1, count: 12), [2, 2, 3]),
-            opacities: MLXArray([Float(0.5), 0.7], [2]),
+            opacityLogits: MLXArray([Float(0.5), 0.7], [2]),
             scales: MLXArray([Float](repeating: 0.3, count: 6), [2, 3]),
             rotations: MLXArray([Float(1), 0, 0, 0, 1, 0, 0, 0], [2, 4]),
             cov3DPrecomputed: MLXArray([Float](repeating: 0.05, count: 12), [2, 6])
@@ -25,7 +25,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             means3D: MLXArray([Float](repeating: 1, count: 6), [2, 3]),
             dc: MLXArray([Float](repeating: -1, count: 6), [2, 1, 3]),
             sh: MLXArray([Float](repeating: 0.5, count: 12), [2, 2, 3]),
-            opacities: MLXArray([Float](repeating: 1, count: 2), [2]),
+            opacityLogits: MLXArray([Float](repeating: 1, count: 2), [2]),
             scales: MLXArray([Float](repeating: -1, count: 6), [2, 3]),
             rotations: MLXArray([Float](repeating: 1, count: 8), [2, 4]),
             cov3DPrecomputed: MLXArray([Float](repeating: -1, count: 12), [2, 6])
@@ -36,7 +36,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 means3D: 0.01,
                 dc: 0.02,
                 sh: 0.03,
-                opacities: 0.04,
+                opacityLogits: 0.04,
                 scales: 0.05,
                 rotations: 0.06,
                 cov3DPrecomputed: 0.07
@@ -48,7 +48,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(updated.means3D.shape, parameters.means3D.shape)
         XCTAssertEqual(updated.dc.shape, parameters.dc.shape)
         XCTAssertEqual(updated.sh.shape, parameters.sh.shape)
-        XCTAssertEqual(updated.opacities.shape, parameters.opacities.shape)
+        XCTAssertEqual(updated.opacityLogits.shape, parameters.opacityLogits.shape)
         XCTAssertEqual(updated.scales.shape, parameters.scales.shape)
         XCTAssertEqual(updated.rotations.shape, parameters.rotations.shape)
         XCTAssertEqual(updated.cov3DPrecomputed?.shape, parameters.cov3DPrecomputed?.shape)
@@ -56,7 +56,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         assertClose(updated.means3D.asArray(Float.self), [0.99, 1.99, 2.99, 3.99, 4.99, 5.99])
         assertClose(updated.dc.asArray(Float.self), [0.22, 0.42, 0.62, 0.82, 1.02, 1.22])
         assertClose(updated.sh.asArray(Float.self), [Float](repeating: 0.07, count: 12))
-        assertClose(updated.opacities.asArray(Float.self), [0.46, 0.66])
+        assertClose(updated.opacityLogits.asArray(Float.self), [0.46, 0.66])
         assertClose(updated.scales.asArray(Float.self), [Float](repeating: 0.35, count: 6))
         assertClose(updated.rotations.asArray(Float.self), [0.94, -0.06, -0.06, -0.06, 0.94, -0.06, -0.06, -0.06])
         assertClose(updated.cov3DPrecomputed?.asArray(Float.self) ?? [], [Float](repeating: 0.12, count: 12))
@@ -76,7 +76,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
             dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 1, 3]),
             sh: MLXArray([Float](repeating: 0.1, count: 12), [2, 2, 3]),
-            opacities: MLXArray([Float(0.5), 0.7], [2]),
+            opacityLogits: MLXArray([Float(0.5), 0.7], [2]),
             scales: MLXArray([Float](repeating: 0.3, count: 6), [2, 3]),
             rotations: MLXArray([Float(1), 0, 0, 0, 1, 0, 0, 0], [2, 4]),
             cov3DPrecomputed: MLXArray([Float](repeating: 0.05, count: 12), [2, 6])
@@ -103,14 +103,14 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(loaded.parameters.means3D.shape, parameters.means3D.shape)
         XCTAssertEqual(loaded.parameters.dc.shape, parameters.dc.shape)
         XCTAssertEqual(loaded.parameters.sh.shape, parameters.sh.shape)
-        XCTAssertEqual(loaded.parameters.opacities.shape, parameters.opacities.shape)
+        XCTAssertEqual(loaded.parameters.opacityLogits.shape, parameters.opacityLogits.shape)
         XCTAssertEqual(loaded.parameters.scales.shape, parameters.scales.shape)
         XCTAssertEqual(loaded.parameters.rotations.shape, parameters.rotations.shape)
         XCTAssertEqual(loaded.parameters.cov3DPrecomputed?.shape, parameters.cov3DPrecomputed?.shape)
         assertClose(loaded.parameters.means3D.asArray(Float.self), parameters.means3D.asArray(Float.self))
         assertClose(loaded.parameters.dc.asArray(Float.self), parameters.dc.asArray(Float.self))
         assertClose(loaded.parameters.sh.asArray(Float.self), parameters.sh.asArray(Float.self))
-        assertClose(loaded.parameters.opacities.asArray(Float.self), parameters.opacities.asArray(Float.self))
+        assertClose(loaded.parameters.opacityLogits.asArray(Float.self), parameters.opacityLogits.asArray(Float.self))
         assertClose(loaded.parameters.scales.asArray(Float.self), parameters.scales.asArray(Float.self))
         assertClose(loaded.parameters.rotations.asArray(Float.self), parameters.rotations.asArray(Float.self))
         assertClose(
@@ -964,7 +964,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             dc: parameters.dc,
             sh: parameters.sh,
             colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
-            opacities: parameters.opacities,
+            opacities: parameters.opacityProbabilities(),
             scales: parameters.scales,
             rotations: parameters.rotations,
             cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
@@ -1027,7 +1027,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(result.gradients[0].shape, parameters.means3D.shape)
         XCTAssertEqual(result.gradients[1].shape, parameters.dc.shape)
         XCTAssertEqual(result.gradients[2].shape, parameters.sh.shape)
-        XCTAssertEqual(result.gradients[3].shape, parameters.opacities.shape)
+        XCTAssertEqual(result.gradients[3].shape, parameters.opacityLogits.shape)
         XCTAssertEqual(result.gradients[4].shape, parameters.scales.shape)
         XCTAssertEqual(result.gradients[5].shape, parameters.rotations.shape)
     }
@@ -1054,7 +1054,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(result.gradients[0].shape, parameters.means3D.shape)
         XCTAssertEqual(result.gradients[1].shape, parameters.dc.shape)
         XCTAssertEqual(result.gradients[2].shape, parameters.sh.shape)
-        XCTAssertEqual(result.gradients[3].shape, parameters.opacities.shape)
+        XCTAssertEqual(result.gradients[3].shape, parameters.opacityLogits.shape)
         XCTAssertEqual(result.gradients[4].shape, parameters.scales.shape)
         XCTAssertEqual(result.gradients[5].shape, parameters.rotations.shape)
         XCTAssertTrue(result.gradients.contains { hasFiniteNonZeroValues($0) })
@@ -1071,7 +1071,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             maxAbsDiff(updated.means3D, parameters.means3D) > 0
                 || maxAbsDiff(updated.dc, parameters.dc) > 0
                 || maxAbsDiff(updated.sh, parameters.sh) > 0
-                || maxAbsDiff(updated.opacities, parameters.opacities) > 0
+                || maxAbsDiff(updated.opacityLogits, parameters.opacityLogits) > 0
                 || maxAbsDiff(updated.scales, parameters.scales) > 0
                 || maxAbsDiff(updated.rotations, parameters.rotations) > 0
         )
@@ -1118,7 +1118,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             maxAbsDiff(parameters.means3D, initialParameters.means3D) > 0
                 || maxAbsDiff(parameters.dc, initialParameters.dc) > 0
                 || maxAbsDiff(parameters.sh, initialParameters.sh) > 0
-                || maxAbsDiff(parameters.opacities, initialParameters.opacities) > 0
+                || maxAbsDiff(parameters.opacityLogits, initialParameters.opacityLogits) > 0
                 || maxAbsDiff(parameters.scales, initialParameters.scales) > 0
                 || maxAbsDiff(parameters.rotations, initialParameters.rotations) > 0
         )
@@ -1140,7 +1140,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 means3D: 5e-5,
                 dc: 5e-4,
                 sh: 5e-4,
-                opacities: 5e-4,
+                opacityLogits: 5e-4,
                 scales: 5e-5,
                 rotations: 5e-5
             )
@@ -1545,7 +1545,7 @@ private func recordedTrainingSmokeLearningRates() -> FastGSAdamLearningRates {
         means3D: 1e-4,
         dc: 1e-3,
         sh: 1e-3,
-        opacities: 1e-3,
+        opacityLogits: 1e-3,
         scales: 1e-4,
         rotations: 1e-4
     )
@@ -1557,7 +1557,7 @@ private func trainableGradients(from gradients: [MLXArray]) -> FastGSTrainableGr
         means3D: gradients[0],
         dc: gradients[1],
         sh: gradients[2],
-        opacities: gradients[3],
+        opacityLogits: gradients[3],
         scales: gradients[4],
         rotations: gradients[5]
     )
@@ -1591,7 +1591,7 @@ private func trainingDebugRow(
     initialParameters: FastGSTrainableParameters,
     memory: Memory.Snapshot
 ) -> [String: Any] {
-    let names = ["means3D", "dc", "sh", "opacities", "scales", "rotations"]
+    let names = ["means3D", "dc", "sh", "opacityLogits", "scales", "rotations"]
     let currentArrays = parameters.arrays
     let previousArrays = previousParameters.arrays
     let initialArrays = initialParameters.arrays
@@ -1633,7 +1633,7 @@ private func writeTrainingDebugSummary(_ rows: [[String: Any]], to directory: UR
     try jsonData.write(to: jsonURL)
 
     let csvURL = directory.appendingPathComponent("debug_summary.csv")
-    let fieldNames = ["means3D", "dc", "sh", "opacities", "scales", "rotations"]
+    let fieldNames = ["means3D", "dc", "sh", "opacityLogits", "scales", "rotations"]
     var lines = [
         "step,loss,field,grad_sum,grad_abs_sum,grad_max_abs,grad_nonzero_count,update_max_abs,delta_from_initial_max_abs,memory_active,memory_cache,memory_peak"
     ]

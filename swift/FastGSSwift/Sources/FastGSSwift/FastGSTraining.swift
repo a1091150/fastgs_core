@@ -5,7 +5,7 @@ public struct FastGSTrainableParameters {
     public var means3D: MLXArray
     public var dc: MLXArray
     public var sh: MLXArray
-    public var opacities: MLXArray
+    public var opacityLogits: MLXArray
     public var scales: MLXArray
     public var rotations: MLXArray
     public var cov3DPrecomputed: MLXArray?
@@ -14,7 +14,7 @@ public struct FastGSTrainableParameters {
         means3D: MLXArray,
         dc: MLXArray,
         sh: MLXArray,
-        opacities: MLXArray,
+        opacityLogits: MLXArray,
         scales: MLXArray,
         rotations: MLXArray,
         cov3DPrecomputed: MLXArray? = nil
@@ -22,18 +22,22 @@ public struct FastGSTrainableParameters {
         self.means3D = means3D
         self.dc = dc
         self.sh = sh
-        self.opacities = opacities
+        self.opacityLogits = opacityLogits
         self.scales = scales
         self.rotations = rotations
         self.cov3DPrecomputed = cov3DPrecomputed
     }
 
     public var arrays: [MLXArray] {
-        var result = [means3D, dc, sh, opacities, scales, rotations]
+        var result = [means3D, dc, sh, opacityLogits, scales, rotations]
         if let cov3DPrecomputed {
             result.append(cov3DPrecomputed)
         }
         return result
+    }
+
+    public func opacityProbabilities(stream: StreamOrDevice = .default) -> MLXArray {
+        sigmoid(opacityLogits, stream: stream)
     }
 }
 
@@ -41,7 +45,7 @@ public struct FastGSTrainableGradients {
     public var means3D: MLXArray
     public var dc: MLXArray
     public var sh: MLXArray
-    public var opacities: MLXArray
+    public var opacityLogits: MLXArray
     public var scales: MLXArray
     public var rotations: MLXArray
     public var cov3DPrecomputed: MLXArray?
@@ -50,7 +54,7 @@ public struct FastGSTrainableGradients {
         means3D: MLXArray,
         dc: MLXArray,
         sh: MLXArray,
-        opacities: MLXArray,
+        opacityLogits: MLXArray,
         scales: MLXArray,
         rotations: MLXArray,
         cov3DPrecomputed: MLXArray? = nil
@@ -58,7 +62,7 @@ public struct FastGSTrainableGradients {
         self.means3D = means3D
         self.dc = dc
         self.sh = sh
-        self.opacities = opacities
+        self.opacityLogits = opacityLogits
         self.scales = scales
         self.rotations = rotations
         self.cov3DPrecomputed = cov3DPrecomputed
@@ -69,7 +73,7 @@ public struct FastGSAdamLearningRates {
     public var means3D: Float
     public var dc: Float
     public var sh: Float
-    public var opacities: Float
+    public var opacityLogits: Float
     public var scales: Float
     public var rotations: Float
     public var cov3DPrecomputed: Float
@@ -78,7 +82,7 @@ public struct FastGSAdamLearningRates {
         means3D: Float = 1e-3,
         dc: Float = 1e-3,
         sh: Float = 1e-3,
-        opacities: Float = 1e-3,
+        opacityLogits: Float = 1e-3,
         scales: Float = 1e-3,
         rotations: Float = 1e-3,
         cov3DPrecomputed: Float = 1e-3
@@ -86,7 +90,7 @@ public struct FastGSAdamLearningRates {
         self.means3D = means3D
         self.dc = dc
         self.sh = sh
-        self.opacities = opacities
+        self.opacityLogits = opacityLogits
         self.scales = scales
         self.rotations = rotations
         self.cov3DPrecomputed = cov3DPrecomputed
@@ -117,7 +121,7 @@ public struct FastGSAdamState {
     public var means3D: FastGSAdamFieldState
     public var dc: FastGSAdamFieldState
     public var sh: FastGSAdamFieldState
-    public var opacities: FastGSAdamFieldState
+    public var opacityLogits: FastGSAdamFieldState
     public var scales: FastGSAdamFieldState
     public var rotations: FastGSAdamFieldState
     public var cov3DPrecomputed: FastGSAdamFieldState?
@@ -127,7 +131,7 @@ public struct FastGSAdamState {
         means3D: FastGSAdamFieldState,
         dc: FastGSAdamFieldState,
         sh: FastGSAdamFieldState,
-        opacities: FastGSAdamFieldState,
+        opacityLogits: FastGSAdamFieldState,
         scales: FastGSAdamFieldState,
         rotations: FastGSAdamFieldState,
         cov3DPrecomputed: FastGSAdamFieldState? = nil
@@ -136,7 +140,7 @@ public struct FastGSAdamState {
         self.means3D = means3D
         self.dc = dc
         self.sh = sh
-        self.opacities = opacities
+        self.opacityLogits = opacityLogits
         self.scales = scales
         self.rotations = rotations
         self.cov3DPrecomputed = cov3DPrecomputed
@@ -147,7 +151,7 @@ public struct FastGSAdamState {
         self.means3D = FastGSAdamFieldState(zerosLike: parameters.means3D)
         self.dc = FastGSAdamFieldState(zerosLike: parameters.dc)
         self.sh = FastGSAdamFieldState(zerosLike: parameters.sh)
-        self.opacities = FastGSAdamFieldState(zerosLike: parameters.opacities)
+        self.opacityLogits = FastGSAdamFieldState(zerosLike: parameters.opacityLogits)
         self.scales = FastGSAdamFieldState(zerosLike: parameters.scales)
         self.rotations = FastGSAdamFieldState(zerosLike: parameters.rotations)
         self.cov3DPrecomputed = parameters.cov3DPrecomputed.map {
@@ -160,7 +164,7 @@ public struct FastGSAdamState {
         result.append(contentsOf: means3D.arrays)
         result.append(contentsOf: dc.arrays)
         result.append(contentsOf: sh.arrays)
-        result.append(contentsOf: opacities.arrays)
+        result.append(contentsOf: opacityLogits.arrays)
         result.append(contentsOf: scales.arrays)
         result.append(contentsOf: rotations.arrays)
         if let cov3DPrecomputed {
@@ -229,12 +233,12 @@ public struct FastGSAdamOptimizer {
             state: &currentState.sh,
             stream: stream
         )
-        let opacities = updateField(
-            parameter: parameters.opacities,
-            gradient: gradients.opacities,
-            learningRate: learningRates.opacities,
+        let opacityLogits = updateField(
+            parameter: parameters.opacityLogits,
+            gradient: gradients.opacityLogits,
+            learningRate: learningRates.opacityLogits,
             step: currentState.step,
-            state: &currentState.opacities,
+            state: &currentState.opacityLogits,
             stream: stream
         )
         let scales = updateField(
@@ -278,7 +282,7 @@ public struct FastGSAdamOptimizer {
             means3D: means3D,
             dc: dc,
             sh: sh,
-            opacities: opacities,
+            opacityLogits: opacityLogits,
             scales: scales,
             rotations: rotations,
             cov3DPrecomputed: cov3DPrecomputed
@@ -322,7 +326,7 @@ public struct FastGSAdamOptimizer {
         precondition(parameters.means3D.shape == gradients.means3D.shape, "means3D gradient shape mismatch")
         precondition(parameters.dc.shape == gradients.dc.shape, "dc gradient shape mismatch")
         precondition(parameters.sh.shape == gradients.sh.shape, "sh gradient shape mismatch")
-        precondition(parameters.opacities.shape == gradients.opacities.shape, "opacities gradient shape mismatch")
+        precondition(parameters.opacityLogits.shape == gradients.opacityLogits.shape, "opacityLogits gradient shape mismatch")
         precondition(parameters.scales.shape == gradients.scales.shape, "scales gradient shape mismatch")
         precondition(parameters.rotations.shape == gradients.rotations.shape, "rotations gradient shape mismatch")
         precondition(

@@ -10,7 +10,7 @@ public extension FastGSTrainableParameters {
         validateGaussianField(means3D, name: "means3D", count: count)
         validateGaussianField(dc, name: "dc", count: count)
         validateGaussianField(sh, name: "sh", count: count)
-        validateGaussianField(opacities, name: "opacities", count: count)
+        validateGaussianField(opacityLogits, name: "opacityLogits", count: count)
         validateGaussianField(scales, name: "scales", count: count)
         validateGaussianField(rotations, name: "rotations", count: count)
         if let cov3DPrecomputed {
@@ -28,7 +28,7 @@ public extension FastGSTrainableParameters {
             means3D: means3D.take(indexArray, axis: 0, stream: stream),
             dc: dc.take(indexArray, axis: 0, stream: stream),
             sh: sh.take(indexArray, axis: 0, stream: stream),
-            opacities: opacities.take(indexArray, axis: 0, stream: stream),
+            opacityLogits: opacityLogits.take(indexArray, axis: 0, stream: stream),
             scales: scales.take(indexArray, axis: 0, stream: stream),
             rotations: rotations.take(indexArray, axis: 0, stream: stream),
             cov3DPrecomputed: cov3DPrecomputed?.take(indexArray, axis: 0, stream: stream)
@@ -50,7 +50,7 @@ public extension FastGSTrainableParameters {
         validateAppendShape(means3D, tail.means3D, name: "means3D")
         validateAppendShape(dc, tail.dc, name: "dc")
         validateAppendShape(sh, tail.sh, name: "sh")
-        validateAppendShape(opacities, tail.opacities, name: "opacities")
+        validateAppendShape(opacityLogits, tail.opacityLogits, name: "opacityLogits")
         validateAppendShape(scales, tail.scales, name: "scales")
         validateAppendShape(rotations, tail.rotations, name: "rotations")
 
@@ -69,7 +69,7 @@ public extension FastGSTrainableParameters {
             means3D: concatenated([means3D, tail.means3D], axis: 0, stream: stream),
             dc: concatenated([dc, tail.dc], axis: 0, stream: stream),
             sh: concatenated([sh, tail.sh], axis: 0, stream: stream),
-            opacities: concatenated([opacities, tail.opacities], axis: 0, stream: stream),
+            opacityLogits: concatenated([opacityLogits, tail.opacityLogits], axis: 0, stream: stream),
             scales: concatenated([scales, tail.scales], axis: 0, stream: stream),
             rotations: concatenated([rotations, tail.rotations], axis: 0, stream: stream),
             cov3DPrecomputed: cov3DPrecomputed
@@ -137,13 +137,13 @@ public extension FastGSAdamState {
         means3D.validateTopology(name: "means3D")
         dc.validateTopology(name: "dc")
         sh.validateTopology(name: "sh")
-        opacities.validateTopology(name: "opacities")
+        opacityLogits.validateTopology(name: "opacityLogits")
         scales.validateTopology(name: "scales")
         rotations.validateTopology(name: "rotations")
         cov3DPrecomputed?.validateTopology(name: "cov3DPrecomputed")
         precondition(dc.gaussianCount == count, "dc state Gaussian count mismatch")
         precondition(sh.gaussianCount == count, "sh state Gaussian count mismatch")
-        precondition(opacities.gaussianCount == count, "opacities state Gaussian count mismatch")
+        precondition(opacityLogits.gaussianCount == count, "opacityLogits state Gaussian count mismatch")
         precondition(scales.gaussianCount == count, "scales state Gaussian count mismatch")
         precondition(rotations.gaussianCount == count, "rotations state Gaussian count mismatch")
         if let cov3DPrecomputed {
@@ -155,7 +155,7 @@ public extension FastGSAdamState {
             precondition(means3D.firstMoment.shape == parameters.means3D.shape, "means3D state shape mismatch")
             precondition(dc.firstMoment.shape == parameters.dc.shape, "dc state shape mismatch")
             precondition(sh.firstMoment.shape == parameters.sh.shape, "sh state shape mismatch")
-            precondition(opacities.firstMoment.shape == parameters.opacities.shape, "opacities state shape mismatch")
+            precondition(opacityLogits.firstMoment.shape == parameters.opacityLogits.shape, "opacityLogits state shape mismatch")
             precondition(scales.firstMoment.shape == parameters.scales.shape, "scales state shape mismatch")
             precondition(rotations.firstMoment.shape == parameters.rotations.shape, "rotations state shape mismatch")
             precondition(
@@ -173,7 +173,7 @@ public extension FastGSAdamState {
             means3D: means3D.prune(mask: mask, stream: stream),
             dc: dc.prune(mask: mask, stream: stream),
             sh: sh.prune(mask: mask, stream: stream),
-            opacities: opacities.prune(mask: mask, stream: stream),
+            opacityLogits: opacityLogits.prune(mask: mask, stream: stream),
             scales: scales.prune(mask: mask, stream: stream),
             rotations: rotations.prune(mask: mask, stream: stream),
             cov3DPrecomputed: cov3DPrecomputed?.prune(mask: mask, stream: stream)
@@ -202,14 +202,14 @@ public extension FastGSAdamState {
             means3D: means3D.appendingZeroRows(like: tailParameters.means3D, stream: stream),
             dc: dc.appendingZeroRows(like: tailParameters.dc, stream: stream),
             sh: sh.appendingZeroRows(like: tailParameters.sh, stream: stream),
-            opacities: opacities.appendingZeroRows(like: tailParameters.opacities, stream: stream),
+            opacityLogits: opacityLogits.appendingZeroRows(like: tailParameters.opacityLogits, stream: stream),
             scales: scales.appendingZeroRows(like: tailParameters.scales, stream: stream),
             rotations: rotations.appendingZeroRows(like: tailParameters.rotations, stream: stream),
             cov3DPrecomputed: cov3DPrecomputed
         )
     }
 
-    func resettingOpacityState(like parameters: FastGSTrainableParameters, stream: StreamOrDevice = .default)
+    func resettingOpacityLogitState(like parameters: FastGSTrainableParameters, stream: StreamOrDevice = .default)
         -> FastGSAdamState
     {
         validateTopology(parameters: parameters)
@@ -218,7 +218,7 @@ public extension FastGSAdamState {
             means3D: means3D,
             dc: dc,
             sh: sh,
-            opacities: opacities.reset(toZerosLike: parameters.opacities, stream: stream),
+            opacityLogits: opacityLogits.reset(toZerosLike: parameters.opacityLogits, stream: stream),
             scales: scales,
             rotations: rotations,
             cov3DPrecomputed: cov3DPrecomputed

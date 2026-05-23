@@ -702,11 +702,13 @@ or recomputing them from unrelated values.
         operation to port first.
       - Match original reset behavior by clamping opacity then converting back
         to logits.
-      - Swift currently stores `FastGSTrainableParameters.opacities` as direct
-        opacity probabilities passed into preprocess, not opacity logits like
-        the Python scanner script. The first Swift implementation therefore
-        clamps probability values directly and resets opacity Adam moments.
-        Revisit this if Swift trainable opacity storage moves to logits.
+      - Swift now stores `FastGSTrainableParameters.opacityLogits` like
+        FastGS CUDA/PyTorch and the Python MLX scanner script. Forward paths
+        pass `sigmoid(opacityLogits)` into preprocess, while cap/reset clamps
+        opacity probabilities and writes logits back to the trainable state.
+      - Checkpoints save `opacityLogits`; legacy checkpoint arrays named
+        `opacities` are treated as probability values and converted to logits
+        on load.
     - [ ] Add prune-only support before clone/split.
       - Start with opacity threshold pruning.
       - Then add screen-size and world-scale pruning.

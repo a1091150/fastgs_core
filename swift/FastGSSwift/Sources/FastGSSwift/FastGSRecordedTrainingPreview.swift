@@ -80,7 +80,7 @@ public struct FastGSRecordedTrainingRunConfig {
             means3D: 5e-5,
             dc: 5e-4,
             sh: 5e-4,
-            opacities: 5e-4,
+            opacityLogits: 5e-4,
             scales: 5e-5,
             rotations: 5e-5
         )
@@ -290,7 +290,7 @@ public enum FastGSRecordedTrainingPreview {
             means3D: gradients[0],
             dc: gradients[1],
             sh: gradients[2],
-            opacities: gradients[3],
+            opacityLogits: gradients[3],
             scales: gradients[4],
             rotations: gradients[5]
         )

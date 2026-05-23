@@ -15,7 +15,7 @@ public enum FastGSTrainingStageGraph {
                 means3D: arrays[0],
                 dc: arrays[1],
                 sh: arrays[2],
-                opacities: arrays[3],
+                opacityLogits: arrays[3],
                 scales: arrays[4],
                 rotations: arrays[5]
             )
@@ -50,7 +50,7 @@ public enum FastGSTrainingStageGraph {
         parameters: FastGSTrainableParameters,
         stream: StreamOrDevice = .default
     ) -> MLXArray {
-        let preprocessInput = context.preprocessInput(parameters: parameters)
+        let preprocessInput = context.preprocessInput(parameters: parameters, stream: stream)
         let preprocess = FastGSPreprocessCustomFunction.call(
             preprocessInput,
             params: context.preprocessParams,
