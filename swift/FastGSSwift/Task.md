@@ -621,7 +621,7 @@ or recomputing them from unrelated values.
       `testRecordedScannerRenderTextureFPSBenchmarkUnderXcode` with
       `preview=1` exercises `renderPreviewOutColor(...)` and texture
       presentation directly.
-  - [ ] Promote Mac App training to a clean multi-view training path.
+  - [x] Promote Mac App training to a clean multi-view training path.
     - The app Train button should train over scanner frames
       `0..<min(maxFrames, availableFrameCount)`.
     - Use one selected camera/frame per optimization step at first; keep the
@@ -631,6 +631,12 @@ or recomputing them from unrelated values.
     - Keep the training-time preview scheduler behavior: camera-switch preview
       requests are consumed after the current training step, then training
       resumes.
+    - Mac App training now requires the loaded scanner cache and calls
+      `FastGSRecordedTrainingPreview.run(scenes:)` with scenes built from
+      `frameDescriptors.prefix(maxFrames)`.
+    - Training previews and final results carry the scanner `frameIndex`, so
+      side-by-side PNG names identify the actual frame used by the round-robin
+      step instead of the camera selected when training started.
   - [ ] Port FastGS after-training processes after multi-view training is
     stable.
     - Include densify, prune, opacity reset, optimizer-state migration, and any

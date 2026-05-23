@@ -103,6 +103,7 @@ public struct FastGSRecordedTrainingPreviewResult {
     public var height: Int
     public var pointCount: Int
     public var parameters: FastGSTrainableParameters?
+    public var frameIndex: Int?
 
     public init(
         step: Int,
@@ -111,7 +112,8 @@ public struct FastGSRecordedTrainingPreviewResult {
         width: Int,
         height: Int,
         pointCount: Int,
-        parameters: FastGSTrainableParameters? = nil
+        parameters: FastGSTrainableParameters? = nil,
+        frameIndex: Int? = nil
     ) {
         self.step = step
         self.targetRGBA = targetRGBA
@@ -120,6 +122,7 @@ public struct FastGSRecordedTrainingPreviewResult {
         self.height = height
         self.pointCount = pointCount
         self.parameters = parameters
+        self.frameIndex = frameIndex
     }
 }
 
@@ -196,6 +199,7 @@ public enum FastGSRecordedTrainingPreview {
     public static func run(
         scenes: [FastGSRecordedForwardScene],
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
+        initialParameters: FastGSTrainableParameters? = nil,
         progress: ((Int) -> Void)? = nil,
         previewScheduler: FastGSRenderPreviewScheduler? = nil,
         scheduledPreview: ((Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult?)? = nil,
@@ -205,7 +209,7 @@ public enum FastGSRecordedTrainingPreview {
         precondition(!scenes.isEmpty, "recorded training preview expects at least one scene")
 
         let targets = try scenes.map { try $0.targetOutColor() }
-        var parameters = try scenes[0].initialTrainableParameters()
+        var parameters = try initialParameters ?? scenes[0].initialTrainableParameters()
         var optimizer = FastGSAdamOptimizer(learningRates: config.learningRates)
         var lastScene = scenes[0]
         var lastTarget = targets[0]
@@ -252,7 +256,8 @@ public enum FastGSRecordedTrainingPreview {
                         ),
                         width: scene.manifest.width,
                         height: scene.manifest.height,
-                        pointCount: scene.manifest.pointCount
+                        pointCount: scene.manifest.pointCount,
+                        frameIndex: scene.scannerFrameIndex
                     )
                 )
             }
@@ -274,7 +279,8 @@ public enum FastGSRecordedTrainingPreview {
             width: lastScene.manifest.width,
             height: lastScene.manifest.height,
             pointCount: lastScene.manifest.pointCount,
-            parameters: parameters
+            parameters: parameters,
+            frameIndex: lastScene.scannerFrameIndex
         )
     }
 

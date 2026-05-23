@@ -42,6 +42,7 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var isDatasetLoaded = false
     @Published var isLoadingDataset = false
     @Published var isRenderingPreview = false
+    @Published var saveTrainingArtifacts = false
     private var frameIndices = [Int]()
     private let previewScheduler = FastGSRenderPreviewScheduler(maximumFramesPerSecond: 60)
     private var scannerCache: FastGSScannerDatasetCache?
@@ -65,7 +66,7 @@ private final class RenderPreviewModel: ObservableObject {
         return "Camera \(min(cameraIndex + 1, count)) / \(count)"
     }
 
-    func trainRecordedFrame() {
+    func trainRecordedFrame(mode: FastGSMacTrainingStartMode) {
         guard !isTraining else {
             return
         }
@@ -83,12 +84,21 @@ private final class RenderPreviewModel: ObservableObject {
             isTraining = false
             return
         }
+        guard let scannerCache else {
+            status = "Training failed: press Load to read scanner frames"
+            isTraining = false
+            return
+        }
         let config = trainingConfig
         let trainingWidth = max(16, trainingWidth)
         let trainingHeight = max(16, trainingHeight)
         let maxFrames = max(1, maxFrames)
         let selectedFrameIndex = frameIndices.indices.contains(cameraIndex) ? frameIndices[cameraIndex] : cameraIndex
-        status = "Training \(cameraLabel)..."
+        let trainingFrameCount = min(maxFrames, scannerCache.frameDescriptors.count)
+        let datasetDirectoryPath = datasetDirectory.path
+        let shouldSaveTrainingArtifacts = saveTrainingArtifacts
+        let runDirectory = shouldSaveTrainingArtifacts ? outputDirectory.appendingPathComponent(timestampedTrainingRunName(), isDirectory: true) : nil
+        status = "\(mode.statusVerb) \(trainingFrameCount) frames..."
 
         Task {
             do {
@@ -98,7 +108,7 @@ private final class RenderPreviewModel: ObservableObject {
                     return
                 }
                 let outputDirectory = outputDirectory
-                let datasetDirectory = datasetDirectory
+                let runDirectory = runDirectory
                 let trainingWidth = trainingWidth
                 let trainingHeight = trainingHeight
                 let maxFrames = maxFrames
@@ -106,31 +116,51 @@ private final class RenderPreviewModel: ObservableObject {
                 let previewScheduler = previewScheduler
                 let scannerCache = scannerCache
                 let trainingPreviewRequests = trainingPreviewRequests
+                let shouldSaveTrainingArtifacts = shouldSaveTrainingArtifacts
+                let inMemoryInitialParameters = mode.usesCurrentParameters ? trainedParameters : nil
 
                 let trained = try await Task.detached(priority: .userInitiated) {
                     try FastGSMacMLXRuntime.run {
+                        let initialParameters: FastGSTrainableParameters?
+                        if mode.usesCurrentParameters {
+                            if let inMemoryInitialParameters {
+                                initialParameters = inMemoryInitialParameters
+                            } else if let checkpointDirectory = latestCheckpointDirectory(in: outputDirectory) {
+                                initialParameters = try FastGSCheckpoint.loadParameters(directory: checkpointDirectory)
+                            } else {
+                                throw RenderPreviewError.missingCheckpoint(outputDirectory)
+                            }
+                        } else {
+                            initialParameters = nil
+                        }
+                        if let runDirectory {
+                            try FileManager.default.createDirectory(at: runDirectory, withIntermediateDirectories: true)
+                        }
                         let progress: (Int) -> Void = { step in
                             Task { @MainActor in
                                 self.trainingStep = step
-                                self.status = "Training \(self.cameraLabel)..."
+                                self.status = "\(mode.statusVerb) \(trainingFrameCount) frames..."
                             }
                         }
                         let preview: (FastGSRecordedTrainingPreviewResult) throws -> Void = { preview in
+                            guard shouldSaveTrainingArtifacts, let runDirectory else {
+                                return
+                            }
+                            let frameIndex = preview.frameIndex ?? selectedFrameIndex
                             try writeSideBySidePNG(
                                 targetRGBA: preview.targetRGBA,
                                 renderRGBA: preview.renderRGBA,
                                 width: preview.width,
                                 height: preview.height,
                                 to: trainingOutputURL(
-                                    outputDirectory: outputDirectory,
-                                    cameraIndex: selectedFrameIndex,
+                                    outputDirectory: runDirectory,
+                                    cameraIndex: frameIndex,
                                     step: preview.step
                                 )
                             )
                         }
                         let scheduledPreview: (Int, FastGSTrainableParameters) throws -> FastGSRecordedTrainingPreviewResult? = { step, parameters in
                             guard
-                                let scannerCache,
                                 let frameIndex = trainingPreviewRequests.consumeFrameIndex()
                             else {
                                 return nil
@@ -169,35 +199,21 @@ private final class RenderPreviewModel: ObservableObject {
                             }
                             return nil
                         }
-                        let result: FastGSRecordedTrainingPreviewResult
-                        if let scannerCache {
-                            let scenes = try trainingScenes(
-                                cache: scannerCache,
-                                width: trainingWidth,
-                                height: trainingHeight,
-                                maxFrames: maxFrames
-                            )
-                            result = try FastGSRecordedTrainingPreview.run(
-                                scenes: scenes,
-                                config: config,
-                                progress: progress,
-                                previewScheduler: previewScheduler,
-                                scheduledPreview: scheduledPreview,
-                                preview: preview
-                            )
-                        } else {
-                            result = try FastGSRecordedTrainingPreview.run(
-                                scannerDatasetDirectory: datasetDirectory,
-                                cameraIndex: selectedFrameIndex,
-                                width: trainingWidth,
-                                height: trainingHeight,
-                                maxFrames: maxFrames,
-                                config: config,
-                                progress: progress,
-                                previewScheduler: previewScheduler,
-                                preview: preview
-                            )
-                        }
+                        let scenes = try trainingScenes(
+                            cache: scannerCache,
+                            width: trainingWidth,
+                            height: trainingHeight,
+                            maxFrames: maxFrames
+                        )
+                        let result = try FastGSRecordedTrainingPreview.run(
+                            scenes: scenes,
+                            config: config,
+                            initialParameters: initialParameters,
+                            progress: progress,
+                            previewScheduler: previewScheduler,
+                            scheduledPreview: scheduledPreview,
+                            preview: preview
+                        )
 
                         guard let texture = FastGSImageExport.texture(
                             rgbaBytes: result.renderRGBA,
@@ -217,23 +233,29 @@ private final class RenderPreviewModel: ObservableObject {
                             width: result.width,
                             height: result.height
                         )
-                        let checkpointDirectory = outputDirectory.appendingPathComponent("checkpoint", isDirectory: true)
+                        let checkpointDirectory = runDirectory?.appendingPathComponent("checkpoint", isDirectory: true)
                         if let parameters = result.parameters {
-                            try FastGSCheckpoint.save(
-                                parameters: parameters,
-                                info: FastGSTrainingCheckpointInfo(
-                                    datasetDirectory: datasetDirectory.path,
-                                    outputDirectory: outputDirectory.path,
+                            if shouldSaveTrainingArtifacts, let checkpointDirectory, let runDirectory {
+                                let info = FastGSTrainingCheckpointInfo(
+                                    datasetDirectory: datasetDirectoryPath,
+                                    outputDirectory: runDirectory.path,
                                     imageWidth: result.width,
                                     imageHeight: result.height,
                                     maxFrames: maxFrames,
                                     trainingSteps: config.totalSteps,
                                     completedStep: result.step,
-                                    frameCount: scannerCache?.frameDescriptors.count,
-                                    pointCount: result.pointCount
-                                ),
-                                directory: checkpointDirectory
-                            )
+                                    frameCount: trainingFrameCount,
+                                    pointCount: result.pointCount,
+                                    note: mode.metadataName
+                                )
+                                try FastGSCheckpoint.save(parameters: parameters, info: info, directory: checkpointDirectory)
+                                try writeTrainingRunMetadata(
+                                    mode: mode,
+                                    info: info,
+                                    runDirectory: runDirectory,
+                                    checkpointDirectory: checkpointDirectory
+                                )
+                            }
                         }
                         return (
                             texture,
@@ -243,7 +265,7 @@ private final class RenderPreviewModel: ObservableObject {
                             result.height,
                             result.pointCount,
                             result.parameters,
-                            checkpointDirectory
+                            runDirectory
                         )
                     }
                 }.value
@@ -255,7 +277,11 @@ private final class RenderPreviewModel: ObservableObject {
                 previewAspectRatio = Double(trained.3) / Double(trained.4)
                 previewMode = .recordedSideBySide
                 trainedParameters = trained.6
-                status = "Training completed, wrote previews and checkpoint to \(trained.7.path)"
+                if let runDirectory = trained.7 {
+                    status = "\(mode.completedVerb) on \(trainingFrameCount) frames, wrote artifacts to \(runDirectory.path)"
+                } else {
+                    status = "\(mode.completedVerb) on \(trainingFrameCount) frames"
+                }
             } catch {
                 status = "Training failed: \(error)"
             }
@@ -512,11 +538,48 @@ private enum RenderPreviewMode {
     case recordedSideBySide
 }
 
+private enum FastGSMacTrainingStartMode: String, Sendable {
+    case fromInitial
+    case continueTraining
+
+    var usesCurrentParameters: Bool {
+        self == .continueTraining
+    }
+
+    var statusVerb: String {
+        switch self {
+        case .fromInitial:
+            "Training"
+        case .continueTraining:
+            "Continuing training"
+        }
+    }
+
+    var completedVerb: String {
+        switch self {
+        case .fromInitial:
+            "Training completed"
+        case .continueTraining:
+            "Continued training completed"
+        }
+    }
+
+    var metadataName: String {
+        switch self {
+        case .fromInitial:
+            "train_from_initial"
+        case .continueTraining:
+            "continue_training"
+        }
+    }
+}
+
 private enum RenderPreviewError: Error {
     case textureCreationFailed
     case missingPointCloud
     case noFramePairs
     case missingFrameImage(Int)
+    case missingCheckpoint(URL)
 }
 
 private enum FastGSMacMLXRuntime {
@@ -551,6 +614,63 @@ private final class FastGSMacTrainingPreviewRequests: @unchecked Sendable {
 private func trainingOutputURL(outputDirectory: URL, cameraIndex: Int, step: Int) -> URL {
     outputDirectory.appendingPathComponent(
         String(format: "camera_%03d_step_%03d_sbs.png", cameraIndex, step)
+    )
+}
+
+private func timestampedTrainingRunName(date: Date = Date()) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyyMMdd_HHmm"
+    return formatter.string(from: date)
+}
+
+private func latestCheckpointDirectory(in outputDirectory: URL) -> URL? {
+    let fileManager = FileManager.default
+    let directCheckpoint = outputDirectory.appendingPathComponent("checkpoint", isDirectory: true)
+    if fileManager.fileExists(atPath: FastGSCheckpoint.parameterURL(in: directCheckpoint).path) {
+        return directCheckpoint
+    }
+
+    guard let contents = try? fileManager.contentsOfDirectory(
+        at: outputDirectory,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        return nil
+    }
+
+    return contents
+        .filter { url in
+            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey]), values.isDirectory == true else {
+                return false
+            }
+            let checkpoint = url.appendingPathComponent("checkpoint", isDirectory: true)
+            return fileManager.fileExists(atPath: FastGSCheckpoint.parameterURL(in: checkpoint).path)
+        }
+        .sorted { $0.lastPathComponent > $1.lastPathComponent }
+        .first?
+        .appendingPathComponent("checkpoint", isDirectory: true)
+}
+
+private func writeTrainingRunMetadata(
+    mode: FastGSMacTrainingStartMode,
+    info: FastGSTrainingCheckpointInfo,
+    runDirectory: URL,
+    checkpointDirectory: URL
+) throws {
+    let metadata: [String: String] = [
+        "mode": mode.metadataName,
+        "createdAt": info.createdAt,
+        "datasetDirectory": info.datasetDirectory,
+        "outputDirectory": info.outputDirectory ?? runDirectory.path,
+        "checkpointDirectory": checkpointDirectory.path,
+        "parameterFile": FastGSCheckpoint.parameterURL(in: checkpointDirectory).path,
+    ]
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(metadata).write(
+        to: runDirectory.appendingPathComponent("training_run.json", isDirectory: false),
+        options: .atomic
     )
 }
 
@@ -740,7 +860,8 @@ private func trainingPreviewResult(
         width: width,
         height: height,
         pointCount: scene.manifest.pointCount,
-        parameters: parameters
+        parameters: parameters,
+        frameIndex: scene.scannerFrameIndex
     )
 }
 
@@ -831,12 +952,20 @@ private struct RenderPreviewView: View {
                 .help("Next recorded camera")
 
                 Button {
-                    model.trainRecordedFrame()
+                    model.trainRecordedFrame(mode: .fromInitial)
                 } label: {
-                    Label("Train", systemImage: "play.circle")
+                    Label("Train From Initial", systemImage: "play.circle")
                 }
                 .disabled(model.isTraining || !model.isDatasetLoaded)
-                .help("Train native scanner dataset frame")
+                .help("Train native scanner dataset frames from initial Gaussian parameters")
+
+                Button {
+                    model.trainRecordedFrame(mode: .continueTraining)
+                } label: {
+                    Label("Continue Training", systemImage: "forward.circle")
+                }
+                .disabled(model.isTraining || !model.isDatasetLoaded)
+                .help("Continue from current trained parameters or the latest checkpoint in the output directory")
             }
         }
         .padding(.horizontal, 16)
@@ -957,6 +1086,9 @@ private struct TrainingSettingsView: View {
                 numericField(title: "Max Frames", value: $model.maxFrames, range: 1...9999)
                 numericField(title: "Training Steps", value: $model.trainingSteps, range: 1...100000)
             }
+
+            Toggle("Save training images and parameters", isOn: $model.saveTrainingArtifacts)
+                .disabled(model.isTraining)
         }
         .padding(20)
         .frame(width: 620)

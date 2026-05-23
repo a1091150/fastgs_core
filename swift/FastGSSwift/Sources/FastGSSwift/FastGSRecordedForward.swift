@@ -166,6 +166,7 @@ public struct FastGSRecordedForwardScene {
     public var directMeans3D: [Float]?
     public var directColors: [Float]?
     public var directTarget: [Float]?
+    public var scannerFrameIndex: Int?
 
     public init(manifest: FastGSRecordedForwardManifest) {
         self.manifest = manifest
@@ -173,6 +174,7 @@ public struct FastGSRecordedForwardScene {
         self.directMeans3D = nil
         self.directColors = nil
         self.directTarget = nil
+        self.scannerFrameIndex = nil
     }
 
     public init(manifestURL: URL) throws {
@@ -184,6 +186,7 @@ public struct FastGSRecordedForwardScene {
         self.directMeans3D = nil
         self.directColors = nil
         self.directTarget = nil
+        self.scannerFrameIndex = nil
     }
 
     public init(scannerDataset: FastGSScannerDataset, frameIndex: Int, shDegree: Int = 3, scale: Double = 0.02, opacity: Double = 0.82) {
@@ -211,6 +214,7 @@ public struct FastGSRecordedForwardScene {
         self.directMeans3D = scannerDataset.pointCloud.points
         self.directColors = scannerDataset.pointCloud.colors
         self.directTarget = frame.targetCHW
+        self.scannerFrameIndex = frame.index
     }
 
     public func render(verbose: Bool = false) throws -> FastGSRasterizeOutput {
