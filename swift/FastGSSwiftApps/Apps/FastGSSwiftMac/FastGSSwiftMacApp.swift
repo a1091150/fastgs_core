@@ -41,6 +41,7 @@ private final class RenderPreviewModel: ObservableObject {
     @Published var trainingSteps = 200
     @Published var isDatasetLoaded = false
     @Published var isLoadingDataset = false
+    @Published var isRenderingPreview = false
     private var frameIndices = [Int]()
     private let previewScheduler = FastGSRenderPreviewScheduler(maximumFramesPerSecond: 60)
     private var scannerCache: FastGSScannerDatasetCache?
@@ -267,6 +268,10 @@ private final class RenderPreviewModel: ObservableObject {
             status = "Press Load before switching cameras"
             return
         }
+        guard !isRenderingPreview else {
+            status = "Rendering \(cameraLabel)..."
+            return
+        }
         let count = cameraCount
         guard count > 0 else {
             status = "Choose a scanner dataset folder"
@@ -386,6 +391,8 @@ private final class RenderPreviewModel: ObservableObject {
                             maxFrames: maxFrames,
                             device: device
                         )
+                        // Uncomment while profiling if MLX cache growth should be reclaimed after each preview.
+                        // Memory.clearCache()
                         return (cache, indices, preview)
                     }
                 }.value
@@ -449,6 +456,10 @@ private final class RenderPreviewModel: ObservableObject {
         guard !isTraining, isDatasetLoaded, cameraCount > 0 else {
             return
         }
+        guard !isRenderingPreview else {
+            status = "Rendering \(cameraLabel)..."
+            return
+        }
         let selectedFrameIndex = frameIndices.indices.contains(cameraIndex) ? frameIndices[cameraIndex] : cameraIndex
         guard let scannerCache else {
             status = "Press Load to read scanner frames"
@@ -459,13 +470,14 @@ private final class RenderPreviewModel: ObservableObject {
         let maxFrames = max(1, maxFrames)
         let trainedParameters = trainedParameters
         let device = device
+        isRenderingPreview = true
         status = "Rendering \(cameraLabel)..."
 
         Task {
             do {
                 let preview = try await Task.detached(priority: .userInitiated) {
                     try FastGSMacMLXRuntime.run {
-                        try initialRenderPreview(
+                        let preview = try initialRenderPreview(
                             cache: scannerCache,
                             frameIndex: selectedFrameIndex,
                             width: width,
@@ -474,6 +486,9 @@ private final class RenderPreviewModel: ObservableObject {
                             parameters: trainedParameters,
                             device: device
                         )
+                        // Uncomment while profiling if MLX cache growth should be reclaimed after each preview.
+                        // Memory.clearCache()
+                        return preview
                     }
                 }.value
 
@@ -487,6 +502,7 @@ private final class RenderPreviewModel: ObservableObject {
             } catch {
                 status = "Render preview failed: \(error)"
             }
+            isRenderingPreview = false
         }
     }
 }
@@ -626,11 +642,7 @@ private func initialRenderPreview(
         )
     )
     let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
-    let render = if let parameters {
-        FastGSTrainingStageGraph.renderDefault(scene: scene, parameters: parameters)
-    } else {
-        try scene.render().outColor
-    }
+    let render = try previewOutColor(scene: scene, parameters: parameters)
     let targetRGBA = FastGSImageExport.rgbaBytes(
         outColor: try scene.targetOutColor(),
         width: width,
@@ -671,11 +683,7 @@ private func renderPreview(
     device: MTLDevice? = nil
 ) throws -> (target: CGImage, render: CGImage?, renderTexture: MTLTexture?) {
     let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
-    let render = if let parameters {
-        FastGSTrainingStageGraph.renderDefault(scene: scene, parameters: parameters)
-    } else {
-        try scene.render().outColor
-    }
+    let render = try previewOutColor(scene: scene, parameters: parameters)
     let targetRGBA = FastGSImageExport.rgbaBytes(
         outColor: try scene.targetOutColor(),
         width: width,
@@ -697,6 +705,16 @@ private func deviceTexture(outColor: MLXArray, width: Int, height: Int, device: 
     return FastGSImageExport.texture(outColor: outColor, width: width, height: height, device: device)
 }
 
+private func previewOutColor(
+    scene: FastGSRecordedForwardScene,
+    parameters: FastGSTrainableParameters?
+) throws -> MLXArray {
+    if let parameters {
+        return try scene.renderPreviewOutColor(parameters: parameters)
+    }
+    return try scene.renderPreviewOutColor(parameters: scene.initialTrainableParameters())
+}
+
 private func trainingPreviewResult(
     dataset: FastGSScannerDataset,
     step: Int,
@@ -711,7 +729,7 @@ private func trainingPreviewResult(
         height: height
     )
     let renderRGBA = FastGSImageExport.rgbaBytes(
-        outColor: FastGSTrainingStageGraph.renderDefault(scene: scene, parameters: parameters),
+        outColor: try scene.renderPreviewOutColor(parameters: parameters),
         width: width,
         height: height
     )
@@ -801,7 +819,7 @@ private struct RenderPreviewView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                 }
-                .disabled(!model.isDatasetLoaded)
+                .disabled(!model.isDatasetLoaded || model.isRenderingPreview)
                 .help("Previous recorded camera")
 
                 Button {
@@ -809,7 +827,7 @@ private struct RenderPreviewView: View {
                 } label: {
                     Image(systemName: "chevron.right")
                 }
-                .disabled(!model.isDatasetLoaded)
+                .disabled(!model.isDatasetLoaded || model.isRenderingPreview)
                 .help("Next recorded camera")
 
                 Button {

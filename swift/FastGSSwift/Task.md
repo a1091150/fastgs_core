@@ -600,7 +600,7 @@ or recomputing them from unrelated values.
       per-step update magnitude, and the accumulated delta from the initial
       parameters.
 - Formal Swift training runner direction:
-  - [ ] Confirm the macOS app uses the fastest available forward path for
+  - [x] Confirm the macOS app uses the fastest available forward path for
     preview rendering.
     - Expected preview path:
       `FastGSRecordedForwardScene.renderPreviewOutColor(...)` ->
@@ -610,9 +610,17 @@ or recomputing them from unrelated values.
     - Training/backward must continue to use the full rasterize path because it
       needs intermediates such as `sampledT`, `sampledAr`, `finalT`,
       `nContrib`, `maxContrib`, and `pixelColors`.
-    - Add or update an Xcode smoke/performance test that proves the Mac App
-      preview path does not accidentally fall back to the full training
-      rasterize path or CPU `rgbaBytes/asArray` presentation path.
+    - The Load/camera-switch preview helpers now call
+      `renderPreviewOutColor(...)` for both initial and trained parameters, then
+      present through `FastGSImageExport.texture(outColor:...)` when a Metal
+      device is available.
+    - Training-time inserted previews also use `renderPreviewOutColor(...)`;
+      they still read back RGBA because the current callback writes/updates
+      side-by-side PNG/CGImage previews.
+    - Current Xcode benchmark coverage:
+      `testRecordedScannerRenderTextureFPSBenchmarkUnderXcode` with
+      `preview=1` exercises `renderPreviewOutColor(...)` and texture
+      presentation directly.
   - [ ] Promote Mac App training to a clean multi-view training path.
     - The app Train button should train over scanner frames
       `0..<min(maxFrames, availableFrameCount)`.
