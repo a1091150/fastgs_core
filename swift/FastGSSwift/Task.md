@@ -672,11 +672,14 @@ or recomputing them from unrelated values.
       - `final_prune_interval = 3000`
       - `final_prune_min_opacity = 0.1`
       - `final_prune_score_thresh = 0.9`
-    - [ ] Add `FastGSDensificationConfig` and `FastGSDensificationState`.
+    - [x] Add `FastGSDensificationConfig` and `FastGSDensificationState`.
       - Track `maxRadii2D`, `xyzGradAccum`, `xyzGradAccumAbs`, `denom`, and
         optional `tmpRadii`.
       - Keep scene extent / camera radius explicit; do not hide it in global
         state.
+      - First pass is pure Swift state/config with unit tests for scheduling
+        and visible-Gaussian gradient/radius accumulation. Wiring into the
+        training loop follows after topology helpers exist.
     - [ ] Add trainable parameter topology helpers.
       - `FastGSTrainableParameters.take(indices:)`
       - `FastGSTrainableParameters.prune(mask:)`
