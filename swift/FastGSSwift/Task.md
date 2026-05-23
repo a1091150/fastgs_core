@@ -762,12 +762,19 @@ or recomputing them from unrelated values.
       - [x] Reset/prune densification buffers after the topology change.
       - Follow-up: wire split together with clone and prune into the scheduled
         densify/prune training pass after multi-view scoring exists.
-    - [ ] Add multi-view Gaussian scoring.
-      - Re-render sampled cameras with a loss/metric map.
-      - Produce `importanceScore` for densify and `pruningScore` for final
-        prune.
-      - Compare behavior against `compute_gaussian_scores_fastgs(...)` in
-        `scripts/train_scanner_fastgs2.py`.
+    - [x] Add multi-view Gaussian scoring.
+      - [x] Re-render sampled cameras, build normalized per-pixel L1 loss maps,
+        and run a second metric-count rasterize pass.
+      - [x] Produce `importanceScore` for densify and normalized `pruningScore`
+        for final prune.
+      - [x] Match the first Swift pass to `compute_gaussian_scores_fastgs(...)`
+        in `scripts/train_scanner_fastgs2.py`: score = frame photometric loss *
+        metric count, pruning score = normalized accumulated score, importance =
+        floor(metric counts / sampled frame count).
+      - [x] Add Xcode smoke coverage for recorded scanner scoring.
+      - Follow-up: wire scoring into scheduled densify/prune and final-prune
+        passes, then compare score distributions against the Python reference on
+        the fixed scanner dataset.
     - [ ] Extend checkpoint format for topology-changing training.
       - Save Gaussian count, after-train config, optimizer state, and current
         densification state when available.

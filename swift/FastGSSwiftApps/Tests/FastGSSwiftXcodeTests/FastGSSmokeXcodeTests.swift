@@ -1173,6 +1173,33 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertTrue(result.densificationStats.viewspaceGradients.asArray(Float.self).contains { abs($0) > 1e-7 })
     }
 
+    func testGaussianScoringProducesImportanceAndPruningScoresUnderXcode() throws {
+        guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
+            throw XCTSkip("Generate \(recordedManifestURL.path) first.")
+        }
+
+        let scene = try FastGSRecordedForwardScene(manifestURL: recordedManifestURL)
+        let parameters = try scene.initialTrainableParameters()
+        let target = 0.9 * FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+        let result = try FastGSGaussianScoring.compute(
+            scenes: [scene],
+            parameters: parameters,
+            sceneIndices: [0],
+            targets: [target],
+            lossThreshold: 0,
+            densify: true
+        )
+
+        XCTAssertEqual(result.sampledFrameCount, 1)
+        XCTAssertEqual(result.importanceScores?.count, parameters.gaussianCount)
+        XCTAssertEqual(result.metricCounts?.count, parameters.gaussianCount)
+        XCTAssertEqual(result.pruningScores.count, parameters.gaussianCount)
+        XCTAssertEqual(result.metricScore.count, parameters.gaussianCount)
+        XCTAssertTrue(result.metricCounts?.contains { $0 > 0 } == true)
+        XCTAssertTrue(result.metricScore.contains { $0 > 0 })
+        XCTAssertTrue(result.pruningScores.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
+    }
+
     func testRecordedSmallTrainingStepUpdatesParametersUnderXcode() throws {
         guard FileManager.default.fileExists(atPath: recordedManifestURL.path) else {
             throw XCTSkip("Generate \(recordedManifestURL.path) first.")
