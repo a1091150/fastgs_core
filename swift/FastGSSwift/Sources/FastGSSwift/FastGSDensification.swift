@@ -186,4 +186,46 @@ public struct FastGSDensificationState: Codable, Equatable, Sendable {
         }
         return (gradient, gradientAbs)
     }
+
+    public func pruned(mask: [Bool]) -> FastGSDensificationState {
+        validate(count: mask.count)
+        return FastGSDensificationState(
+            maxRadii2D: pruneValues(maxRadii2D, mask: mask),
+            xyzGradAccum: pruneValues(xyzGradAccum, mask: mask),
+            xyzGradAccumAbs: pruneValues(xyzGradAccumAbs, mask: mask),
+            denom: pruneValues(denom, mask: mask),
+            tmpRadii: tmpRadii.map { pruneValues($0, mask: mask) },
+            sceneExtent: sceneExtent
+        )
+    }
+
+    public mutating func prune(mask: [Bool]) {
+        self = pruned(mask: mask)
+    }
+}
+
+private extension FastGSDensificationState {
+    init(
+        maxRadii2D: [Float],
+        xyzGradAccum: [Float],
+        xyzGradAccumAbs: [Float],
+        denom: [Float],
+        tmpRadii: [Float]?,
+        sceneExtent: Float
+    ) {
+        self.maxRadii2D = maxRadii2D
+        self.xyzGradAccum = xyzGradAccum
+        self.xyzGradAccumAbs = xyzGradAccumAbs
+        self.denom = denom
+        self.tmpRadii = tmpRadii
+        self.sceneExtent = sceneExtent
+        validate()
+    }
+}
+
+private func pruneValues<T>(_ values: [T], mask: [Bool]) -> [T] {
+    precondition(values.count == mask.count, "prune mask count mismatch")
+    return values.enumerated().compactMap { index, value in
+        mask[index] ? nil : value
+    }
 }

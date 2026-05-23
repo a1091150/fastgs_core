@@ -83,4 +83,23 @@ final class FastGSDensificationTests: XCTestCase {
         XCTAssertEqual(averages.gradientAbs[1], 0)
         XCTAssertEqual(averages.gradientAbs[2], 5)
     }
+
+    func testDensificationStatePrunesRows() {
+        var state = FastGSDensificationState(count: 4, sceneExtent: 3)
+        state.maxRadii2D = [1, 2, 3, 4]
+        state.xyzGradAccum = [10, 20, 30, 40]
+        state.xyzGradAccumAbs = [11, 21, 31, 41]
+        state.denom = [5, 6, 7, 8]
+        state.tmpRadii = [9, 10, 11, 12]
+
+        let pruned = state.pruned(mask: [false, true, false, true])
+
+        XCTAssertEqual(pruned.count, 2)
+        XCTAssertEqual(pruned.sceneExtent, 3)
+        XCTAssertEqual(pruned.maxRadii2D, [1, 3])
+        XCTAssertEqual(pruned.xyzGradAccum, [10, 30])
+        XCTAssertEqual(pruned.xyzGradAccumAbs, [11, 31])
+        XCTAssertEqual(pruned.denom, [5, 7])
+        XCTAssertEqual(pruned.tmpRadii, [9, 11])
+    }
 }

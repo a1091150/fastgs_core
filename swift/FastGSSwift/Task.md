@@ -710,8 +710,12 @@ or recomputing them from unrelated values.
         `opacities` are treated as probability values and converted to logits
         on load.
     - [ ] Add prune-only support before clone/split.
-      - Start with opacity threshold pruning.
-      - Then add screen-size and world-scale pruning.
+      - [x] Start with opacity threshold pruning.
+      - [x] Then add screen-size and world-scale pruning.
+      - [x] Synchronize prune across trainable parameters, Adam optimizer
+        state, and densification state.
+      - [x] Add a minimum-Gaussian guard that keeps the highest-opacity rows
+        when a prune pass would remove too many Gaussians.
       - Then add final multi-view score pruning with a minimum-Gaussian guard.
     - [ ] Add densification stat accumulation.
       - Requires a stable way to access `radii` and `d_viewspace` /

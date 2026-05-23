@@ -1,4 +1,5 @@
 import FastGSSwift
+import Foundation
 import MLX
 import XCTest
 
@@ -41,6 +42,66 @@ final class FastGSAfterTrainingTests: XCTestCase {
         assertAfterTrainingClose(updatedState.means3D.firstMoment.asArray(Float.self), state.means3D.firstMoment.asArray(Float.self))
         assertAfterTrainingClose(updatedState.rotations.secondMoment.asArray(Float.self), state.rotations.secondMoment.asArray(Float.self))
     }
+
+    func testPruneOnlyAppliesOpacityScreenAndWorldMasks() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")
+        }
+
+        let parameters = makePruneOnlyParameters(opacityProbabilities: [0.2, 0.001, 0.8, 0.004])
+        let state = FastGSAdamState(step: 11, parameters: parameters)
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.maxRadii2D = [2, 3, 99, 4]
+        densificationState.xyzGradAccum = [10, 20, 30, 40]
+        densificationState.xyzGradAccumAbs = [11, 21, 31, 41]
+        densificationState.denom = [1, 2, 3, 4]
+        densificationState.tmpRadii = [5, 6, 7, 8]
+
+        let result = FastGSAfterTraining.pruneOnly(
+            parameters: parameters,
+            optimizerState: state,
+            densificationState: densificationState,
+            minOpacity: 0.005,
+            maxScreenSize: 20,
+            maxWorldScaleFactor: 0.1,
+            minGaussians: 1
+        )
+
+        XCTAssertEqual(result.pruneMask, [false, true, true, true])
+        XCTAssertEqual(result.opacityHits, 2)
+        XCTAssertEqual(result.screenSizeHits, 1)
+        XCTAssertEqual(result.worldScaleHits, 1)
+        XCTAssertEqual(result.prunedCount, 3)
+        XCTAssertEqual(result.keptCount, 1)
+        XCTAssertEqual(result.parameters.gaussianCount, 1)
+        XCTAssertEqual(result.optimizerState?.step, 11)
+        XCTAssertEqual(result.optimizerState?.means3D.firstMoment.shape, [1, 3])
+        XCTAssertEqual(result.densificationState?.maxRadii2D, [2])
+        XCTAssertEqual(result.densificationState?.xyzGradAccum, [10])
+        XCTAssertEqual(result.densificationState?.xyzGradAccumAbs, [11])
+        XCTAssertEqual(result.densificationState?.denom, [1])
+        XCTAssertEqual(result.densificationState?.tmpRadii, [5])
+        assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2])
+    }
+
+    func testPruneOnlyMinimumGaussianGuardKeepsHighestOpacityRows() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")
+        }
+
+        let parameters = makePruneOnlyParameters(opacityProbabilities: [0.1, 0.2, 0.3])
+        let result = FastGSAfterTraining.pruneOnly(
+            parameters: parameters,
+            minOpacity: 0.9,
+            minGaussians: 2
+        )
+
+        XCTAssertEqual(result.pruneMask, [true, false, false])
+        XCTAssertEqual(result.prunedCount, 1)
+        XCTAssertEqual(result.keptCount, 2)
+        XCTAssertEqual(result.parameters.gaussianCount, 2)
+        assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.3])
+    }
 }
 
 private func makeAfterTrainingParameters() -> FastGSTrainableParameters {
@@ -79,6 +140,28 @@ private func makeAfterTrainingAdamField(shape: [Int], start: Float) -> FastGSAda
     return FastGSAdamFieldState(
         firstMoment: MLXArray(first, shape),
         secondMoment: MLXArray(second, shape)
+    )
+}
+
+private func makePruneOnlyParameters(opacityProbabilities: [Float]) -> FastGSTrainableParameters {
+    let count = opacityProbabilities.count
+    let scaleRows: [[Float]] = [
+        [log(0.1), log(0.1), log(0.1)],
+        [log(0.2), log(0.2), log(0.2)],
+        [log(3.0), log(3.0), log(3.0)],
+        [log(0.3), log(0.3), log(0.3)]
+    ]
+    let scales = (0..<count).flatMap { index in
+        scaleRows[index % scaleRows.count]
+    }
+    return FastGSTrainableParameters(
+        means3D: MLXArray((0..<(count * 3)).map { Float($0) }, [count, 3]),
+        dc: MLXArray([Float](repeating: 0.1, count: count * 3), [count, 1, 3]),
+        sh: MLXArray([Float](repeating: 0.2, count: count * 6), [count, 2, 3]),
+        opacityLogits: FastGSOpacity.logits(fromProbabilities: MLXArray(opacityProbabilities, [count])),
+        scales: MLXArray(scales, [count, 3]),
+        rotations: MLXArray([Float](repeating: 0, count: count * 4), [count, 4]),
+        cov3DPrecomputed: MLXArray([Float](repeating: 0.4, count: count * 6), [count, 6])
     )
 }
 
