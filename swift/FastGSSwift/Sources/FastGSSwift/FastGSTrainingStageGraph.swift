@@ -38,6 +38,13 @@ public enum FastGSTrainingStageGraph {
         render(context: FastGSTrainingRenderContext(scene: scene, stream: stream), parameters: parameters, stream: stream)
     }
 
+    public static func renderDefault(
+        scene: FastGSRecordedForwardScene,
+        parameters: FastGSTrainableParameters
+    ) -> MLXArray {
+        render(scene: scene, parameters: parameters, stream: .default)
+    }
+
     public static func render(
         context: FastGSTrainingRenderContext,
         parameters: FastGSTrainableParameters,

@@ -593,8 +593,8 @@ private func initialRenderPreview(
         )
     )
     let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
-    let render = if let parameters, parameters.means3D.shape == [scene.manifest.pointCount, 3] {
-        FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+    let render = if let parameters {
+        FastGSTrainingStageGraph.renderDefault(scene: scene, parameters: parameters)
     } else {
         try scene.render().outColor
     }
@@ -638,8 +638,8 @@ private func renderPreview(
     parameters: FastGSTrainableParameters? = nil
 ) throws -> (target: CGImage, render: CGImage) {
     let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
-    let render = if let parameters, parameters.means3D.shape == [scene.manifest.pointCount, 3] {
-        FastGSTrainingStageGraph.render(scene: scene, parameters: parameters)
+    let render = if let parameters {
+        FastGSTrainingStageGraph.renderDefault(scene: scene, parameters: parameters)
     } else {
         try scene.render().outColor
     }
@@ -673,7 +673,7 @@ private func trainingPreviewResult(
         height: height
     )
     let renderRGBA = FastGSImageExport.rgbaBytes(
-        outColor: FastGSTrainingStageGraph.render(scene: scene, parameters: parameters),
+        outColor: FastGSTrainingStageGraph.renderDefault(scene: scene, parameters: parameters),
         width: width,
         height: height
     )
