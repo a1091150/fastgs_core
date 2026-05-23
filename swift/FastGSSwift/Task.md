@@ -600,125 +600,52 @@ or recomputing them from unrelated values.
       per-step update magnitude, and the accumulated delta from the initial
       parameters.
 - Formal Swift training runner direction:
-  - [x] Keep the first real runner Mac-App oriented rather than adding a
-    command-line executable. A CLI runner can remain a later convenience idea.
-  - [x] Start with fixed-point training only: no densify, prune, opacity reset,
-    or optimizer-state migration until the rendered previews and debug logs
-    look trustworthy.
-  - [x] Represent runner configuration as Swift structs so the macOS app can
-    own and mutate training parameters cleanly.
-    - `FastGSRecordedTrainingRunConfig` owns total steps, cache limit, learning
-      rates, and the current recorded reference set.
-    - `FastGSRecordedTrainingReferenceSet` scans per-camera
-      `recorded_manifest.json` files and falls back to the root manifest when
-      per-camera references have not been generated yet.
-  - [x] Add a first macOS app training button that runs one 200-step
-    fixed-point training pass and displays the completed target/render result
-    in the app.
-  - [x] Generate and consume a full-point 512x512 recorded reference from
-    `/private/tmp/fastgs_recorded_reference_full_512`. The reference generator
-    rebuilds camera metadata for the requested size, so Swift receives the
-    matching `tanFovX`/`tanFovY`, image size, target tensor, and manifest.
-  - [x] Show current training progress as `Step current / total` in the macOS
-    app toolbar.
-  - [x] Add previous/next camera buttons in the macOS app toolbar. These switch
-    the selected recorded camera target/render pair for the fixed 512x512
-    training preview.
-    - [x] Switch by sorted scanner frame-pair offset instead of treating the UI
-      camera index as a raw file frame index.
-    - [x] Load the selected frame target preview immediately when switching, and
-      clear the stale render so the UI does not show the previous training
-      result as if it belonged to the new camera.
-  - [x] Add `make swift-recorded-full-512-camera-references` to generate
-    per-camera 512x512 full-point manifests under
-    `/private/tmp/fastgs_recorded_reference_full_512/camera_000...`.
-  - [x] Clean up the macOS app so it only exposes training-related controls:
-    dataset selection, camera/frame navigation, training start, progress, and
-    target/render display.
-    - [x] Remove static fixture forward, mock camera frame, and early reload/test
-      forward buttons from the primary app UI.
-  - [x] Add macOS app training settings controls:
-    - dataset directory picker, defaulting to
-      `/Users/yangdunfu/Downloads/2026_05_04_16_51_29`
-    - output directory picker, defaulting to
-      `/private/tmp/fastgs_swift_mac_training`
-    - editable training width and height
-    - editable `maxFrames` loader setting
-    - editable training step count
-    - settings now live in a SwiftUI sheet opened from the toolbar, keeping the
-      main toolbar focused on camera navigation and training start.
-    - [x] Add an explicit `Load` button. The app no longer scans or previews the
-      dataset implicitly after settings changes; camera navigation and training
-      stay disabled until Load succeeds.
-    - [x] Run one initial forward render during Load so the right-hand Swift
-      Render pane shows the current untrained Gaussian render before pressing
-      Train.
-    - [x] Make camera switching run a Swift render for the newly selected
-      scanner frame, so the left target and right render panes move together.
-      `Load` now builds a `FastGSScannerDatasetCache` with the transformed
-      point cloud and frame descriptors, so switching cameras no longer
-      re-reads `points.ply`; it only loads the selected frame camera/target and
-      runs the MLX forward path.
-    - [x] Preserve trained Gaussian parameters after the Mac App training run.
-      Camera switching now renders the selected camera with the trained
-      parameters when available, instead of falling back to the initial
-      point-cloud colors/scales/opacities.
-    - [x] Add a single-entry MLX runtime gate in the macOS app. MLX C++ and
-      MLX Swift are treated as single-thread-only for this project, so Load,
-      camera-switch render, and training are all serialized through one lock.
-    - [x] Add `FastGSRenderPreviewScheduler` for training-time preview render
-      requests. The scheduler records a pending render request, enforces a
-      maximum preview frequency such as 60 FPS, and lets the training loop
-      consume the request only after finishing the current optimization step.
-      This keeps the pattern as:
+  - [ ] Confirm the macOS app uses the fastest available forward path for
+    preview rendering.
+    - Expected preview path:
+      `FastGSRecordedForwardScene.renderPreviewOutColor(...)` ->
+      preview-only `FastGSRasterize.previewOutColor(...)` ->
+      threadgroup-batched preview rasterize kernel ->
+      `FastGSImageExport.texture(outColor:...)`.
+    - Training/backward must continue to use the full rasterize path because it
+      needs intermediates such as `sampledT`, `sampledAr`, `finalT`,
+      `nContrib`, `maxContrib`, and `pixelColors`.
+    - Add or update an Xcode smoke/performance test that proves the Mac App
+      preview path does not accidentally fall back to the full training
+      rasterize path or CPU `rgbaBytes/asArray` presentation path.
+  - [ ] Promote Mac App training to a clean multi-view training path.
+    - The app Train button should train over scanner frames
+      `0..<min(maxFrames, availableFrameCount)`.
+    - Use one selected camera/frame per optimization step at first; keep the
+      existing round-robin scheduling unless a better sampler is introduced.
+    - Preserve single-view training as a test-only fixture for debugging loss,
+      gradients, and deterministic image parity.
+    - Keep the training-time preview scheduler behavior: camera-switch preview
+      requests are consumed after the current training step, then training
+      resumes.
+  - [ ] Port FastGS after-training processes after multi-view training is
+    stable.
+    - Include densify, prune, opacity reset, optimizer-state migration, and any
+      Gaussian-count-changing state updates required by the original pipeline.
+    - Use `scripts/train_scanner_fastgs2.py` as the current local Python/MLX
+      training reference, but treat it as a modified implementation rather than
+      the sole source of truth.
+    - Compare against the original PyTorch FastGS training flow, especially
+      `submodules/FastGS/train_base.sh`, then adapt the Swift implementation so
+      behavior matches the origin pipeline where possible.
+    - After-train operations should be explicit Swift stages, not hidden inside
+      the optimizer step, because they change parameter array sizes and require
+      checkpoint/optimizer-state migration.
+  - [ ] Defer further FPS/performance research until the multi-view and
+    after-train task sequence is stable.
+    - Later candidates: opacity-aware bounded tile intersection, visible
+      Gaussian compaction, segmented sort, preview `radiusClip`, and alternative
+      tile/threadgroup sizes.
 
-      ```text
-      train step N
-        -> optional scheduled render-to-preview
-        -> train step N+1
-      ```
+## Archive
 
-      rather than rendering from another thread while MLX work is active.
-    - explicit Train button
-    - Current training remains single-view: `maxFrames` controls how many
-      frames the native loader reads from the selected start frame, but the
-      fixed-point training scene still uses the first loaded frame until
-      multi-view training is implemented.
-    - [x] Add the first simple multi-view training loop. The training runner can
-      now accept multiple recorded scenes and cycles through them with
-      `(step - 1) % sceneCount`, using one frame per optimization step. The Mac
-      App builds those scenes from scanner frame indices `0..<maxFrames`; if
-      `maxFrames` exceeds the dataset count, all available frames are used.
-    - [x] Change the Mac App default `maxFrames` to `9999`, so the default Load
-      and Train path uses all available scanner frames in the current dataset.
-    - [x] Allow camera switching during training as a queued preview request.
-      The left/right buttons update the requested camera and call
-      `FastGSRenderPreviewScheduler.requestRender()`. The training loop consumes
-      the request only after finishing the current optimization step, renders
-      that camera with the current trainable parameters, updates the Mac App
-      preview, then continues training. This preview does not change the
-      single-view training target yet.
-    - Next UI wiring: any future preview-refresh button should follow the same
-      scheduler path instead of launching a concurrent MLX render task.
-    - [x] Add a manual performance report test for camera switching:
-      `FASTGS_RUN_PERF_REPORT=1 swift test --filter FastGSScannerDatasetLoaderTests/testFixedScannerCameraSwitchPerformanceReport`.
-      On the fixed dataset, full loader time was about 3.8s because
-      `points.ply` read/transform dominates; cached frame load measured about
-      0.04s before the MLX render.
-    - Next performance task: if switching still feels slow, measure the
-      Xcode/Metal render segment with `FASTGS_RUN_METAL_TESTS=1` and then cache
-      decoded/resized target images or selected-frame camera metadata.
-    - [x] Add first GPU presentation fast path:
-      `FastGSOutColorTextureRenderer` calls `MLXArray.asMTLBuffer(noCopy: true)`
-      for contiguous `[3, width * height]` float32 `outColor`, then dispatches a
-      small Metal compute kernel to write RGBA8 into an app-owned `MTLTexture`.
-      `FastGSImageExport.texture(outColor:...)` now tries this path before
-      falling back to CPU `rgbaBytes`.
-    - [x] Wire macOS Load/camera-switch preview to prefer the GPU texture path.
-      The render side no longer creates a render `CGImage` when texture creation
-      succeeds; target images still use the existing image decode path.
-  - [ ] After fixed-point training is stable, add FastGS-style after-train
-    features such as densify and prune as explicit later stages.
+- Completed Mac App training and preview tasks were moved to
+  `swift/archive/completed_mac_app_training_preview.md`.
 
 ## Test Plan
 
