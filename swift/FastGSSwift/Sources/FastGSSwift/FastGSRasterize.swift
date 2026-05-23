@@ -491,6 +491,10 @@ private enum FastGSRasterizeKernelSource {
         """
 
     static let previewBody = """
+        threadgroup float3 shared_xy_opacity[BLOCK_X * BLOCK_Y];
+        threadgroup float3 shared_conic[BLOCK_X * BLOCK_Y];
+        threadgroup float3 shared_colors[BLOCK_X * BLOCK_Y];
+
         uint2 tid = uint2(thread_position_in_threadgroup.x, thread_position_in_threadgroup.y);
         uint2 gid = uint2(thread_position_in_grid.x, thread_position_in_grid.y);
         uint2 tgp = uint2(threadgroup_position_in_grid.x, threadgroup_position_in_grid.y);
@@ -508,47 +512,74 @@ private enum FastGSRasterizeKernelSource {
         uint tiles_x = (image_width + block_x - 1u) / block_x;
         uint tiles_y = (image_height + block_y - 1u) / block_y;
 
-        if (tile_x >= tiles_x || tile_y >= tiles_y || pix_x >= image_width || pix_y >= image_height) {
+        if (tile_x >= tiles_x || tile_y >= tiles_y) {
           return;
         }
 
         uint tile_id = tile_y * tiles_x + tile_x;
         uint2 range = uint2(ranges[2 * tile_id], ranges[2 * tile_id + 1]);
-        uint pix_id = pix_y * image_width + pix_x;
+        bool inside = pix_x < image_width && pix_y < image_height;
+        uint pix_id = inside ? pix_y * image_width + pix_x : 0u;
         float2 pixf = float2(float(pix_x), float(pix_y));
         float t_val = 1.0f;
+        bool done = !inside;
         float c_accum[3] = {0.0f, 0.0f, 0.0f};
+        uint local_rank = tid.y * block_x + tid.x;
+        uint block_size = block_x * block_y;
+        uint num_batches = (range.y - range.x + block_size - 1u) / block_size;
 
-        for (uint idx = range.x; idx < range.y; ++idx) {
-          uint coll_id = point_list[idx];
-          float2 xy = read_packed_float2(means2d, coll_id);
-          float2 d = xy - pixf;
-          float4 con_o = read_packed_float4(conic_opacity, coll_id);
-          float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) -
-                        con_o.y * d.x * d.y;
-          if (power > 0.0f) {
-            continue;
+        for (uint batch = 0u; batch < num_batches; ++batch) {
+          uint batch_start = range.x + batch * block_size;
+          uint load_idx = batch_start + local_rank;
+          if (load_idx < range.y) {
+            uint coll_id = point_list[load_idx];
+            float2 xy = read_packed_float2(means2d, coll_id);
+            float4 con_o = read_packed_float4(conic_opacity, coll_id);
+            shared_xy_opacity[local_rank] = float3(xy.x, xy.y, con_o.w);
+            shared_conic[local_rank] = float3(con_o.x, con_o.y, con_o.z);
+            shared_colors[local_rank] = float3(
+                colors[coll_id * num_channels + 0u],
+                colors[coll_id * num_channels + 1u],
+                colors[coll_id * num_channels + 2u]);
           }
+          threadgroup_barrier(mem_flags::mem_threadgroup);
 
-          float alpha = min(0.99f, con_o.w * exp(power));
-          if (alpha < 1.0f / 255.0f) {
-            continue;
-          }
+          uint batch_size = min(block_size, range.y - batch_start);
+          for (uint local_idx = 0u; !done && local_idx < batch_size; ++local_idx) {
+            float3 xy_opacity = shared_xy_opacity[local_idx];
+            float3 conic = shared_conic[local_idx];
+            float2 d = float2(xy_opacity.x, xy_opacity.y) - pixf;
+            float power = -0.5f * (conic.x * d.x * d.x + conic.z * d.y * d.y) -
+                          conic.y * d.x * d.y;
+            if (power > 0.0f) {
+              continue;
+            }
 
-          float test_t = t_val * (1.0f - alpha);
-          if (test_t < 0.0001f) {
-            break;
-          }
+            float alpha = min(0.99f, xy_opacity.z * exp(power));
+            if (alpha < 1.0f / 255.0f) {
+              continue;
+            }
 
-          for (uint ch = 0; ch < min(num_channels, 3u); ++ch) {
-            c_accum[ch] += colors[coll_id * num_channels + ch] * alpha * t_val;
+            float test_t = t_val * (1.0f - alpha);
+            if (test_t < 0.0001f) {
+              done = true;
+              break;
+            }
+
+            float3 color = shared_colors[local_idx];
+            c_accum[0] += color.x * alpha * t_val;
+            c_accum[1] += color.y * alpha * t_val;
+            c_accum[2] += color.z * alpha * t_val;
+            t_val = test_t;
           }
-          t_val = test_t;
+          threadgroup_barrier(mem_flags::mem_threadgroup);
         }
 
-        for (uint ch = 0; ch < min(num_channels, 3u); ++ch) {
-          out_color[ch * image_height * image_width + pix_id] =
-              c_accum[ch] + t_val * background[ch];
+        if (inside) {
+          for (uint ch = 0; ch < min(num_channels, 3u); ++ch) {
+            out_color[ch * image_height * image_width + pix_id] =
+                c_accum[ch] + t_val * background[ch];
+          }
         }
         """
 }
