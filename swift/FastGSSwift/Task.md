@@ -708,6 +708,15 @@ or recomputing them from unrelated values.
     - Next performance task: if switching still feels slow, measure the
       Xcode/Metal render segment with `FASTGS_RUN_METAL_TESTS=1` and then cache
       decoded/resized target images or selected-frame camera metadata.
+    - [x] Add first GPU presentation fast path:
+      `FastGSOutColorTextureRenderer` calls `MLXArray.asMTLBuffer(noCopy: true)`
+      for contiguous `[3, width * height]` float32 `outColor`, then dispatches a
+      small Metal compute kernel to write RGBA8 into an app-owned `MTLTexture`.
+      `FastGSImageExport.texture(outColor:...)` now tries this path before
+      falling back to CPU `rgbaBytes`.
+    - [x] Wire macOS Load/camera-switch preview to prefer the GPU texture path.
+      The render side no longer creates a render `CGImage` when texture creation
+      succeeds; target images still use the existing image decode path.
   - [ ] After fixed-point training is stable, add FastGS-style after-train
     features such as densify and prune as explicit later stages.
 

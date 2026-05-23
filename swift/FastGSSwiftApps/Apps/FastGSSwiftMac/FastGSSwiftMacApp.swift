@@ -3,6 +3,7 @@ import AppKit
 import CoreImage
 import Metal
 import MetalKit
+import MLX
 import SwiftUI
 
 @main
@@ -357,6 +358,7 @@ private final class RenderPreviewModel: ObservableObject {
         let width = max(16, trainingWidth)
         let height = max(16, trainingHeight)
         let maxFrames = max(1, maxFrames)
+        let device = device
 
         Task {
             do {
@@ -381,7 +383,8 @@ private final class RenderPreviewModel: ObservableObject {
                             frameIndex: firstIndex,
                             width: width,
                             height: height,
-                            maxFrames: maxFrames
+                            maxFrames: maxFrames,
+                            device: device
                         )
                         return (cache, indices, preview)
                     }
@@ -392,7 +395,7 @@ private final class RenderPreviewModel: ObservableObject {
                 cameraCount = loaded.1.count
                 cameraIndex = 0
                 targetImage = loaded.2.target
-                texture = nil
+                texture = loaded.2.renderTexture
                 fallbackImage = loaded.2.render
                 renderSize = "\(width) x \(height)"
                 previewAspectRatio = Double(width) / Double(height)
@@ -455,6 +458,7 @@ private final class RenderPreviewModel: ObservableObject {
         let height = max(16, trainingHeight)
         let maxFrames = max(1, maxFrames)
         let trainedParameters = trainedParameters
+        let device = device
         status = "Rendering \(cameraLabel)..."
 
         Task {
@@ -467,13 +471,14 @@ private final class RenderPreviewModel: ObservableObject {
                             width: width,
                             height: height,
                             maxFrames: maxFrames,
-                            parameters: trainedParameters
+                            parameters: trainedParameters,
+                            device: device
                         )
                     }
                 }.value
 
                 targetImage = preview.target
-                texture = nil
+                texture = preview.renderTexture
                 fallbackImage = preview.render
                 renderSize = "\(width) x \(height)"
                 previewAspectRatio = Double(width) / Double(height)
@@ -607,8 +612,9 @@ private func initialRenderPreview(
     width: Int,
     height: Int,
     maxFrames: Int,
-    parameters: FastGSTrainableParameters? = nil
-) throws -> (target: CGImage, render: CGImage) {
+    parameters: FastGSTrainableParameters? = nil,
+    device: MTLDevice? = nil
+) throws -> (target: CGImage, render: CGImage?, renderTexture: MTLTexture?) {
     let dataset = try FastGSScannerDatasetLoader.load(
         directory: directory,
         options: FastGSScannerDatasetOptions(
@@ -630,14 +636,12 @@ private func initialRenderPreview(
         width: width,
         height: height
     )
-    let renderRGBA = FastGSImageExport.rgbaBytes(
-        outColor: render,
-        width: width,
-        height: height
-    )
+    let renderTexture = deviceTexture(outColor: render, width: width, height: height, device: device)
+    let renderImage = try renderTexture == nil ? FastGSImageExport.cgImage(outColor: render, width: width, height: height) : nil
     return (
         target: try FastGSImageExport.cgImage(rgbaBytes: targetRGBA, width: width, height: height),
-        render: try FastGSImageExport.cgImage(rgbaBytes: renderRGBA, width: width, height: height)
+        render: renderImage,
+        renderTexture: renderTexture
     )
 }
 
@@ -647,23 +651,25 @@ private func initialRenderPreview(
     width: Int,
     height: Int,
     maxFrames: Int,
-    parameters: FastGSTrainableParameters? = nil
-) throws -> (target: CGImage, render: CGImage) {
+    parameters: FastGSTrainableParameters? = nil,
+    device: MTLDevice? = nil
+) throws -> (target: CGImage, render: CGImage?, renderTexture: MTLTexture?) {
     let dataset = try FastGSScannerDatasetLoader.loadDataset(
         cache: cache,
         frameIndex: frameIndex,
         width: width,
         height: height
     )
-    return try renderPreview(dataset: dataset, width: width, height: height, parameters: parameters)
+    return try renderPreview(dataset: dataset, width: width, height: height, parameters: parameters, device: device)
 }
 
 private func renderPreview(
     dataset: FastGSScannerDataset,
     width: Int,
     height: Int,
-    parameters: FastGSTrainableParameters? = nil
-) throws -> (target: CGImage, render: CGImage) {
+    parameters: FastGSTrainableParameters? = nil,
+    device: MTLDevice? = nil
+) throws -> (target: CGImage, render: CGImage?, renderTexture: MTLTexture?) {
     let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
     let render = if let parameters {
         FastGSTrainingStageGraph.renderDefault(scene: scene, parameters: parameters)
@@ -675,15 +681,20 @@ private func renderPreview(
         width: width,
         height: height
     )
-    let renderRGBA = FastGSImageExport.rgbaBytes(
-        outColor: render,
-        width: width,
-        height: height
-    )
+    let renderTexture = deviceTexture(outColor: render, width: width, height: height, device: device)
+    let renderImage = try renderTexture == nil ? FastGSImageExport.cgImage(outColor: render, width: width, height: height) : nil
     return (
         target: try FastGSImageExport.cgImage(rgbaBytes: targetRGBA, width: width, height: height),
-        render: try FastGSImageExport.cgImage(rgbaBytes: renderRGBA, width: width, height: height)
+        render: renderImage,
+        renderTexture: renderTexture
     )
+}
+
+private func deviceTexture(outColor: MLXArray, width: Int, height: Int, device: MTLDevice?) -> MTLTexture? {
+    guard let device else {
+        return nil
+    }
+    return FastGSImageExport.texture(outColor: outColor, width: width, height: height, device: device)
 }
 
 private func trainingPreviewResult(

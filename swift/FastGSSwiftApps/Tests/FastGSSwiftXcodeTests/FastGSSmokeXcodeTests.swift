@@ -253,6 +253,86 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertTrue(report.latencyMeanMilliseconds.isFinite)
     }
 
+    func testRecordedScannerRenderTextureFPSBenchmarkUnderXcode() throws {
+        let benchmarkMarkerURL = URL(fileURLWithPath: "/private/tmp/fastgs_run_render_texture_benchmark")
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_RENDER_TEXTURE_BENCHMARK"] == "1"
+            || FileManager.default.fileExists(atPath: benchmarkMarkerURL.path)
+        else {
+            throw XCTSkip("Set FASTGS_RUN_RENDER_TEXTURE_BENCHMARK=1 or create \(benchmarkMarkerURL.path) to run the recorded scanner render texture FPS benchmark.")
+        }
+
+        let datasetURL = URL(fileURLWithPath: "/Users/yangdunfu/Downloads/2026_05_04_16_51_29", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: datasetURL.appendingPathComponent("points.ply").path) else {
+            throw XCTSkip("Fixed scanner dataset is not available at \(datasetURL.path).")
+        }
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+
+        let environment = ProcessInfo.processInfo.environment
+        let markerConfig = FastGSBenchmarkMarkerConfig(url: benchmarkMarkerURL)
+        let width = markerConfig.intValue("width") ?? environment.intValue("FASTGS_RENDER_TEXTURE_BENCH_WIDTH", default: 512)
+        let height = markerConfig.intValue("height") ?? environment.intValue("FASTGS_RENDER_TEXTURE_BENCH_HEIGHT", default: 512)
+        let rounds = markerConfig.intValue("rounds") ?? environment.intValue("FASTGS_RENDER_TEXTURE_BENCH_ROUNDS", default: 5)
+        let warmupFrames = markerConfig.intValue("warmup") ?? environment.intValue("FASTGS_RENDER_TEXTURE_BENCH_WARMUP", default: 3)
+        let secondsPerRound = markerConfig.doubleValue("seconds") ?? environment.doubleValue("FASTGS_RENDER_TEXTURE_BENCH_SECONDS", default: 1.0)
+
+        let cache = try FastGSScannerDatasetLoader.loadCache(
+            directory: datasetURL,
+            options: FastGSScannerDatasetOptions(width: width, height: height, normalizeWithAllFramePairs: true)
+        )
+        let dataset = try FastGSScannerDatasetLoader.loadDataset(
+            cache: cache,
+            frameIndex: cache.frameDescriptors[0].index,
+            width: width,
+            height: height
+        )
+        let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+        let parameters = try scene.initialTrainableParameters()
+
+        if warmupFrames > 0 {
+            for _ in 0..<warmupFrames {
+                let outColor = try scene.render(parameters: parameters).outColor
+                XCTAssertNotNil(FastGSImageExport.texture(outColor: outColor, width: width, height: height, device: device))
+            }
+        }
+
+        var roundFPS = [Double]()
+        var frameLatencies = [Double]()
+        var frameCount = 0
+        for _ in 0..<max(1, rounds) {
+            let roundStart = Date()
+            var roundFrameCount = 0
+            repeat {
+                let frameStart = Date()
+                let outColor = try scene.render(parameters: parameters).outColor
+                let texture = FastGSImageExport.texture(outColor: outColor, width: width, height: height, device: device)
+                let latency = Date().timeIntervalSince(frameStart)
+                XCTAssertNotNil(texture)
+                frameLatencies.append(latency)
+                frameCount += 1
+                roundFrameCount += 1
+            } while Date().timeIntervalSince(roundStart) < secondsPerRound || roundFrameCount == 0
+
+            let roundSeconds = Date().timeIntervalSince(roundStart)
+            roundFPS.append(Double(roundFrameCount) / roundSeconds)
+        }
+
+        let report = FastGSRenderBenchmarkReport(
+            title: "FastGS recorded render texture benchmark",
+            width: width,
+            height: height,
+            pointCount: scene.manifest.pointCount,
+            warmupFrames: warmupFrames,
+            secondsPerRound: secondsPerRound,
+            roundFPS: roundFPS,
+            frameLatencies: frameLatencies
+        )
+        print("\n\(report.description)\n")
+
+        XCTAssertGreaterThan(frameCount, 0)
+        XCTAssertTrue(report.fpsMean.isFinite)
+        XCTAssertTrue(report.latencyMeanMilliseconds.isFinite)
+    }
+
     func testRecordedScannerForwardStageTimingUnderXcode() throws {
         let timingMarkerURL = URL(fileURLWithPath: "/private/tmp/fastgs_run_stage_timing")
         guard ProcessInfo.processInfo.environment["FASTGS_RUN_STAGE_TIMING"] == "1"
@@ -1692,6 +1772,7 @@ private func makeBGRA32PixelBuffer(width: Int, height: Int) throws -> CVPixelBuf
 }
 
 private struct FastGSRenderBenchmarkReport {
+    var title = "FastGS recorded render benchmark"
     var width: Int
     var height: Int
     var pointCount: Int
@@ -1712,7 +1793,7 @@ private struct FastGSRenderBenchmarkReport {
 
     var description: String {
         """
-        FastGS recorded render benchmark
+        \(title)
         image: \(width)x\(height)
         points: \(pointCount)
         warmup frames: \(warmupFrames)

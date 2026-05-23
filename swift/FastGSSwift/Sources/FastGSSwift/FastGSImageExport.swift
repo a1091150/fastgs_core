@@ -53,7 +53,16 @@ public enum FastGSImageExport {
         device: MTLDevice,
         usage: MTLTextureUsage = [.shaderRead]
     ) -> MTLTexture? {
-        texture(rgbaBytes: rgbaBytes(outColor: outColor, width: width, height: height), width: width, height: height, device: device, usage: usage)
+        if let texture = FastGSOutColorTextureRenderer.shared.texture(
+            outColor: outColor,
+            width: width,
+            height: height,
+            device: device,
+            usage: usage
+        ) {
+            return texture
+        }
+        return texture(rgbaBytes: rgbaBytes(outColor: outColor, width: width, height: height), width: width, height: height, device: device, usage: usage)
     }
 
     public static func texture(
@@ -213,3 +222,190 @@ public enum FastGSImageExportError: Error, Equatable {
     case cannotFinalizeDestination
     case pngUnavailable
 }
+
+#if canImport(Metal)
+public enum FastGSOutColorTextureRendererError: Error, Equatable {
+    case invalidShape([Int], expected: [Int])
+    case invalidDType(DType)
+    case cannotCreateCommandQueue
+    case cannotCreateLibrary
+    case cannotCreateFunction
+    case cannotCreatePipeline
+    case cannotCreateSourceBuffer
+    case cannotCreateTexture
+    case cannotCreateCommandBuffer
+    case cannotCreateCommandEncoder
+}
+
+public final class FastGSOutColorTextureRenderer {
+    public static let shared = FastGSOutColorTextureRenderer()
+
+    private let lock = NSLock()
+    private var pipelineCache: [ObjectIdentifier: MTLComputePipelineState] = [:]
+    private var commandQueueCache: [ObjectIdentifier: MTLCommandQueue] = [:]
+
+    public init() {}
+
+    public func texture(
+        outColor: MLXArray,
+        width: Int,
+        height: Int,
+        device: MTLDevice,
+        usage: MTLTextureUsage = [.shaderRead]
+    ) -> MTLTexture? {
+        try? makeTexture(outColor: outColor, width: width, height: height, device: device, usage: usage)
+    }
+
+    public func makeTexture(
+        outColor: MLXArray,
+        width: Int,
+        height: Int,
+        device: MTLDevice,
+        usage: MTLTextureUsage = [.shaderRead]
+    ) throws -> MTLTexture {
+        precondition(width > 0 && height > 0, "width and height must be positive.")
+        let expectedShape = [3, width * height]
+        guard outColor.shape == expectedShape else {
+            throw FastGSOutColorTextureRendererError.invalidShape(outColor.shape, expected: expectedShape)
+        }
+        guard outColor.dtype == .float32 else {
+            throw FastGSOutColorTextureRendererError.invalidDType(outColor.dtype)
+        }
+        guard let sourceBuffer = outColor.asMTLBuffer(device: device, noCopy: true) else {
+            throw FastGSOutColorTextureRendererError.cannotCreateSourceBuffer
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = usage.union([.shaderWrite])
+        descriptor.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw FastGSOutColorTextureRendererError.cannotCreateTexture
+        }
+
+        try encodeCopy(outColorBuffer: sourceBuffer, width: width, height: height, texture: texture, device: device)
+        return texture
+    }
+
+    public func copy(
+        outColor: MLXArray,
+        width: Int,
+        height: Int,
+        into texture: MTLTexture,
+        device: MTLDevice
+    ) throws {
+        let expectedShape = [3, width * height]
+        guard outColor.shape == expectedShape else {
+            throw FastGSOutColorTextureRendererError.invalidShape(outColor.shape, expected: expectedShape)
+        }
+        guard outColor.dtype == .float32 else {
+            throw FastGSOutColorTextureRendererError.invalidDType(outColor.dtype)
+        }
+        guard let sourceBuffer = outColor.asMTLBuffer(device: device, noCopy: true) else {
+            throw FastGSOutColorTextureRendererError.cannotCreateSourceBuffer
+        }
+        try encodeCopy(outColorBuffer: sourceBuffer, width: width, height: height, texture: texture, device: device)
+    }
+
+    private func encodeCopy(
+        outColorBuffer: MTLBuffer,
+        width: Int,
+        height: Int,
+        texture: MTLTexture,
+        device: MTLDevice
+    ) throws {
+        guard let commandQueue = try commandQueue(device: device) else {
+            throw FastGSOutColorTextureRendererError.cannotCreateCommandQueue
+        }
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            throw FastGSOutColorTextureRendererError.cannotCreateCommandBuffer
+        }
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw FastGSOutColorTextureRendererError.cannotCreateCommandEncoder
+        }
+
+        let pipeline = try pipeline(device: device)
+        var constants = FastGSOutColorTextureConstants(width: UInt32(width), height: UInt32(height))
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(outColorBuffer, offset: 0, index: 0)
+        encoder.setBytes(&constants, length: MemoryLayout<FastGSOutColorTextureConstants>.stride, index: 1)
+        encoder.setTexture(texture, index: 0)
+
+        let threadsPerThreadgroup = MTLSize(width: min(pipeline.maxTotalThreadsPerThreadgroup, 256), height: 1, depth: 1)
+        let grid = MTLSize(width: width * height, height: 1, depth: 1)
+        encoder.dispatchThreads(grid, threadsPerThreadgroup: threadsPerThreadgroup)
+        encoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+    }
+
+    private func commandQueue(device: MTLDevice) throws -> MTLCommandQueue? {
+        let key = ObjectIdentifier(device)
+        return lock.withLock {
+            if let cached = commandQueueCache[key] {
+                return cached
+            }
+            let queue = device.makeCommandQueue()
+            commandQueueCache[key] = queue
+            return queue
+        }
+    }
+
+    private func pipeline(device: MTLDevice) throws -> MTLComputePipelineState {
+        let key = ObjectIdentifier(device)
+        return try lock.withLock {
+            if let cached = pipelineCache[key] {
+                return cached
+            }
+            guard let library = try? device.makeLibrary(source: Self.kernelSource, options: nil) else {
+                throw FastGSOutColorTextureRendererError.cannotCreateLibrary
+            }
+            guard let function = library.makeFunction(name: "fastgs_out_color_to_texture") else {
+                throw FastGSOutColorTextureRendererError.cannotCreateFunction
+            }
+            guard let pipeline = try? device.makeComputePipelineState(function: function) else {
+                throw FastGSOutColorTextureRendererError.cannotCreatePipeline
+            }
+            pipelineCache[key] = pipeline
+            return pipeline
+        }
+    }
+
+    private struct FastGSOutColorTextureConstants {
+        var width: UInt32
+        var height: UInt32
+    }
+
+    private static let kernelSource = """
+    #include <metal_stdlib>
+    using namespace metal;
+
+    struct FastGSOutColorTextureConstants {
+        uint width;
+        uint height;
+    };
+
+    kernel void fastgs_out_color_to_texture(
+        device const float* outColor [[buffer(0)]],
+        constant FastGSOutColorTextureConstants& constants [[buffer(1)]],
+        texture2d<float, access::write> output [[texture(0)]],
+        uint pixel [[thread_position_in_grid]]
+    ) {
+        const uint pixelCount = constants.width * constants.height;
+        if (pixel >= pixelCount) {
+            return;
+        }
+        const uint x = pixel % constants.width;
+        const uint y = pixel / constants.width;
+        const float r = clamp(outColor[pixel], 0.0f, 1.0f);
+        const float g = clamp(outColor[pixelCount + pixel], 0.0f, 1.0f);
+        const float b = clamp(outColor[pixelCount * 2 + pixel], 0.0f, 1.0f);
+        output.write(float4(r, g, b, 1.0f), uint2(x, y));
+    }
+    """
+}
+#endif
