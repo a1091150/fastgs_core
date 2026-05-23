@@ -253,6 +253,83 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertTrue(report.latencyMeanMilliseconds.isFinite)
     }
 
+    func testRecordedScannerForwardStageTimingUnderXcode() throws {
+        let timingMarkerURL = URL(fileURLWithPath: "/private/tmp/fastgs_run_stage_timing")
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_STAGE_TIMING"] == "1"
+            || FileManager.default.fileExists(atPath: timingMarkerURL.path)
+        else {
+            throw XCTSkip("Set FASTGS_RUN_STAGE_TIMING=1 or create \(timingMarkerURL.path) to run the recorded scanner stage timing report.")
+        }
+
+        let datasetURL = URL(fileURLWithPath: "/Users/yangdunfu/Downloads/2026_05_04_16_51_29", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: datasetURL.appendingPathComponent("points.ply").path) else {
+            throw XCTSkip("Fixed scanner dataset is not available at \(datasetURL.path).")
+        }
+
+        let environment = ProcessInfo.processInfo.environment
+        let markerConfig = FastGSBenchmarkMarkerConfig(url: timingMarkerURL)
+        let width = markerConfig.intValue("width") ?? environment.intValue("FASTGS_STAGE_TIMING_WIDTH", default: 512)
+        let height = markerConfig.intValue("height") ?? environment.intValue("FASTGS_STAGE_TIMING_HEIGHT", default: 512)
+        let rounds = markerConfig.intValue("rounds") ?? environment.intValue("FASTGS_STAGE_TIMING_ROUNDS", default: 5)
+        let warmupRounds = markerConfig.intValue("warmup") ?? environment.intValue("FASTGS_STAGE_TIMING_WARMUP", default: 1)
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+
+        let cache = try FastGSScannerDatasetLoader.loadCache(
+            directory: datasetURL,
+            options: FastGSScannerDatasetOptions(width: width, height: height, normalizeWithAllFramePairs: true)
+        )
+        let dataset = try FastGSScannerDatasetLoader.loadDataset(
+            cache: cache,
+            frameIndex: cache.frameDescriptors[0].index,
+            width: width,
+            height: height
+        )
+        let scene = FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+        let parameters = try scene.initialTrainableParameters()
+
+        if warmupRounds > 0 {
+            for _ in 0..<warmupRounds {
+                _ = try scene.timedRenderStages(parameters: parameters)
+            }
+        }
+
+        var timings = [FastGSRecordedForwardTimingReport]()
+        var imageReadbackMilliseconds = [Double]()
+        var textureUploadMilliseconds = [Double]()
+
+        for _ in 0..<max(1, rounds) {
+            let timed = try scene.timedRenderStages(parameters: parameters)
+            timings.append(timed.timing)
+
+            var started = Date()
+            let rgba = FastGSImageExport.rgbaBytes(
+                outColor: timed.stages.rasterize.outColor,
+                width: width,
+                height: height
+            )
+            imageReadbackMilliseconds.append(Date().timeIntervalSince(started) * 1000)
+
+            started = Date()
+            XCTAssertNotNil(FastGSImageExport.texture(rgbaBytes: rgba, width: width, height: height, device: device))
+            textureUploadMilliseconds.append(Date().timeIntervalSince(started) * 1000)
+        }
+
+        let report = FastGSForwardStageTimingSummary(
+            width: width,
+            height: height,
+            pointCount: scene.manifest.pointCount,
+            rounds: max(1, rounds),
+            warmupRounds: warmupRounds,
+            timings: timings,
+            imageReadbackMilliseconds: imageReadbackMilliseconds,
+            textureUploadMilliseconds: textureUploadMilliseconds
+        )
+        print("\n\(report.description)\n")
+
+        XCTAssertEqual(timings.count, max(1, rounds))
+        XCTAssertTrue(report.forwardMeanMilliseconds.isFinite)
+    }
+
     private func assertRecordedForward(
         manifestURL: URL,
         outputPNGURL: URL,
@@ -1645,6 +1722,54 @@ private struct FastGSRenderBenchmarkReport {
         FPS mean/median/min/max: \(format(fpsMean)) / \(format(fpsMedian)) / \(format(fpsMin)) / \(format(fpsMax))
         latency ms mean/median/p95/min/max: \(format(latencyMeanMilliseconds)) / \(format(latencyMedianMilliseconds)) / \(format(latencyP95Milliseconds)) / \(format(latencyMinMilliseconds)) / \(format(latencyMaxMilliseconds))
         """
+    }
+}
+
+private struct FastGSForwardStageTimingSummary {
+    var width: Int
+    var height: Int
+    var pointCount: Int
+    var rounds: Int
+    var warmupRounds: Int
+    var timings: [FastGSRecordedForwardTimingReport]
+    var imageReadbackMilliseconds: [Double]
+    var textureUploadMilliseconds: [Double]
+
+    var forwardMeanMilliseconds: Double {
+        mean(timings.map(\.totalWithoutImageReadbackMilliseconds))
+    }
+
+    var description: String {
+        let binning = timings.map(\.binning)
+        return """
+        FastGS recorded forward stage timing
+        image: \(width)x\(height)
+        points: \(pointCount)
+        warmup rounds: \(warmupRounds)
+        measured rounds: \(rounds)
+        numRendered mean: \(format(mean(binning.map { Double($0.numRendered) })))
+        numTiles: \(binning.first?.numTiles ?? 0)
+
+        stage ms mean / median / p95:
+        preprocess: \(summary(timings.map(\.preprocessMilliseconds)))
+        binning.total: \(summary(binning.map(\.totalMilliseconds)))
+          binning.cumsum: \(summary(binning.map(\.cumsumMilliseconds)))
+          binning.numRenderedReadback: \(summary(binning.map(\.numRenderedReadbackMilliseconds)))
+          binning.duplicate: \(summary(binning.map(\.duplicateMilliseconds)))
+          binning.sortAndTake: \(summary(binning.map(\.sortAndTakeMilliseconds)))
+          binning.identifyRanges: \(summary(binning.map(\.identifyRangesMilliseconds)))
+          binning.bucketCount: \(summary(binning.map(\.bucketCountMilliseconds)))
+          binning.bucketOffsets: \(summary(binning.map(\.bucketOffsetsMilliseconds)))
+        rasterize: \(summary(timings.map(\.rasterizeMilliseconds)))
+        forward total without image readback: \(summary(timings.map(\.totalWithoutImageReadbackMilliseconds)))
+        image readback rgbaBytes/asArray: \(summary(imageReadbackMilliseconds))
+        texture upload from CPU rgba: \(summary(textureUploadMilliseconds))
+        total with current CPU presentation path: \(summary(zip(timings, imageReadbackMilliseconds).map { $0.totalWithoutImageReadbackMilliseconds + $1 } ))
+        """
+    }
+
+    private func summary(_ values: [Double]) -> String {
+        "\(format(mean(values))) / \(format(percentile(values, fraction: 0.5))) / \(format(percentile(values, fraction: 0.95)))"
     }
 }
 

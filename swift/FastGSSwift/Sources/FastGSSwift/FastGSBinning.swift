@@ -1,4 +1,5 @@
 import MLX
+import Foundation
 
 public struct FastGSBinningParams: Sendable {
     public var multiplier: Float
@@ -47,6 +48,33 @@ public struct FastGSBinningOutput {
     public var ranges: MLXArray
     public var bucketCount: MLXArray
     public var bucketOffsets: MLXArray
+}
+
+public struct FastGSBinningTimingReport: Sendable {
+    public var cumsumMilliseconds: Double
+    public var numRenderedReadbackMilliseconds: Double
+    public var duplicateMilliseconds: Double
+    public var sortAndTakeMilliseconds: Double
+    public var identifyRangesMilliseconds: Double
+    public var bucketCountMilliseconds: Double
+    public var bucketOffsetsMilliseconds: Double
+    public var numRendered: Int
+    public var numTiles: Int
+
+    public var totalMilliseconds: Double {
+        cumsumMilliseconds
+            + numRenderedReadbackMilliseconds
+            + duplicateMilliseconds
+            + sortAndTakeMilliseconds
+            + identifyRangesMilliseconds
+            + bucketCountMilliseconds
+            + bucketOffsetsMilliseconds
+    }
+}
+
+public struct FastGSTimedBinningOutput {
+    public var output: FastGSBinningOutput
+    public var timing: FastGSBinningTimingReport
 }
 
 public enum FastGSBinning {
@@ -177,6 +205,153 @@ public enum FastGSBinning {
         )
     }
 
+    public static func timedForward(
+        _ input: FastGSBinningInput,
+        params: FastGSBinningParams,
+        verbose: Bool = false,
+        stream: StreamOrDevice = .default
+    ) -> FastGSTimedBinningOutput {
+        validate(input)
+
+        let count = input.xy.shape[0]
+        let numTiles = params.tileBounds.x * params.tileBounds.y
+
+        var started = CFAbsoluteTimeGetCurrent()
+        let pointOffsets = cumsum(input.tilesTouched, stream: stream)
+        pointOffsets.eval()
+        let cumsumMilliseconds = elapsedMilliseconds(since: started)
+
+        started = CFAbsoluteTimeGetCurrent()
+        let numRendered = Int(pointOffsets.asArray(UInt32.self).last ?? 0)
+        let numRenderedReadbackMilliseconds = elapsedMilliseconds(since: started)
+
+        if numRendered == 0 {
+            let output = FastGSBinningOutput(
+                pointOffsets: pointOffsets,
+                pointListKeysUnsorted: MLXArray.zeros([0], dtype: .uint64, stream: stream),
+                pointListUnsorted: MLXArray.zeros([0], dtype: .uint32, stream: stream),
+                pointListKeys: MLXArray.zeros([0], dtype: .uint64, stream: stream),
+                pointList: MLXArray.zeros([0], dtype: .uint32, stream: stream),
+                ranges: MLXArray.zeros([numTiles, 2], dtype: .uint32, stream: stream),
+                bucketCount: MLXArray.zeros([numTiles], dtype: .uint32, stream: stream),
+                bucketOffsets: MLXArray.zeros([numTiles], dtype: .uint32, stream: stream)
+            )
+            return FastGSTimedBinningOutput(
+                output: output,
+                timing: FastGSBinningTimingReport(
+                    cumsumMilliseconds: cumsumMilliseconds,
+                    numRenderedReadbackMilliseconds: numRenderedReadbackMilliseconds,
+                    duplicateMilliseconds: 0,
+                    sortAndTakeMilliseconds: 0,
+                    identifyRangesMilliseconds: 0,
+                    bucketCountMilliseconds: 0,
+                    bucketOffsetsMilliseconds: 0,
+                    numRendered: numRendered,
+                    numTiles: numTiles
+                )
+            )
+        }
+
+        started = CFAbsoluteTimeGetCurrent()
+        let threadGroupSize = max(1, min(256, count))
+        let duplicateOutputs = duplicateKernel(
+            [
+                params.kernelArray,
+                input.xy,
+                input.depths,
+                pointOffsets,
+                input.conicOpacity,
+                input.tilesTouched,
+            ],
+            grid: (count, 1, 1),
+            threadGroup: (threadGroupSize, 1, 1),
+            outputShapes: [
+                [numRendered],
+                [numRendered],
+            ],
+            outputDTypes: [
+                .uint64,
+                .uint32,
+            ],
+            initValue: 0,
+            verbose: verbose,
+            stream: stream
+        )
+        duplicateOutputs.forEach { $0.eval() }
+        let duplicateMilliseconds = elapsedMilliseconds(since: started)
+
+        started = CFAbsoluteTimeGetCurrent()
+        let pointListKeysUnsorted = duplicateOutputs[0]
+        let pointListUnsorted = duplicateOutputs[1]
+        let sortedIndices = argSort(pointListKeysUnsorted, stream: stream)
+        let pointListKeys = take(pointListKeysUnsorted, sortedIndices, stream: stream)
+        let pointList = take(pointListUnsorted, sortedIndices, stream: stream)
+        sortedIndices.eval()
+        pointListKeys.eval()
+        pointList.eval()
+        let sortAndTakeMilliseconds = elapsedMilliseconds(since: started)
+
+        started = CFAbsoluteTimeGetCurrent()
+        let tilePrepParams = MLXArray([UInt32(numRendered), UInt32(numTiles)], [2])
+        let tileThreadGroupSize = max(1, min(256, numRendered))
+        let ranges = identifyRangesKernel(
+            [tilePrepParams, pointListKeys],
+            grid: (numRendered, 1, 1),
+            threadGroup: (tileThreadGroupSize, 1, 1),
+            outputShapes: [[numTiles, 2]],
+            outputDTypes: [.uint32],
+            initValue: 0,
+            verbose: verbose,
+            stream: stream
+        )[0]
+        ranges.eval()
+        let identifyRangesMilliseconds = elapsedMilliseconds(since: started)
+
+        started = CFAbsoluteTimeGetCurrent()
+        let bucketThreadGroupSize = max(1, min(256, numTiles))
+        let bucketCount = bucketCountKernel(
+            [tilePrepParams, ranges],
+            grid: (numTiles, 1, 1),
+            threadGroup: (bucketThreadGroupSize, 1, 1),
+            outputShapes: [[numTiles]],
+            outputDTypes: [.uint32],
+            initValue: 0,
+            verbose: verbose,
+            stream: stream
+        )[0]
+        bucketCount.eval()
+        let bucketCountMilliseconds = elapsedMilliseconds(since: started)
+
+        started = CFAbsoluteTimeGetCurrent()
+        let bucketOffsets = cumsum(bucketCount, stream: stream)
+        bucketOffsets.eval()
+        let bucketOffsetsMilliseconds = elapsedMilliseconds(since: started)
+
+        return FastGSTimedBinningOutput(
+            output: FastGSBinningOutput(
+                pointOffsets: pointOffsets,
+                pointListKeysUnsorted: pointListKeysUnsorted,
+                pointListUnsorted: pointListUnsorted,
+                pointListKeys: pointListKeys,
+                pointList: pointList,
+                ranges: ranges,
+                bucketCount: bucketCount,
+                bucketOffsets: bucketOffsets
+            ),
+            timing: FastGSBinningTimingReport(
+                cumsumMilliseconds: cumsumMilliseconds,
+                numRenderedReadbackMilliseconds: numRenderedReadbackMilliseconds,
+                duplicateMilliseconds: duplicateMilliseconds,
+                sortAndTakeMilliseconds: sortAndTakeMilliseconds,
+                identifyRangesMilliseconds: identifyRangesMilliseconds,
+                bucketCountMilliseconds: bucketCountMilliseconds,
+                bucketOffsetsMilliseconds: bucketOffsetsMilliseconds,
+                numRendered: numRendered,
+                numTiles: numTiles
+            )
+        )
+    }
+
     public static func forward(
         preprocessOutput: FastGSPreprocessOutput,
         params: FastGSBinningParams,
@@ -184,6 +359,25 @@ public enum FastGSBinning {
         stream: StreamOrDevice = .default
     ) -> FastGSBinningOutput {
         forward(
+            FastGSBinningInput(
+                xy: preprocessOutput.xy,
+                depths: preprocessOutput.depths,
+                conicOpacity: preprocessOutput.conicOpacity,
+                tilesTouched: preprocessOutput.tilesTouched
+            ),
+            params: params,
+            verbose: verbose,
+            stream: stream
+        )
+    }
+
+    public static func timedForward(
+        preprocessOutput: FastGSPreprocessOutput,
+        params: FastGSBinningParams,
+        verbose: Bool = false,
+        stream: StreamOrDevice = .default
+    ) -> FastGSTimedBinningOutput {
+        timedForward(
             FastGSBinningInput(
                 xy: preprocessOutput.xy,
                 depths: preprocessOutput.depths,
@@ -206,6 +400,10 @@ public enum FastGSBinning {
         precondition(input.depths.dtype == .float32, "FastGSBinning currently expects float32 depths.")
         precondition(input.conicOpacity.dtype == .float32, "FastGSBinning currently expects float32 conicOpacity.")
         precondition(input.tilesTouched.dtype == .uint32, "FastGSBinning expects uint32 tilesTouched.")
+    }
+
+    private static func elapsedMilliseconds(since start: CFAbsoluteTime) -> Double {
+        (CFAbsoluteTimeGetCurrent() - start) * 1000
     }
 }
 

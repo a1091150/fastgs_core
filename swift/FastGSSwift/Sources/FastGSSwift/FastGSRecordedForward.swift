@@ -132,6 +132,26 @@ public struct FastGSRecordedForwardStages {
     public var rasterize: FastGSRasterizeOutput
 }
 
+public struct FastGSRecordedForwardTimingReport: Sendable {
+    public var preprocessMilliseconds: Double
+    public var binning: FastGSBinningTimingReport
+    public var rasterizeMilliseconds: Double
+    public var imageReadbackMilliseconds: Double?
+
+    public var totalWithoutImageReadbackMilliseconds: Double {
+        preprocessMilliseconds + binning.totalMilliseconds + rasterizeMilliseconds
+    }
+
+    public var totalWithImageReadbackMilliseconds: Double {
+        totalWithoutImageReadbackMilliseconds + (imageReadbackMilliseconds ?? 0)
+    }
+}
+
+public struct FastGSTimedRecordedForwardStages {
+    public var stages: FastGSRecordedForwardStages
+    public var timing: FastGSRecordedForwardTimingReport
+}
+
 public enum FastGSRecordedForwardError: Error {
     case invalidPointCount(expected: Int, meansCount: Int, colorsCount: Int)
     case invalidCameraData(viewmatrixCount: Int, projmatrixCount: Int, camposCount: Int)
@@ -250,6 +270,102 @@ public struct FastGSRecordedForwardScene {
         return FastGSRecordedForwardStages(preprocess: preprocess, binning: binning, rasterize: rasterize)
     }
 
+    public func timedRenderStages(
+        parameters: FastGSTrainableParameters,
+        includeImageReadback: Bool = false,
+        verbose: Bool = false
+    ) throws -> FastGSTimedRecordedForwardStages {
+        let tileBounds = tileBounds()
+        let maxSHCoefficients = maxSHCoefficients()
+
+        var started = CFAbsoluteTimeGetCurrent()
+        let preprocess = FastGSPreprocess.forward(
+            try preprocessInput(parameters: parameters),
+            params: FastGSPreprocessParams(
+                degree: manifest.shDegree,
+                maxSHCoefficients: maxSHCoefficients,
+                scaleModifier: 1,
+                tanFovX: Float(manifest.tanFovX),
+                tanFovY: Float(manifest.tanFovY),
+                imageHeight: manifest.height,
+                imageWidth: manifest.width,
+                tileBounds: tileBounds,
+                multiplier: 1
+            ),
+            verbose: verbose
+        )
+        [
+            preprocess.radii,
+            preprocess.xy,
+            preprocess.depths,
+            preprocess.cov3D,
+            preprocess.rgb,
+            preprocess.conicOpacity,
+            preprocess.tilesTouched,
+            preprocess.clamped,
+            preprocess.viewspacePoints,
+        ].forEach { $0.eval() }
+        let preprocessMilliseconds = elapsedMilliseconds(since: started)
+
+        let timedBinning = FastGSBinning.timedForward(
+            preprocessOutput: preprocess,
+            params: FastGSBinningParams(multiplier: 1, tileBounds: tileBounds),
+            verbose: verbose
+        )
+
+        started = CFAbsoluteTimeGetCurrent()
+        let rasterize = FastGSRasterize.forward(
+            preprocessOutput: preprocess,
+            binningOutput: timedBinning.output,
+            background: MLXArray(manifest.background.map(Float.init), [3]),
+            params: FastGSRasterizeParams(
+                imageWidth: manifest.width,
+                imageHeight: manifest.height,
+                numTiles: tileBounds.x * tileBounds.y
+            ),
+            verbose: verbose
+        )
+        [
+            rasterize.bucketToTile,
+            rasterize.sampledT,
+            rasterize.sampledAr,
+            rasterize.finalT,
+            rasterize.nContrib,
+            rasterize.maxContrib,
+            rasterize.pixelColors,
+            rasterize.outColor,
+            rasterize.metricCount,
+        ].forEach { $0.eval() }
+        let rasterizeMilliseconds = elapsedMilliseconds(since: started)
+
+        let imageReadbackMilliseconds: Double?
+        if includeImageReadback {
+            started = CFAbsoluteTimeGetCurrent()
+            _ = FastGSImageExport.rgbaBytes(
+                outColor: rasterize.outColor,
+                width: manifest.width,
+                height: manifest.height
+            )
+            imageReadbackMilliseconds = elapsedMilliseconds(since: started)
+        } else {
+            imageReadbackMilliseconds = nil
+        }
+
+        return FastGSTimedRecordedForwardStages(
+            stages: FastGSRecordedForwardStages(
+                preprocess: preprocess,
+                binning: timedBinning.output,
+                rasterize: rasterize
+            ),
+            timing: FastGSRecordedForwardTimingReport(
+                preprocessMilliseconds: preprocessMilliseconds,
+                binning: timedBinning.timing,
+                rasterizeMilliseconds: rasterizeMilliseconds,
+                imageReadbackMilliseconds: imageReadbackMilliseconds
+            )
+        )
+    }
+
     public func initialTrainableParameters() throws -> FastGSTrainableParameters {
         try validate()
 
@@ -312,6 +428,10 @@ public struct FastGSRecordedForwardScene {
 
     private func maxSHCoefficients() -> Int {
         (manifest.shDegree + 1) * (manifest.shDegree + 1)
+    }
+
+    private func elapsedMilliseconds(since start: CFAbsoluteTime) -> Double {
+        (CFAbsoluteTimeGetCurrent() - start) * 1000
     }
 
     private func validate() throws {
