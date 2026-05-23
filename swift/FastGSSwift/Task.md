@@ -650,6 +650,79 @@ or recomputing them from unrelated values.
     - After-train operations should be explicit Swift stages, not hidden inside
       the optimizer step, because they change parameter array sizes and require
       checkpoint/optimizer-state migration.
+    - Reference timing from original FastGS:
+      - accumulate densification stats while `iteration < densify_until_iter`
+      - densify/prune after `densify_from_iter` every
+        `densification_interval`
+      - reset opacity every `opacity_reset_interval`
+      - run final multi-view prune every 3000 steps after 15000 and before
+        30000
+    - Reference Swift/Python scanner defaults to reconcile:
+      - `densify_from_step = 500`
+      - `densify_until_step = 15000`
+      - `densification_interval = 500`
+      - `opacity_reset_interval = 3000`
+      - `opacity_reset_value = 0.82`
+      - `opacity_cap_after_densify = 0.82`
+      - `dense = 0.01`
+      - `loss_thresh = 0.06`
+      - `importance_score_threshold = 5.0`
+      - `grad_thresh = 2.0e-4`
+      - `grad_abs_thresh = 1.2e-3`
+      - `final_prune_interval = 3000`
+      - `final_prune_min_opacity = 0.1`
+      - `final_prune_score_thresh = 0.9`
+    - [ ] Add `FastGSDensificationConfig` and `FastGSDensificationState`.
+      - Track `maxRadii2D`, `xyzGradAccum`, `xyzGradAccumAbs`, `denom`, and
+        optional `tmpRadii`.
+      - Keep scene extent / camera radius explicit; do not hide it in global
+        state.
+    - [ ] Add trainable parameter topology helpers.
+      - `FastGSTrainableParameters.take(indices:)`
+      - `FastGSTrainableParameters.prune(mask:)`
+      - `FastGSTrainableParameters.append(...)`
+      - Shape checks for means, DC, SH, opacity, scales, rotations, and
+        optional precomputed covariance.
+    - [ ] Add optimizer state topology helpers and tests.
+      - Prune Adam state rows when Gaussian rows are removed.
+      - Append zero-initialized Adam state rows when Gaussian rows are cloned or
+        split.
+      - Reset opacity optimizer state when opacity logits are reset/capped.
+      - Preserve global optimizer step and learning-rate schedule metadata.
+    - [ ] Add opacity cap/reset first.
+      - This does not change Gaussian count, so it is the safest after-train
+        operation to port first.
+      - Match original reset behavior by clamping opacity then converting back
+        to logits.
+    - [ ] Add prune-only support before clone/split.
+      - Start with opacity threshold pruning.
+      - Then add screen-size and world-scale pruning.
+      - Then add final multi-view score pruning with a minimum-Gaussian guard.
+    - [ ] Add densification stat accumulation.
+      - Requires a stable way to access `radii` and `d_viewspace` /
+        viewspace-point gradients from Swift training.
+      - Keep this separate from optimizer update so parameter topology changes
+        can skip the normal optimizer step when needed.
+    - [ ] Add clone support.
+      - Clone small-scale high-gradient, high-importance Gaussians.
+      - Append cloned parameter rows and zero optimizer state rows.
+    - [ ] Add split support last.
+      - Split large-scale high-gradient Gaussians.
+      - Generate child Gaussian offsets from scale/rotation, shrink child
+        scales, append children, then prune source rows.
+      - This is the highest-risk topology change and should follow prune/clone
+        tests.
+    - [ ] Add multi-view Gaussian scoring.
+      - Re-render sampled cameras with a loss/metric map.
+      - Produce `importanceScore` for densify and `pruningScore` for final
+        prune.
+      - Compare behavior against `compute_gaussian_scores_fastgs(...)` in
+        `scripts/train_scanner_fastgs2.py`.
+    - [ ] Extend checkpoint format for topology-changing training.
+      - Save Gaussian count, after-train config, optimizer state, and current
+        densification state when available.
+      - Ensure Continue Training can resume from saved parameters even when
+        Gaussian count changed.
   - [ ] Defer further FPS/performance research until the multi-view and
     after-train task sequence is stable.
     - Later candidates: opacity-aware bounded tile intersection, visible
