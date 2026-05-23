@@ -120,6 +120,24 @@ public enum FastGSRasterize {
         header: FastGSRasterizeKernelSource.header
     )
 
+    private static let previewKernel = MLXFast.metalKernel(
+        name: "fastgs_render_preview_swift",
+        inputNames: [
+            "params",
+            "ranges",
+            "point_list",
+            "means2d",
+            "colors",
+            "conic_opacity",
+            "background",
+        ],
+        outputNames: [
+            "out_color",
+        ],
+        source: FastGSRasterizeKernelSource.previewBody,
+        header: FastGSRasterizeKernelSource.header
+    )
+
     public static func forward(
         _ input: FastGSRasterizeInput,
         params: FastGSRasterizeParams,
@@ -228,6 +246,71 @@ public enum FastGSRasterize {
                 radii: preprocessOutput.radii,
                 metricMap: metricMap ?? MLXArray.zeros([numPixels], dtype: .int32, stream: stream),
                 metricCount: metricCount ?? MLXArray.zeros([count], dtype: .int32, stream: stream)
+            ),
+            params: params,
+            verbose: verbose,
+            stream: stream
+        )
+    }
+
+    public static func previewOutColor(
+        _ input: FastGSRasterizeInput,
+        params: FastGSRasterizeParams,
+        verbose: Bool = false,
+        stream: StreamOrDevice = .default
+    ) -> MLXArray {
+        validate(input, params: params)
+
+        let numPixels = params.imageWidth * params.imageHeight
+        let bucketSum = Int(input.bucketOffsets.asArray(UInt32.self).last ?? 0)
+        if bucketSum == 0 {
+            return MLXArray.zeros([params.numChannels, numPixels], dtype: .float32, stream: stream)
+        }
+
+        let tilesX = (params.imageWidth + params.blockX - 1) / params.blockX
+        let tilesY = (params.imageHeight + params.blockY - 1) / params.blockY
+        return previewKernel(
+            [
+                params.kernelArray(bucketSum: bucketSum),
+                input.ranges,
+                input.pointList,
+                input.means2D,
+                input.colors,
+                input.conicOpacity,
+                input.background,
+            ],
+            grid: (tilesX * params.blockX, tilesY * params.blockY, 1),
+            threadGroup: (params.blockX, params.blockY, 1),
+            outputShapes: [[params.numChannels, numPixels]],
+            outputDTypes: [.float32],
+            initValue: 0,
+            verbose: verbose,
+            stream: stream
+        )[0]
+    }
+
+    public static func previewOutColor(
+        preprocessOutput: FastGSPreprocessOutput,
+        binningOutput: FastGSBinningOutput,
+        background: MLXArray,
+        params: FastGSRasterizeParams,
+        verbose: Bool = false,
+        stream: StreamOrDevice = .default
+    ) -> MLXArray {
+        let count = preprocessOutput.xy.shape[0]
+        let numPixels = params.imageWidth * params.imageHeight
+        return previewOutColor(
+            FastGSRasterizeInput(
+                ranges: binningOutput.ranges,
+                pointList: binningOutput.pointList,
+                bucketOffsets: binningOutput.bucketOffsets,
+                means2D: preprocessOutput.xy,
+                colors: preprocessOutput.rgb,
+                conicOpacity: preprocessOutput.conicOpacity,
+                background: background,
+                radii: preprocessOutput.radii,
+                metricMap: MLXArray.zeros([numPixels], dtype: .int32, stream: stream),
+                metricCount: MLXArray.zeros([count], dtype: .int32, stream: stream)
             ),
             params: params,
             verbose: verbose,
@@ -405,5 +488,67 @@ private enum FastGSRasterizeKernelSource {
         }
 
         (void)radii;
+        """
+
+    static let previewBody = """
+        uint2 tid = uint2(thread_position_in_threadgroup.x, thread_position_in_threadgroup.y);
+        uint2 gid = uint2(thread_position_in_grid.x, thread_position_in_grid.y);
+        uint2 tgp = uint2(threadgroup_position_in_grid.x, threadgroup_position_in_grid.y);
+
+        uint image_width = params[0];
+        uint image_height = params[1];
+        uint block_x = params[2];
+        uint block_y = params[3];
+        uint num_channels = params[4];
+
+        uint pix_x = gid.x;
+        uint pix_y = gid.y;
+        uint tile_x = tgp.x;
+        uint tile_y = tgp.y;
+        uint tiles_x = (image_width + block_x - 1u) / block_x;
+        uint tiles_y = (image_height + block_y - 1u) / block_y;
+
+        if (tile_x >= tiles_x || tile_y >= tiles_y || pix_x >= image_width || pix_y >= image_height) {
+          return;
+        }
+
+        uint tile_id = tile_y * tiles_x + tile_x;
+        uint2 range = uint2(ranges[2 * tile_id], ranges[2 * tile_id + 1]);
+        uint pix_id = pix_y * image_width + pix_x;
+        float2 pixf = float2(float(pix_x), float(pix_y));
+        float t_val = 1.0f;
+        float c_accum[3] = {0.0f, 0.0f, 0.0f};
+
+        for (uint idx = range.x; idx < range.y; ++idx) {
+          uint coll_id = point_list[idx];
+          float2 xy = read_packed_float2(means2d, coll_id);
+          float2 d = xy - pixf;
+          float4 con_o = read_packed_float4(conic_opacity, coll_id);
+          float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) -
+                        con_o.y * d.x * d.y;
+          if (power > 0.0f) {
+            continue;
+          }
+
+          float alpha = min(0.99f, con_o.w * exp(power));
+          if (alpha < 1.0f / 255.0f) {
+            continue;
+          }
+
+          float test_t = t_val * (1.0f - alpha);
+          if (test_t < 0.0001f) {
+            break;
+          }
+
+          for (uint ch = 0; ch < min(num_channels, 3u); ++ch) {
+            c_accum[ch] += colors[coll_id * num_channels + ch] * alpha * t_val;
+          }
+          t_val = test_t;
+        }
+
+        for (uint ch = 0; ch < min(num_channels, 3u); ++ch) {
+          out_color[ch * image_height * image_width + pix_id] =
+              c_accum[ch] + t_val * background[ch];
+        }
         """
 }

@@ -274,6 +274,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         let rounds = markerConfig.intValue("rounds") ?? environment.intValue("FASTGS_RENDER_TEXTURE_BENCH_ROUNDS", default: 5)
         let warmupFrames = markerConfig.intValue("warmup") ?? environment.intValue("FASTGS_RENDER_TEXTURE_BENCH_WARMUP", default: 3)
         let secondsPerRound = markerConfig.doubleValue("seconds") ?? environment.doubleValue("FASTGS_RENDER_TEXTURE_BENCH_SECONDS", default: 1.0)
+        let previewOnly = markerConfig.boolValue("preview") ?? environment.boolValue("FASTGS_RENDER_TEXTURE_BENCH_PREVIEW", default: false)
 
         let cache = try FastGSScannerDatasetLoader.loadCache(
             directory: datasetURL,
@@ -290,7 +291,9 @@ final class FastGSSmokeXcodeTests: XCTestCase {
 
         if warmupFrames > 0 {
             for _ in 0..<warmupFrames {
-                let outColor = try scene.render(parameters: parameters).outColor
+                let outColor = previewOnly
+                    ? try scene.renderPreviewOutColor(parameters: parameters)
+                    : try scene.render(parameters: parameters).outColor
                 XCTAssertNotNil(FastGSImageExport.texture(outColor: outColor, width: width, height: height, device: device))
             }
         }
@@ -303,7 +306,9 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             var roundFrameCount = 0
             repeat {
                 let frameStart = Date()
-                let outColor = try scene.render(parameters: parameters).outColor
+                let outColor = previewOnly
+                    ? try scene.renderPreviewOutColor(parameters: parameters)
+                    : try scene.render(parameters: parameters).outColor
                 let texture = FastGSImageExport.texture(outColor: outColor, width: width, height: height, device: device)
                 let latency = Date().timeIntervalSince(frameStart)
                 XCTAssertNotNil(texture)
@@ -317,7 +322,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         }
 
         let report = FastGSRenderBenchmarkReport(
-            title: "FastGS recorded render texture benchmark",
+            title: previewOnly ? "FastGS recorded preview render texture benchmark" : "FastGS recorded render texture benchmark",
             width: width,
             height: height,
             pointCount: scene.manifest.pointCount,
@@ -1879,6 +1884,10 @@ private struct FastGSBenchmarkMarkerConfig {
     func doubleValue(_ key: String) -> Double? {
         values[key].flatMap(Double.init)
     }
+
+    func boolValue(_ key: String) -> Bool? {
+        values[key].flatMap(parseBool)
+    }
 }
 
 private extension Dictionary where Key == String, Value == String {
@@ -1888,6 +1897,21 @@ private extension Dictionary where Key == String, Value == String {
 
     func doubleValue(_ key: String, default defaultValue: Double) -> Double {
         self[key].flatMap(Double.init) ?? defaultValue
+    }
+
+    func boolValue(_ key: String, default defaultValue: Bool) -> Bool {
+        self[key].flatMap(parseBool) ?? defaultValue
+    }
+}
+
+private func parseBool(_ value: String) -> Bool? {
+    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "1", "true", "yes", "y", "on":
+        return true
+    case "0", "false", "no", "n", "off":
+        return false
+    default:
+        return nil
     }
 }
 

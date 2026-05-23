@@ -224,6 +224,47 @@ public struct FastGSRecordedForwardScene {
         return try renderStages(parameters: parameters, verbose: verbose).rasterize
     }
 
+    public func renderPreviewOutColor(
+        parameters: FastGSTrainableParameters,
+        verbose: Bool = false
+    ) throws -> MLXArray {
+        try validate()
+
+        let tileBounds = tileBounds()
+        let maxSHCoefficients = maxSHCoefficients()
+        let preprocess = FastGSPreprocess.forward(
+            try preprocessInput(parameters: parameters),
+            params: FastGSPreprocessParams(
+                degree: manifest.shDegree,
+                maxSHCoefficients: maxSHCoefficients,
+                scaleModifier: 1,
+                tanFovX: Float(manifest.tanFovX),
+                tanFovY: Float(manifest.tanFovY),
+                imageHeight: manifest.height,
+                imageWidth: manifest.width,
+                tileBounds: tileBounds,
+                multiplier: 1
+            ),
+            verbose: verbose
+        )
+        let binning = FastGSBinning.forward(
+            preprocessOutput: preprocess,
+            params: FastGSBinningParams(multiplier: 1, tileBounds: tileBounds),
+            verbose: verbose
+        )
+        return FastGSRasterize.previewOutColor(
+            preprocessOutput: preprocess,
+            binningOutput: binning,
+            background: MLXArray(manifest.background.map(Float.init), [3]),
+            params: FastGSRasterizeParams(
+                imageWidth: manifest.width,
+                imageHeight: manifest.height,
+                numTiles: tileBounds.x * tileBounds.y
+            ),
+            verbose: verbose
+        )
+    }
+
     public func renderStages(verbose: Bool = false) throws -> FastGSRecordedForwardStages {
         return try renderStages(parameters: initialTrainableParameters(), verbose: verbose)
     }
