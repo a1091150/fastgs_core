@@ -5,17 +5,19 @@ public enum FastGSRasterizeCustomFunction {
     public static func call(
         _ input: FastGSRasterizeInput,
         params: FastGSRasterizeParams,
+        backwardCapture: FastGSRasterizeBackwardCapture? = nil,
         stream: StreamOrDevice = .default
     ) -> FastGSRasterizeOutput {
-        let function = make(params: params, stream: stream)
+        let function = make(params: params, backwardCapture: backwardCapture, stream: stream)
         return output(from: function(arrays(from: input)))
     }
 
     public static func make(
         params: FastGSRasterizeParams,
+        backwardCapture: FastGSRasterizeBackwardCapture? = nil,
         stream: StreamOrDevice = .default
     ) -> ([MLXArray]) -> [MLXArray] {
-        let primitive = FastGSRasterizePrimitiveContext(params: params, stream: stream)
+        let primitive = FastGSRasterizePrimitiveContext(params: params, backwardCapture: backwardCapture, stream: stream)
         return CustomFunction {
             Forward { primals in
                 let output = FastGSRasterize.forward(input(from: primals), params: primitive.params, stream: primitive.stream)
@@ -35,6 +37,7 @@ public enum FastGSRasterizeCustomFunction {
                     params: primitive.params,
                     stream: primitive.stream
                 )
+                primitive.store(backwardOutput: gradients)
                 return [
                     MLXArray.zeros(input.ranges.shape, dtype: input.ranges.dtype, stream: primitive.stream),
                     MLXArray.zeros(input.pointList.shape, dtype: input.pointList.dtype, stream: primitive.stream),
@@ -127,14 +130,37 @@ public enum FastGSRasterizeCustomFunction {
     }
 }
 
+public final class FastGSRasterizeBackwardCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var capturedViewspacePoints: MLXArray?
+
+    public init() {}
+
+    public var viewspacePoints: MLXArray? {
+        lock.withLock { capturedViewspacePoints }
+    }
+
+    func store(viewspacePoints: MLXArray) {
+        lock.withLock {
+            capturedViewspacePoints = viewspacePoints
+        }
+    }
+}
+
 private final class FastGSRasterizePrimitiveContext: @unchecked Sendable {
     let params: FastGSRasterizeParams
+    let backwardCapture: FastGSRasterizeBackwardCapture?
     let stream: StreamOrDevice
     private let lock = NSLock()
     private var cachedOutput: FastGSRasterizeOutput?
 
-    init(params: FastGSRasterizeParams, stream: StreamOrDevice) {
+    init(
+        params: FastGSRasterizeParams,
+        backwardCapture: FastGSRasterizeBackwardCapture?,
+        stream: StreamOrDevice
+    ) {
         self.params = params
+        self.backwardCapture = backwardCapture
         self.stream = stream
     }
 
@@ -146,5 +172,9 @@ private final class FastGSRasterizePrimitiveContext: @unchecked Sendable {
         lock.withLock {
             cachedOutput = output
         }
+    }
+
+    func store(backwardOutput: FastGSRasterizeBackwardOutput) {
+        backwardCapture?.store(viewspacePoints: backwardOutput.viewspacePoints)
     }
 }

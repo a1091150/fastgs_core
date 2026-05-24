@@ -746,14 +746,11 @@ or recomputing them from unrelated values.
         `valueAndGrad(...)` path.
       - [x] Add an Xcode smoke test proving recorded training can produce
         non-zero view-space gradients for densification.
-      - Current implementation intentionally computes stats through an extra
-        staged forward + rasterize backward pass; later cache/primitive work can
-        remove that duplicate pass once the topology-changing path is stable.
-      - Follow-up: refactor the Swift CustomFunction/primitive cache so one
-        backward pass produces both trainable gradients and densification stats.
-        `FastGSRasterizeCustomFunction` should cache or expose
-        `rasterizeBackward.viewspacePoints`, allowing the training loop to avoid
-        the second manual rasterize backward used by the first working version.
+      - [x] Remove the extra staged forward + rasterize backward pass.
+        `FastGSRasterizeCustomFunction` now exposes a Swift-side backward
+        capture for `rasterizeBackward.viewspacePoints`, so
+        `valueAndGradWithDensificationStats(...)` gets trainable gradients,
+        `radii`, and densification view-space gradients from one backward path.
     - [x] Add clone support.
       - [x] Clone small-scale high-gradient Gaussians, with optional
         importance-score filtering for the later multi-view scoring task.
