@@ -15,7 +15,7 @@ final class FastGSTrainingTests: XCTestCase {
             dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 3]),
             sh: MLXArray((0..<96).map { Float($0) / 100 }, [2, 16, 3]),
             opacityLogits: MLXArray([Float(-2), 3], [2]),
-            scales: MLXArray([Float](repeating: 0.01, count: 6), [2, 3]),
+            scales: MLXArray([Float](repeating: Foundation.log(0.01), count: 6), [2, 3]),
             rotations: MLXArray([
                 Float(1), 0, 0, 0,
                 1, 0, 0, 0,

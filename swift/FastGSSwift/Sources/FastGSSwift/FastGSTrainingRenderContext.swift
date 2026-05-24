@@ -82,7 +82,7 @@ public struct FastGSTrainingRenderContext {
             sh: parameters.sh,
             colorsPrecomputed: emptyColorsPrecomputed,
             opacities: parameters.opacityProbabilities(stream: stream),
-            scales: parameters.scales,
+            scales: exp(parameters.scales, stream: stream),
             rotations: parameters.rotations,
             cov3DPrecomputed: emptyCov3DPrecomputed,
             viewMatrix: viewMatrix,

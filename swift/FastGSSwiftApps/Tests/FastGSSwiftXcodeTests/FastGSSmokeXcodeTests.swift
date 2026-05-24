@@ -18,7 +18,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 3]),
             sh: MLXArray((0..<96).map { Float($0) / 100 }, [2, 16, 3]),
             opacityLogits: MLXArray([Float(-2), 3], [2]),
-            scales: MLXArray([Float](repeating: 0.01, count: 6), [2, 3]),
+            scales: MLXArray([Float](repeating: Foundation.log(0.01), count: 6), [2, 3]),
             rotations: MLXArray([
                 Float(1), 0, 0, 0,
                 1, 0, 0, 0,
@@ -1551,6 +1551,90 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertLessThanOrEqual(lastLoss, (firstLoss ?? lastLoss) * 10)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("step_200_sbs.png").path))
     }
+
+    func testMacAppStyleRecordedTrainingDoesNotRenderBlackUnderXcode() throws {
+        let triggerURL = URL(fileURLWithPath: "/private/tmp/fastgs_run_mac_app_training_diagnostic")
+        guard
+            ProcessInfo.processInfo.environment["FASTGS_RUN_MAC_APP_TRAINING_DIAGNOSTIC"] == "1"
+                || FileManager.default.fileExists(atPath: triggerURL.path)
+        else {
+            throw XCTSkip("Set FASTGS_RUN_MAC_APP_TRAINING_DIAGNOSTIC=1 to run the long Mac app style training diagnostic.")
+        }
+
+        let environment = ProcessInfo.processInfo.environment
+        let datasetURL = URL(
+            fileURLWithPath: environment["FASTGS_MAC_APP_TRAINING_DATASET"]
+                ?? "/Users/yangdunfu/Downloads/2026_05_04_16_51_29",
+            isDirectory: true
+        )
+        let steps = Int(environment["FASTGS_MAC_APP_TRAINING_STEPS"] ?? "") ?? 1_200
+        let maxFrames = Int(environment["FASTGS_MAC_APP_TRAINING_MAX_FRAMES"] ?? "") ?? 9_999
+        let width = Int(environment["FASTGS_MAC_APP_TRAINING_WIDTH"] ?? "") ?? 512
+        let height = Int(environment["FASTGS_MAC_APP_TRAINING_HEIGHT"] ?? "") ?? 512
+        let outputDirectory = URL(
+            fileURLWithPath: environment["FASTGS_MAC_APP_TRAINING_OUTPUT"]
+                ?? "/private/tmp/fastgs_mac_app_training_diagnostic",
+            isDirectory: true
+        )
+        try? FileManager.default.removeItem(at: outputDirectory)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        Memory.cacheLimit = 4 * 1024 * 1024 * 1024
+        let cache = try FastGSScannerDatasetLoader.loadCache(directory: datasetURL)
+        let descriptors = Array(cache.frameDescriptors.prefix(max(1, maxFrames)))
+        let scenes = try descriptors.map { descriptor in
+            let dataset = try FastGSScannerDatasetLoader.loadDataset(
+                cache: cache,
+                frameIndex: descriptor.index,
+                width: width,
+                height: height
+            )
+            return FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
+        }
+        let config = FastGSRecordedTrainingRunConfig(
+            totalSteps: steps,
+            previewInterval: 20
+        )
+        var previewRows = [[String: Any]]()
+        var summaries = [FastGSRecordedTrainingPruneSummary]()
+
+        let result = try FastGSRecordedTrainingPreview.run(
+            scenes: scenes,
+            config: config,
+            pruneSummary: { summaries.append($0) },
+            preview: { preview in
+                let renderMean = rgbaMean(preview.renderRGBA)
+                previewRows.append([
+                    "step": preview.step,
+                    "frameIndex": preview.frameIndex ?? -1,
+                    "renderMean": renderMean,
+                    "gaussianCount": preview.parameters?.gaussianCount ?? -1,
+                ])
+                if preview.step % 160 == 0 || renderMean <= 1.0e-5 {
+                    let url = outputDirectory.appendingPathComponent(
+                        String(format: "camera_%03d_step_%04d_sbs.png", preview.frameIndex ?? -1, preview.step)
+                    )
+                    try writeSideBySidePNG(
+                        targetRGBA: preview.targetRGBA,
+                        renderRGBA: preview.renderRGBA,
+                        width: preview.width,
+                        height: preview.height,
+                        to: url
+                    )
+                }
+                XCTAssertGreaterThan(
+                    renderMean,
+                    1.0e-5,
+                    "Mac app style training rendered black at step \(preview.step), frame \(preview.frameIndex ?? -1)"
+                )
+            }
+        )
+
+        try writeJSONObject(previewRows, to: outputDirectory.appendingPathComponent("preview_rows.json"))
+        try writeJSONObject(summaries.map(pruneSummaryDictionary(_:)), to: outputDirectory.appendingPathComponent("prune_summaries.json"))
+        XCTAssertGreaterThanOrEqual(result.parameters?.gaussianCount ?? 0, config.densification.finalPruneMinGaussians)
+        XCTAssertGreaterThan(rgbaMean(result.renderRGBA), 1.0e-5)
+    }
 }
 
 private func preprocessBackwardSmokeForwardOutput(count: Int) -> FastGSPreprocessOutput {
@@ -1927,6 +2011,64 @@ private func writeSideBySidePNG(
         combined.replaceSubrange((targetStart + width * 4)..<(targetStart + width * 2 * 4), with: right[sourceStart..<(sourceStart + width * 4)])
     }
     try FastGSImageExport.writePNG(rgbaBytes: combined, width: width * 2, height: height, to: url)
+}
+
+private func writeSideBySidePNG(
+    targetRGBA: [UInt8],
+    renderRGBA: [UInt8],
+    width: Int,
+    height: Int,
+    to url: URL
+) throws {
+    precondition(targetRGBA.count == width * height * 4)
+    precondition(renderRGBA.count == width * height * 4)
+    var combined = [UInt8](repeating: 0, count: width * 2 * height * 4)
+    for row in 0..<height {
+        let sourceStart = row * width * 4
+        let targetStart = row * width * 2 * 4
+        combined.replaceSubrange(targetStart..<(targetStart + width * 4), with: targetRGBA[sourceStart..<(sourceStart + width * 4)])
+        combined.replaceSubrange((targetStart + width * 4)..<(targetStart + width * 2 * 4), with: renderRGBA[sourceStart..<(sourceStart + width * 4)])
+    }
+    try FastGSImageExport.writePNG(rgbaBytes: combined, width: width * 2, height: height, to: url)
+}
+
+private func rgbaMean(_ rgba: [UInt8]) -> Double {
+    precondition(rgba.count % 4 == 0)
+    guard !rgba.isEmpty else {
+        return 0
+    }
+    var sum: UInt64 = 0
+    for index in stride(from: 0, to: rgba.count, by: 4) {
+        sum += UInt64(rgba[index]) + UInt64(rgba[index + 1]) + UInt64(rgba[index + 2])
+    }
+    return Double(sum) / Double((rgba.count / 4) * 3) / 255.0
+}
+
+private func writeJSONObject(_ object: Any, to url: URL) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: url, options: .atomic)
+}
+
+private func pruneSummaryDictionary(_ summary: FastGSRecordedTrainingPruneSummary) -> [String: Any] {
+    [
+        "reason": summary.reason,
+        "step": summary.step,
+        "beforeCount": summary.beforeCount,
+        "afterCount": summary.afterCount,
+        "opacityHits": summary.opacityHits,
+        "screenSizeHits": summary.screenSizeHits,
+        "worldScaleHits": summary.worldScaleHits,
+        "prunedCount": summary.prunedCount,
+        "keptCount": summary.keptCount,
+        "clonedCount": summary.clonedCount,
+        "splitSourceCount": summary.splitSourceCount,
+        "splitChildCount": summary.splitChildCount,
+        "scoreHits": summary.scoreHits,
+        "scoringSampleCount": summary.scoringSampleCount,
+        "opacityCapped": summary.opacityCapped,
+        "opacityReset": summary.opacityReset,
+    ]
 }
 
 private func trainingDebugRow(

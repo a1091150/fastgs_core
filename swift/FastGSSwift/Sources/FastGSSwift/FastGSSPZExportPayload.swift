@@ -45,7 +45,7 @@ public extension FastGSTrainableParameters {
             numPoints: count,
             shDegree: sh.degree,
             positions: FastGSSPZExportPayload.positionsForScaniversePreview(from: means3D.asArray(Float.self)),
-            scales: FastGSSPZExportPayload.logScalesForSPZ(fromLinearScales: scales.asArray(Float.self)),
+            scales: scales.asArray(Float.self),
             rotationsXYZW: FastGSSPZExportPayload.rotationsXYZWForScaniversePreview(fromWXYZ: rotations.asArray(Float.self)),
             alphas: opacityLogits.asArray(Float.self),
             colors: dc.asArray(Float.self),
@@ -115,10 +115,6 @@ private extension FastGSSPZExportPayload {
             result.append(positions[offset + 1])
         }
         return result
-    }
-
-    static func logScalesForSPZ(fromLinearScales scales: [Float]) -> [Float] {
-        scales.map { Foundation.log(max($0, 1.0e-8)) }
     }
 
     static func rotationsXYZWForScaniversePreview(fromWXYZ rotations: [Float]) -> [Float] {

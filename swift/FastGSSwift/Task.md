@@ -816,6 +816,16 @@ or recomputing them from unrelated values.
         densification state when available.
       - [x] Ensure Continue Training can resume from saved parameters even when
         Gaussian count changed.
+    - [x] Align Swift trainable scales with FastGS log-scale semantics.
+      - `FastGSTrainableParameters.scales` stores log-scales, matching the
+        Python/FastGS/SPZ convention.
+      - Forward/preprocess paths pass `exp(scales)` into the Metal kernels
+        because the current preprocess kernel expects physical xyz scales.
+      - SPZ export writes log-scales directly.
+      - After-training world-scale pruning and split child generation interpret
+        stored scales as log-scales.
+      - Added a long Mac App style Xcode diagnostic to catch the previous
+        failure mode where a densify/prune pass collapsed the scene to black.
   - [ ] Defer further FPS/performance research until the multi-view and
     after-train task sequence is stable.
     - Later candidates: opacity-aware bounded tile intersection, visible

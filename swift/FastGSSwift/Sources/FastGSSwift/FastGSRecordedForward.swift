@@ -423,7 +423,7 @@ public struct FastGSRecordedForwardScene {
         let sh = MLXArray.zeros([count, maxSHCoefficients, 3], dtype: .float32)
         let opacities = MLXArray(Array(repeating: Float(manifest.opacity), count: count), [count])
         let opacityLogits = FastGSOpacity.logits(fromProbabilities: opacities)
-        let scales = MLXArray(Array(repeating: Float(manifest.scale), count: count * 3), [count, 3])
+        let scales = MLXArray(Array(repeating: Foundation.log(Float(manifest.scale)), count: count * 3), [count, 3])
         var rotations = [Float](repeating: 0, count: count * 4)
         for index in 0..<count {
             rotations[index * 4] = 1
@@ -454,7 +454,7 @@ public struct FastGSRecordedForwardScene {
             sh: parameters.sh,
             colorsPrecomputed: MLXArray.zeros([0, 3], dtype: .float32),
             opacities: parameters.opacityProbabilities(),
-            scales: parameters.scales,
+            scales: exp(parameters.scales),
             rotations: parameters.rotations,
             cov3DPrecomputed: MLXArray.zeros([0, 6], dtype: .float32),
             viewMatrix: MLXArray(manifest.viewmatrix.map(Float.init), [4, 4]),
