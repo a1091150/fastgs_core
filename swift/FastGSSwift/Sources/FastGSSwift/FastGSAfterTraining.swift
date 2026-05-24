@@ -267,7 +267,7 @@ public enum FastGSAfterTraining {
             maxWorldScaleFactor: maxWorldScaleFactor,
             count: count
         )
-        let scoreMask = pruningScores.map { $0 < scoreThreshold }
+        let scoreMask = pruningScores.map { $0 > scoreThreshold }
 
         let opacityHits = opacityMask.filter(\.self).count
         let screenSizeHits = screenMask.filter(\.self).count
@@ -276,7 +276,10 @@ public enum FastGSAfterTraining {
         var pruneMask = (0..<count).map { index in
             opacityMask[index] || screenMask[index] || worldMask[index] || scoreMask[index]
         }
-        enforceMinimumGaussians(mask: &pruneMask, rankScores: pruningScores, minGaussians: min(minGaussians, count))
+        let keepPriority = zip(opacities, pruningScores).map { opacity, score in
+            opacity - score
+        }
+        enforceMinimumGaussians(mask: &pruneMask, rankScores: keepPriority, minGaussians: min(minGaussians, count))
 
         let prunedParameters = parameters.prune(mask: pruneMask, stream: stream)
         let prunedOptimizerState = optimizerState?.prune(mask: pruneMask, stream: stream)

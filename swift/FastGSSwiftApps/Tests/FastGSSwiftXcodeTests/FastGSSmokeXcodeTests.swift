@@ -125,7 +125,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(optimizer.stateArrays().count, 14)
     }
 
-    func testFinalPruneUsesScoresAndKeepsHighestScoredRowsUnderXcode() {
+    func testFinalPruneUsesFastGSHighScoreMaskUnderXcode() {
         let parameters = FastGSTrainableParameters(
             means3D: MLXArray((0..<12).map { Float($0) }, [4, 3]),
             dc: MLXArray([Float](repeating: 0.1, count: 12), [4, 1, 3]),
@@ -156,14 +156,48 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             minGaussians: 2
         )
 
-        XCTAssertEqual(result.pruneMask, [true, false, true, false])
-        XCTAssertEqual(result.scoreHits, 3)
+        XCTAssertEqual(result.pruneMask, [false, true, false, false])
+        XCTAssertEqual(result.scoreHits, 1)
+        XCTAssertEqual(result.prunedCount, 1)
+        XCTAssertEqual(result.keptCount, 3)
+        XCTAssertEqual(result.parameters.gaussianCount, 3)
+        XCTAssertEqual(result.optimizerState?.step, 19)
+        XCTAssertEqual(result.densificationState?.xyzGradAccum, [10, 30, 40])
+        assertClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.4, 0.5])
+    }
+
+    func testFinalPruneMinimumGuardKeepsLowPruningScoreRowsUnderXcode() {
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray((0..<12).map { Float($0) }, [4, 3]),
+            dc: MLXArray([Float](repeating: 0.1, count: 12), [4, 1, 3]),
+            sh: MLXArray([Float](repeating: 0.2, count: 24), [4, 2, 3]),
+            opacityLogits: FastGSOpacity.logits(fromProbabilities: MLXArray([Float(0.2), 0.3, 0.4, 0.5], [4])),
+            scales: MLXArray([Float](repeating: log(0.1), count: 12), [4, 3]),
+            rotations: MLXArray([
+                Float(1), 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+            ], [4, 4]),
+            cov3DPrecomputed: MLXArray([Float](repeating: 0.4, count: 24), [4, 6])
+        )
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.xyzGradAccum = [10, 20, 30, 40]
+
+        let result = FastGSAfterTraining.finalPrune(
+            parameters: parameters,
+            densificationState: densificationState,
+            pruningScores: [0.1, 0.95, 0.2, 0.8],
+            scoreThreshold: 0.05,
+            minOpacity: 0,
+            minGaussians: 2
+        )
+
+        XCTAssertEqual(result.pruneMask, [false, true, false, true])
+        XCTAssertEqual(result.scoreHits, 4)
         XCTAssertEqual(result.prunedCount, 2)
         XCTAssertEqual(result.keptCount, 2)
-        XCTAssertEqual(result.parameters.gaussianCount, 2)
-        XCTAssertEqual(result.optimizerState?.step, 19)
-        XCTAssertEqual(result.densificationState?.xyzGradAccum, [20, 40])
-        assertClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.3, 0.5])
+        XCTAssertEqual(result.densificationState?.xyzGradAccum, [10, 30])
     }
 
     func testPruneOnlyBudgetLimitsRankedCandidatesUnderXcode() {
@@ -1635,6 +1669,9 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 ?? "/private/tmp/fastgs_mac_app_training_diagnostic",
             isDirectory: true
         )
+        let saveArtifacts = diagnosticConfig.bool("saveArtifacts")
+            ?? (environment["FASTGS_MAC_APP_TRAINING_SAVE_ARTIFACTS"] == "1")
+        let writePreviewImages = diagnosticConfig.bool("writePreviewImages") ?? true
         try? FileManager.default.removeItem(at: outputDirectory)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
@@ -1672,7 +1709,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                     "renderMean": renderMean,
                     "gaussianCount": preview.parameters?.gaussianCount ?? -1,
                 ])
-                if preview.step % 160 == 0 || renderMean <= 1.0e-5 {
+                if writePreviewImages && (preview.step % 160 == 0 || renderMean <= 1.0e-5) {
                     let url = outputDirectory.appendingPathComponent(
                         String(format: "camera_%03d_step_%04d_sbs.png", preview.frameIndex ?? -1, preview.step)
                     )
@@ -1698,9 +1735,62 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         try writeJSONObject(previewRows, to: outputDirectory.appendingPathComponent("preview_rows.json"))
         try writeJSONObject(blackRows, to: outputDirectory.appendingPathComponent("black_rows.json"))
         try writeJSONObject(summaries.map(pruneSummaryDictionary(_:)), to: outputDirectory.appendingPathComponent("prune_summaries.json"))
+        let finalRenderMean = rgbaMean(result.renderRGBA)
+        var artifactRows: [[String: Any]] = []
+        if saveArtifacts, let parameters = result.parameters {
+            let checkpointDirectory = outputDirectory.appendingPathComponent("checkpoint", isDirectory: true)
+            let info = FastGSTrainingCheckpointInfo(
+                datasetDirectory: datasetURL.path,
+                outputDirectory: outputDirectory.path,
+                imageWidth: result.width,
+                imageHeight: result.height,
+                maxFrames: maxFrames,
+                trainingSteps: config.totalSteps,
+                completedStep: result.step,
+                frameCount: scenes.count,
+                pointCount: result.pointCount,
+                gaussianCount: parameters.gaussianCount,
+                afterTrainingConfig: config.densification,
+                note: "mac-app-style-xcode-diagnostic"
+            )
+            try FastGSCheckpoint.save(
+                parameters: parameters,
+                info: info,
+                optimizerState: result.optimizerState,
+                densificationState: result.densificationState,
+                directory: checkpointDirectory
+            )
+            let spzURL = outputDirectory.appendingPathComponent("trained.spz", isDirectory: false)
+            try writeSPZForXcodeDiagnostic(parameters: parameters, to: spzURL)
+            artifactRows.append([
+                "checkpointDirectory": checkpointDirectory.path,
+                "parameterFile": FastGSCheckpoint.parameterURL(in: checkpointDirectory).path,
+                "spzFile": spzURL.path,
+                "spzBytes": (try? FileManager.default.attributesOfItem(atPath: spzURL.path)[.size] as? NSNumber)?.intValue ?? -1,
+            ])
+        }
+        try writeJSONObject([
+            "dataset": datasetURL.path,
+            "output": outputDirectory.path,
+            "steps": config.totalSteps,
+            "completedStep": result.step,
+            "maxFrames": maxFrames,
+            "frameCount": scenes.count,
+            "width": result.width,
+            "height": result.height,
+            "pointCount": result.pointCount,
+            "gaussianCount": result.parameters?.gaussianCount ?? -1,
+            "finalRenderMean": finalRenderMean,
+            "previewRows": previewRows.count,
+            "blackRows": blackRows.count,
+            "pruneSummaries": summaries.count,
+            "saveArtifacts": saveArtifacts,
+            "writePreviewImages": writePreviewImages,
+        ], to: outputDirectory.appendingPathComponent("training_diagnostic_summary.json"))
+        try writeJSONObject(artifactRows, to: outputDirectory.appendingPathComponent("artifacts.json"))
         XCTAssertTrue(blackRows.isEmpty, "Mac app style training rendered black previews; see \(outputDirectory.path)/black_rows.json")
         XCTAssertGreaterThanOrEqual(result.parameters?.gaussianCount ?? 0, config.densification.finalPruneMinGaussians)
-        XCTAssertGreaterThan(rgbaMean(result.renderRGBA), 1.0e-5)
+        XCTAssertGreaterThan(finalRenderMean, 1.0e-5)
     }
 }
 
@@ -2117,6 +2207,24 @@ private func writeJSONObject(_ object: Any, to url: URL) throws {
     try data.write(to: url, options: .atomic)
 }
 
+private func writeSPZForXcodeDiagnostic(parameters: FastGSTrainableParameters, to url: URL) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let payload = try parameters.spzExportPayload()
+    let cloud = GaussianCloud(
+        numPoints: Int32(payload.numPoints),
+        shDegree: payload.shDegree,
+        antialiased: true,
+        positions: payload.positions,
+        scales: payload.scales,
+        rotations: payload.rotationsXYZW,
+        alphas: payload.alphas,
+        colors: payload.colors,
+        sh: payload.sh
+    )
+    XCTAssertTrue(cloud.checkSizes())
+    try saveSpz(cloud, to: url)
+}
+
 private func readTrainingDiagnosticConfig(_ url: URL) -> [String: Any] {
     guard
         let data = try? Data(contentsOf: url),
@@ -2143,6 +2251,26 @@ private extension Dictionary where Key == String, Value == Any {
 
     func string(_ key: String) -> String? {
         self[key] as? String
+    }
+
+    func bool(_ key: String) -> Bool? {
+        if let value = self[key] as? Bool {
+            return value
+        }
+        if let value = self[key] as? Int {
+            return value != 0
+        }
+        if let value = self[key] as? String {
+            switch value.lowercased() {
+            case "1", "true", "yes":
+                return true
+            case "0", "false", "no":
+                return false
+            default:
+                return nil
+            }
+        }
+        return nil
     }
 }
 
