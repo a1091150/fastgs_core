@@ -5,6 +5,36 @@ import XCTest
 final class FastGSTrainingTests: XCTestCase {
     private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
 
+    func testSPZExportPayloadUsesFastGSParameterConventions() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX array payload tests require an Xcode/metallib-ready environment.")
+        }
+
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
+            dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 3]),
+            sh: MLXArray((0..<96).map { Float($0) / 100 }, [2, 16, 3]),
+            opacityLogits: MLXArray([Float(-2), 3], [2]),
+            scales: MLXArray([Float](repeating: 0.01, count: 6), [2, 3]),
+            rotations: MLXArray([
+                Float(1), 0, 0, 0,
+                1, 0, 0, 0,
+            ], [2, 4])
+        )
+
+        let payload = try parameters.spzExportPayload()
+
+        XCTAssertEqual(payload.numPoints, 2)
+        XCTAssertEqual(payload.shDegree, 3)
+        XCTAssertEqual(payload.positions, [1, -3, 2, 4, -6, 5])
+        assertTrainingClose(payload.scales, [Float](repeating: Foundation.log(0.01), count: 6))
+        XCTAssertEqual(payload.rotationsXYZW, [0, 0, 0, 1, 0, 0, 0, 1])
+        XCTAssertEqual(payload.alphas, [-2, 3])
+        XCTAssertEqual(payload.colors, [0.2, 0.4, 0.6, 0.8, 1.0, 1.2])
+        XCTAssertEqual(payload.sh.count, 90)
+        XCTAssertEqual(Array(payload.sh.prefix(3)), [0.03, 0.04, 0.05])
+    }
+
     func testAdamOptimizerAppliesSyntheticGradientStep() throws {
         guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
             throw XCTSkip("MLX array optimizer tests require an Xcode/metallib-ready environment.")

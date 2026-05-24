@@ -5,6 +5,7 @@ import Metal
 import MetalKit
 import MLX
 import SwiftUI
+import spz
 
 @main
 struct FastGSSwiftMacApp: App {
@@ -278,11 +279,14 @@ private final class RenderPreviewModel: ObservableObject {
                                     densificationState: result.densificationState,
                                     directory: checkpointDirectory
                                 )
+                                let spzURL = runDirectory.appendingPathComponent("trained.spz", isDirectory: false)
+                                try writeSPZ(parameters: parameters, to: spzURL)
                                 try writeTrainingRunMetadata(
                                     mode: mode,
                                     info: info,
                                     runDirectory: runDirectory,
-                                    checkpointDirectory: checkpointDirectory
+                                    checkpointDirectory: checkpointDirectory,
+                                    spzURL: spzURL
                                 )
                             }
                         }
@@ -619,6 +623,7 @@ private enum RenderPreviewError: Error {
     case noFramePairs
     case missingFrameImage(Int)
     case missingCheckpoint(URL)
+    case invalidSPZCloud
 }
 
 private enum FastGSMacMLXRuntime {
@@ -695,9 +700,10 @@ private func writeTrainingRunMetadata(
     mode: FastGSMacTrainingStartMode,
     info: FastGSTrainingCheckpointInfo,
     runDirectory: URL,
-    checkpointDirectory: URL
+    checkpointDirectory: URL,
+    spzURL: URL?
 ) throws {
-    let metadata: [String: String] = [
+    var metadata: [String: String] = [
         "mode": mode.metadataName,
         "createdAt": info.createdAt,
         "datasetDirectory": info.datasetDirectory,
@@ -707,12 +713,38 @@ private func writeTrainingRunMetadata(
         "optimizerFile": info.optimizerFile.map { checkpointDirectory.appendingPathComponent($0).path } ?? "",
         "densificationStateFile": info.densificationStateFile.map { checkpointDirectory.appendingPathComponent($0).path } ?? "",
     ]
+    if let spzURL {
+        metadata["spzFile"] = spzURL.path
+    }
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(metadata).write(
         to: runDirectory.appendingPathComponent("training_run.json", isDirectory: false),
         options: .atomic
     )
+}
+
+private func writeSPZ(parameters: FastGSTrainableParameters, to url: URL) throws {
+    try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    let payload = try parameters.spzExportPayload()
+    let cloud = GaussianCloud(
+        numPoints: Int32(payload.numPoints),
+        shDegree: payload.shDegree,
+        antialiased: true,
+        positions: payload.positions,
+        scales: payload.scales,
+        rotations: payload.rotationsXYZW,
+        alphas: payload.alphas,
+        colors: payload.colors,
+        sh: payload.sh
+    )
+    guard cloud.checkSizes() else {
+        throw RenderPreviewError.invalidSPZCloud
+    }
+    try saveSpz(cloud, to: url)
 }
 
 private func writeSideBySidePNG(

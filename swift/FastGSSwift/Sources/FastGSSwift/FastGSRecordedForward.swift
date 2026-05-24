@@ -189,7 +189,7 @@ public struct FastGSRecordedForwardScene {
         self.scannerFrameIndex = nil
     }
 
-    public init(scannerDataset: FastGSScannerDataset, frameIndex: Int, shDegree: Int = 3, scale: Double = 0.02, opacity: Double = 0.82) {
+    public init(scannerDataset: FastGSScannerDataset, frameIndex: Int, shDegree: Int = 3, scale: Double = 0.01, opacity: Double = 0.82) {
         let frame = scannerDataset.frames[min(max(frameIndex, 0), scannerDataset.frames.count - 1)]
         self.manifest = FastGSRecordedForwardManifest(
             width: frame.camera.imageWidth,

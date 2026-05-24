@@ -3,6 +3,7 @@ import CoreVideo
 import Metal
 import MLX
 import XCTest
+import spz
 
 final class FastGSSmokeXcodeTests: XCTestCase {
     private let recordedManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference/recorded_manifest.json")
@@ -10,6 +11,65 @@ final class FastGSSmokeXcodeTests: XCTestCase {
     private let recordedFullManifestURL = URL(fileURLWithPath: "/private/tmp/fastgs_recorded_reference_full_512/recorded_manifest.json")
     private let rasterizeBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_rasterize_backward_ref.json")
     private let preprocessBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_preprocess_backward_ref.json")
+
+    func testSPZExportPayloadUsesFastGSParameterConventionsUnderXcode() throws {
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
+            dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 3]),
+            sh: MLXArray((0..<96).map { Float($0) / 100 }, [2, 16, 3]),
+            opacityLogits: MLXArray([Float(-2), 3], [2]),
+            scales: MLXArray([Float](repeating: 0.01, count: 6), [2, 3]),
+            rotations: MLXArray([
+                Float(1), 0, 0, 0,
+                1, 0, 0, 0,
+            ], [2, 4])
+        )
+
+        let payload = try parameters.spzExportPayload()
+
+        XCTAssertEqual(payload.numPoints, 2)
+        XCTAssertEqual(payload.shDegree, 3)
+        XCTAssertEqual(payload.positions, [1, -3, 2, 4, -6, 5])
+        assertClose(payload.scales, [Float](repeating: Foundation.log(0.01), count: 6))
+        XCTAssertEqual(payload.rotationsXYZW, [0, 0, 0, 1, 0, 0, 0, 1])
+        XCTAssertEqual(payload.alphas, [-2, 3])
+        XCTAssertEqual(payload.colors, [0.2, 0.4, 0.6, 0.8, 1.0, 1.2])
+        XCTAssertEqual(payload.sh.count, 90)
+        XCTAssertEqual(Array(payload.sh.prefix(3)), [0.03, 0.04, 0.05])
+    }
+
+    func testSPZPackageRoundTripsExportPayloadUnderXcode() throws {
+        let payload = FastGSSPZExportPayload(
+            numPoints: 1,
+            shDegree: 0,
+            positions: [1, 2, 3],
+            scales: [-1, -1, -1],
+            rotationsXYZW: [0, 0, 0, 1],
+            alphas: [0.5],
+            colors: [0.1, 0.2, 0.3],
+            sh: []
+        )
+        let cloud = GaussianCloud(
+            numPoints: Int32(payload.numPoints),
+            shDegree: payload.shDegree,
+            positions: payload.positions,
+            scales: payload.scales,
+            rotations: payload.rotationsXYZW,
+            alphas: payload.alphas,
+            colors: payload.colors,
+            sh: payload.sh
+        )
+        let url = URL(fileURLWithPath: "/private/tmp/fastgs_spz_roundtrip.spz")
+        try? FileManager.default.removeItem(at: url)
+
+        try saveSpz(cloud, to: url, options: PackOptions(from: .rdf))
+        let loaded = try loadSpz(from: url, options: UnpackOptions(to: .rdf))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(loaded.numPoints, 1)
+        XCTAssertEqual(loaded.shDegree, 0)
+        XCTAssertTrue(loaded.checkSizes())
+    }
 
     func testAdamOptimizerAppliesSyntheticGradientStepUnderXcode() {
         let parameters = FastGSTrainableParameters(
