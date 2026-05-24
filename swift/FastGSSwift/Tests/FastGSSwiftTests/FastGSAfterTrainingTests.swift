@@ -103,6 +103,38 @@ final class FastGSAfterTrainingTests: XCTestCase {
         assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.3])
     }
 
+    func testPruneOnlyBudgetLimitsRankedPruneCandidates() throws {
+        guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
+            throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")
+        }
+
+        let parameters = makePruneOnlyParameters(opacityProbabilities: [0.2, 0.001, 0.8, 0.004])
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.maxRadii2D = [2, 3, 99, 4]
+        densificationState.xyzGradAccum = [10, 20, 30, 40]
+        densificationState.xyzGradAccumAbs = [11, 21, 31, 41]
+        densificationState.denom = [1, 2, 3, 4]
+
+        let result = FastGSAfterTraining.pruneOnly(
+            parameters: parameters,
+            densificationState: densificationState,
+            minOpacity: 0.005,
+            maxScreenSize: 20,
+            maxWorldScaleFactor: 0.1,
+            pruningScores: [0.1, 0.9, 0.8, 0.7],
+            pruneBudgetFactor: 0.5,
+            minGaussians: 1
+        )
+
+        XCTAssertEqual(result.opacityHits, 2)
+        XCTAssertEqual(result.screenSizeHits, 1)
+        XCTAssertEqual(result.worldScaleHits, 1)
+        XCTAssertEqual(result.pruneMask, [false, true, false, false])
+        XCTAssertEqual(result.prunedCount, 1)
+        XCTAssertEqual(result.keptCount, 3)
+        assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.8, 0.004])
+    }
+
     func testFinalPruneUsesScoresAndKeepsHighestScoredRows() throws {
         guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
             throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")

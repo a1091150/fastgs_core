@@ -166,6 +166,52 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         assertClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.3, 0.5])
     }
 
+    func testPruneOnlyBudgetLimitsRankedCandidatesUnderXcode() {
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray((0..<12).map { Float($0) }, [4, 3]),
+            dc: MLXArray([Float](repeating: 0.1, count: 12), [4, 1, 3]),
+            sh: MLXArray([Float](repeating: 0.2, count: 24), [4, 2, 3]),
+            opacityLogits: FastGSOpacity.logits(fromProbabilities: MLXArray([Float(0.2), 0.001, 0.8, 0.004], [4])),
+            scales: MLXArray([
+                log(Float(0.1)), log(Float(0.1)), log(Float(0.1)),
+                log(Float(0.2)), log(Float(0.2)), log(Float(0.2)),
+                log(Float(3.0)), log(Float(3.0)), log(Float(3.0)),
+                log(Float(0.3)), log(Float(0.3)), log(Float(0.3)),
+            ], [4, 3]),
+            rotations: MLXArray([
+                Float(1), 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+            ], [4, 4]),
+            cov3DPrecomputed: MLXArray([Float](repeating: 0.4, count: 24), [4, 6])
+        )
+        var densificationState = FastGSDensificationState(count: 4, sceneExtent: 10)
+        densificationState.maxRadii2D = [2, 3, 99, 4]
+        densificationState.xyzGradAccum = [10, 20, 30, 40]
+        densificationState.xyzGradAccumAbs = [11, 21, 31, 41]
+        densificationState.denom = [1, 2, 3, 4]
+
+        let result = FastGSAfterTraining.pruneOnly(
+            parameters: parameters,
+            densificationState: densificationState,
+            minOpacity: 0.005,
+            maxScreenSize: 20,
+            maxWorldScaleFactor: 0.1,
+            pruningScores: [0.1, 0.9, 0.8, 0.7],
+            pruneBudgetFactor: 0.5,
+            minGaussians: 1
+        )
+
+        XCTAssertEqual(result.opacityHits, 2)
+        XCTAssertEqual(result.screenSizeHits, 1)
+        XCTAssertEqual(result.worldScaleHits, 1)
+        XCTAssertEqual(result.pruneMask, [false, true, false, false])
+        XCTAssertEqual(result.prunedCount, 1)
+        XCTAssertEqual(result.keptCount, 3)
+        assertClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.8, 0.004])
+    }
+
     func testCheckpointRoundTripsParametersAndInfoUnderXcode() throws {
         let checkpointDirectory = URL(
             fileURLWithPath: "/private/tmp/fastgs_swift_checkpoint_roundtrip",
@@ -1562,17 +1608,30 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         }
 
         let environment = ProcessInfo.processInfo.environment
+        let diagnosticConfig = readTrainingDiagnosticConfig(
+            URL(fileURLWithPath: "/private/tmp/fastgs_mac_app_training_diagnostic_config.json")
+        )
         let datasetURL = URL(
-            fileURLWithPath: environment["FASTGS_MAC_APP_TRAINING_DATASET"]
+            fileURLWithPath: diagnosticConfig.string("dataset")
+                ?? environment["FASTGS_MAC_APP_TRAINING_DATASET"]
                 ?? "/Users/yangdunfu/Downloads/2026_05_04_16_51_29",
             isDirectory: true
         )
-        let steps = Int(environment["FASTGS_MAC_APP_TRAINING_STEPS"] ?? "") ?? 1_200
-        let maxFrames = Int(environment["FASTGS_MAC_APP_TRAINING_MAX_FRAMES"] ?? "") ?? 9_999
-        let width = Int(environment["FASTGS_MAC_APP_TRAINING_WIDTH"] ?? "") ?? 512
-        let height = Int(environment["FASTGS_MAC_APP_TRAINING_HEIGHT"] ?? "") ?? 512
+        let steps = diagnosticConfig.int("steps")
+            ?? Int(environment["FASTGS_MAC_APP_TRAINING_STEPS"] ?? "")
+            ?? 1_200
+        let maxFrames = diagnosticConfig.int("maxFrames")
+            ?? Int(environment["FASTGS_MAC_APP_TRAINING_MAX_FRAMES"] ?? "")
+            ?? 9_999
+        let width = diagnosticConfig.int("width")
+            ?? Int(environment["FASTGS_MAC_APP_TRAINING_WIDTH"] ?? "")
+            ?? 512
+        let height = diagnosticConfig.int("height")
+            ?? Int(environment["FASTGS_MAC_APP_TRAINING_HEIGHT"] ?? "")
+            ?? 512
         let outputDirectory = URL(
-            fileURLWithPath: environment["FASTGS_MAC_APP_TRAINING_OUTPUT"]
+            fileURLWithPath: diagnosticConfig.string("output")
+                ?? environment["FASTGS_MAC_APP_TRAINING_OUTPUT"]
                 ?? "/private/tmp/fastgs_mac_app_training_diagnostic",
             isDirectory: true
         )
@@ -1593,10 +1652,13 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         }
         let config = FastGSRecordedTrainingRunConfig(
             totalSteps: steps,
-            previewInterval: 20
+            previewInterval: diagnosticConfig.int("previewInterval")
+                ?? Int(environment["FASTGS_MAC_APP_TRAINING_PREVIEW_INTERVAL"] ?? "")
+                ?? 20
         )
         var previewRows = [[String: Any]]()
         var summaries = [FastGSRecordedTrainingPruneSummary]()
+        var blackRows = [[String: Any]]()
 
         let result = try FastGSRecordedTrainingPreview.run(
             scenes: scenes,
@@ -1622,16 +1684,21 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                         to: url
                     )
                 }
-                XCTAssertGreaterThan(
-                    renderMean,
-                    1.0e-5,
-                    "Mac app style training rendered black at step \(preview.step), frame \(preview.frameIndex ?? -1)"
-                )
+                if renderMean <= 1.0e-5 {
+                    blackRows.append([
+                        "step": preview.step,
+                        "frameIndex": preview.frameIndex ?? -1,
+                        "renderMean": renderMean,
+                        "gaussianCount": preview.parameters?.gaussianCount ?? -1,
+                    ])
+                }
             }
         )
 
         try writeJSONObject(previewRows, to: outputDirectory.appendingPathComponent("preview_rows.json"))
+        try writeJSONObject(blackRows, to: outputDirectory.appendingPathComponent("black_rows.json"))
         try writeJSONObject(summaries.map(pruneSummaryDictionary(_:)), to: outputDirectory.appendingPathComponent("prune_summaries.json"))
+        XCTAssertTrue(blackRows.isEmpty, "Mac app style training rendered black previews; see \(outputDirectory.path)/black_rows.json")
         XCTAssertGreaterThanOrEqual(result.parameters?.gaussianCount ?? 0, config.densification.finalPruneMinGaussians)
         XCTAssertGreaterThan(rgbaMean(result.renderRGBA), 1.0e-5)
     }
@@ -2050,6 +2117,35 @@ private func writeJSONObject(_ object: Any, to url: URL) throws {
     try data.write(to: url, options: .atomic)
 }
 
+private func readTrainingDiagnosticConfig(_ url: URL) -> [String: Any] {
+    guard
+        let data = try? Data(contentsOf: url),
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+        return [:]
+    }
+    return object
+}
+
+private extension Dictionary where Key == String, Value == Any {
+    func int(_ key: String) -> Int? {
+        if let value = self[key] as? Int {
+            return value
+        }
+        if let value = self[key] as? Double {
+            return Int(value)
+        }
+        if let value = self[key] as? String {
+            return Int(value)
+        }
+        return nil
+    }
+
+    func string(_ key: String) -> String? {
+        self[key] as? String
+    }
+}
+
 private func pruneSummaryDictionary(_ summary: FastGSRecordedTrainingPruneSummary) -> [String: Any] {
     [
         "reason": summary.reason,
@@ -2068,6 +2164,33 @@ private func pruneSummaryDictionary(_ summary: FastGSRecordedTrainingPruneSummar
         "scoringSampleCount": summary.scoringSampleCount,
         "opacityCapped": summary.opacityCapped,
         "opacityReset": summary.opacityReset,
+        "densificationDenomNonzeroCount": summary.densificationDenomNonzeroCount,
+        "maxRadii2DMax": summary.maxRadii2DMax,
+        "avgGradMean": summary.avgGradMean,
+        "avgGradMax": summary.avgGradMax,
+        "avgGradAbsMean": summary.avgGradAbsMean,
+        "avgGradAbsMax": summary.avgGradAbsMax,
+        "physicalScaleMin": summary.physicalScaleMin,
+        "physicalScaleMean": summary.physicalScaleMean,
+        "physicalScaleMax": summary.physicalScaleMax,
+        "opacityMin": summary.opacityMin,
+        "opacityMean": summary.opacityMean,
+        "opacityMax": summary.opacityMax,
+        "scaleThreshold": summary.scaleThreshold,
+        "cloneGradientPassCount": summary.cloneGradientPassCount,
+        "cloneScalePassCount": summary.cloneScalePassCount,
+        "cloneScorePassCount": summary.cloneScorePassCount,
+        "cloneCandidateCount": summary.cloneCandidateCount,
+        "splitGradientPassCount": summary.splitGradientPassCount,
+        "splitScalePassCount": summary.splitScalePassCount,
+        "splitScorePassCount": summary.splitScorePassCount,
+        "splitCandidateCount": summary.splitCandidateCount,
+        "importanceScoreMin": summary.importanceScoreMin,
+        "importanceScoreMean": summary.importanceScoreMean,
+        "importanceScoreMax": summary.importanceScoreMax,
+        "pruningScoreMin": summary.pruningScoreMin,
+        "pruningScoreMean": summary.pruningScoreMean,
+        "pruningScoreMax": summary.pruningScoreMax,
     ]
 }
 

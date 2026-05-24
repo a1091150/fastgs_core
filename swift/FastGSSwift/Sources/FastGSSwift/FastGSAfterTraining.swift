@@ -135,11 +135,14 @@ public enum FastGSAfterTraining {
         maxScreenSize: Float? = nil,
         maxWorldScaleFactor: Float? = nil,
         sceneExtent: Float? = nil,
+        pruningScores: [Float]? = nil,
+        pruneBudgetFactor: Float = 1,
         minGaussians: Int = 1,
         stream: StreamOrDevice = .default
     ) -> FastGSPruneOnlyResult {
         precondition(minOpacity >= 0 && minOpacity <= 1, "minOpacity must be in [0, 1]")
         precondition(minGaussians >= 0, "minGaussians must be non-negative")
+        precondition(pruneBudgetFactor >= 0, "pruneBudgetFactor must be non-negative")
         if let maxScreenSize {
             precondition(maxScreenSize >= 0, "maxScreenSize must be non-negative")
         }
@@ -165,6 +168,9 @@ public enum FastGSAfterTraining {
 
         let opacities = parameters.opacityProbabilities(stream: stream).asArray(Float.self)
         precondition(opacities.count == count, "opacity count mismatch")
+        if let pruningScores {
+            precondition(pruningScores.count == count, "pruning score count mismatch")
+        }
 
         let opacityMask = opacities.map { $0 < minOpacity }
         let screenMask = makeScreenSizeMask(
@@ -185,6 +191,7 @@ public enum FastGSAfterTraining {
         var pruneMask = (0..<count).map { index in
             opacityMask[index] || screenMask[index] || worldMask[index]
         }
+        applyPruneBudget(mask: &pruneMask, rankScores: pruningScores, budgetFactor: pruneBudgetFactor)
         enforceMinimumGaussians(mask: &pruneMask, opacities: opacities, minGaussians: min(minGaussians, count))
 
         let prunedParameters = parameters.prune(mask: pruneMask, stream: stream)
@@ -610,6 +617,38 @@ private func rotate(_ vector: [Float], byWXYZQuaternion quaternion: [Float]) -> 
 
 private func enforceMinimumGaussians(mask: inout [Bool], opacities: [Float], minGaussians: Int) {
     enforceMinimumGaussians(mask: &mask, rankScores: opacities, minGaussians: minGaussians)
+}
+
+private func applyPruneBudget(mask: inout [Bool], rankScores: [Float]?, budgetFactor: Float) {
+    let candidateIndices = mask.indices.filter { mask[$0] }
+    guard !candidateIndices.isEmpty else {
+        return
+    }
+    let budget = min(candidateIndices.count, Int(Float(candidateIndices.count) * budgetFactor))
+    guard budget < candidateIndices.count else {
+        return
+    }
+    mask = [Bool](repeating: false, count: mask.count)
+    guard budget > 0 else {
+        return
+    }
+
+    if let rankScores {
+        precondition(rankScores.count == mask.count, "prune budget rank score count mismatch")
+        let selected = candidateIndices.sorted { lhs, rhs in
+            if rankScores[lhs] == rankScores[rhs] {
+                return lhs < rhs
+            }
+            return rankScores[lhs] > rankScores[rhs]
+        }.prefix(budget)
+        for index in selected {
+            mask[index] = true
+        }
+    } else {
+        for index in candidateIndices.prefix(budget) {
+            mask[index] = true
+        }
+    }
 }
 
 private func enforceMinimumGaussians(mask: inout [Bool], rankScores: [Float], minGaussians: Int) {
