@@ -48,6 +48,8 @@ private final class RenderPreviewModel: ObservableObject {
     private var scannerCache: FastGSScannerDatasetCache?
     private let trainingPreviewRequests = FastGSMacTrainingPreviewRequests()
     private var trainedParameters: FastGSTrainableParameters?
+    private var trainedOptimizerState: FastGSAdamState?
+    private var trainedDensificationState: FastGSDensificationState?
     let device = MTLCreateSystemDefaultDevice()
 
     init() {
@@ -118,20 +120,31 @@ private final class RenderPreviewModel: ObservableObject {
                 let trainingPreviewRequests = trainingPreviewRequests
                 let shouldSaveTrainingArtifacts = shouldSaveTrainingArtifacts
                 let inMemoryInitialParameters = mode.usesCurrentParameters ? trainedParameters : nil
+                let inMemoryInitialOptimizerState = mode.usesCurrentParameters ? trainedOptimizerState : nil
+                let inMemoryInitialDensificationState = mode.usesCurrentParameters ? trainedDensificationState : nil
 
                 let trained = try await Task.detached(priority: .userInitiated) {
                     try FastGSMacMLXRuntime.run {
                         let initialParameters: FastGSTrainableParameters?
+                        let initialOptimizerState: FastGSAdamState?
+                        let initialDensificationState: FastGSDensificationState?
                         if mode.usesCurrentParameters {
                             if let inMemoryInitialParameters {
                                 initialParameters = inMemoryInitialParameters
+                                initialOptimizerState = inMemoryInitialOptimizerState
+                                initialDensificationState = inMemoryInitialDensificationState
                             } else if let checkpointDirectory = latestCheckpointDirectory(in: outputDirectory) {
-                                initialParameters = try FastGSCheckpoint.loadParameters(directory: checkpointDirectory)
+                                let checkpoint = try FastGSCheckpoint.loadTrainingState(directory: checkpointDirectory)
+                                initialParameters = checkpoint.parameters
+                                initialOptimizerState = checkpoint.optimizerState
+                                initialDensificationState = checkpoint.densificationState
                             } else {
                                 throw RenderPreviewError.missingCheckpoint(outputDirectory)
                             }
                         } else {
                             initialParameters = nil
+                            initialOptimizerState = nil
+                            initialDensificationState = nil
                         }
                         if let runDirectory {
                             try FileManager.default.createDirectory(at: runDirectory, withIntermediateDirectories: true)
@@ -214,6 +227,8 @@ private final class RenderPreviewModel: ObservableObject {
                             scenes: scenes,
                             config: config,
                             initialParameters: initialParameters,
+                            initialOptimizerState: initialOptimizerState,
+                            initialDensificationState: initialDensificationState,
                             progress: progress,
                             pruneSummary: pruneSummary,
                             previewScheduler: previewScheduler,
@@ -252,9 +267,17 @@ private final class RenderPreviewModel: ObservableObject {
                                     completedStep: result.step,
                                     frameCount: trainingFrameCount,
                                     pointCount: result.pointCount,
+                                    gaussianCount: result.parameters?.gaussianCount ?? result.pointCount,
+                                    afterTrainingConfig: config.densification,
                                     note: mode.metadataName
                                 )
-                                try FastGSCheckpoint.save(parameters: parameters, info: info, directory: checkpointDirectory)
+                                try FastGSCheckpoint.save(
+                                    parameters: parameters,
+                                    info: info,
+                                    optimizerState: result.optimizerState,
+                                    densificationState: result.densificationState,
+                                    directory: checkpointDirectory
+                                )
                                 try writeTrainingRunMetadata(
                                     mode: mode,
                                     info: info,
@@ -271,6 +294,8 @@ private final class RenderPreviewModel: ObservableObject {
                             result.height,
                             result.pointCount,
                             result.parameters,
+                            result.optimizerState,
+                            result.densificationState,
                             runDirectory
                         )
                     }
@@ -283,7 +308,9 @@ private final class RenderPreviewModel: ObservableObject {
                 previewAspectRatio = Double(trained.3) / Double(trained.4)
                 previewMode = .recordedSideBySide
                 trainedParameters = trained.6
-                if let runDirectory = trained.7 {
+                trainedOptimizerState = trained.7
+                trainedDensificationState = trained.8
+                if let runDirectory = trained.9 {
                     status = "\(mode.completedVerb) on \(trainingFrameCount) frames, wrote artifacts to \(runDirectory.path)"
                 } else {
                     status = "\(mode.completedVerb) on \(trainingFrameCount) frames"
@@ -371,6 +398,8 @@ private final class RenderPreviewModel: ObservableObject {
         trainingSteps = max(1, trainingSteps)
         refreshTrainingConfig()
         trainedParameters = nil
+        trainedOptimizerState = nil
+        trainedDensificationState = nil
         totalTrainingSteps = trainingConfig.totalSteps
         renderSize = "\(trainingWidth) x \(trainingHeight)"
         if isDatasetLoaded {
@@ -388,6 +417,8 @@ private final class RenderPreviewModel: ObservableObject {
 
         resetLoadedDataset(clearStatus: false)
         trainedParameters = nil
+        trainedOptimizerState = nil
+        trainedDensificationState = nil
         isLoadingDataset = true
         datasetLabel = datasetDirectory.lastPathComponent
         status = "Loading scanner frames and initial render..."
@@ -474,6 +505,8 @@ private final class RenderPreviewModel: ObservableObject {
         fallbackImage = nil
         scannerCache = nil
         trainedParameters = nil
+        trainedOptimizerState = nil
+        trainedDensificationState = nil
         previewMode = .single
         if clearStatus {
             status = "Press Load to read scanner frames"
@@ -671,6 +704,8 @@ private func writeTrainingRunMetadata(
         "outputDirectory": info.outputDirectory ?? runDirectory.path,
         "checkpointDirectory": checkpointDirectory.path,
         "parameterFile": FastGSCheckpoint.parameterURL(in: checkpointDirectory).path,
+        "optimizerFile": info.optimizerFile.map { checkpointDirectory.appendingPathComponent($0).path } ?? "",
+        "densificationStateFile": info.densificationStateFile.map { checkpointDirectory.appendingPathComponent($0).path } ?? "",
     ]
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

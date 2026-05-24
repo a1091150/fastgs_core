@@ -132,15 +132,42 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             trainingSteps: 200,
             completedStep: 200,
             frameCount: 42,
-            pointCount: 2
+            pointCount: 2,
+            gaussianCount: 2,
+            afterTrainingConfig: FastGSDensificationConfig(
+                densifyFromStep: 1,
+                densifyUntilStep: 10,
+                densificationInterval: 2
+            )
         )
+        let optimizerState = FastGSAdamState(step: 200, parameters: parameters)
+        var densificationState = FastGSDensificationState(count: 2, sceneExtent: 4)
+        densificationState.maxRadii2D = [1, 2]
+        densificationState.xyzGradAccum = [3, 4]
+        densificationState.xyzGradAccumAbs = [5, 6]
+        densificationState.denom = [7, 8]
 
-        try FastGSCheckpoint.save(parameters: parameters, info: info, directory: checkpointDirectory)
+        try FastGSCheckpoint.save(
+            parameters: parameters,
+            info: info,
+            optimizerState: optimizerState,
+            densificationState: densificationState,
+            directory: checkpointDirectory
+        )
         let loaded = try FastGSCheckpoint.load(directory: checkpointDirectory)
+        let loadedState = try FastGSCheckpoint.loadTrainingState(directory: checkpointDirectory)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: FastGSCheckpoint.parameterURL(in: checkpointDirectory).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: FastGSCheckpoint.optimizerURL(in: checkpointDirectory).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: FastGSCheckpoint.densificationStateURL(in: checkpointDirectory).path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: FastGSCheckpoint.infoURL(in: checkpointDirectory).path))
-        XCTAssertEqual(loaded.info, info)
+        XCTAssertEqual(loaded.info.formatVersion, 2)
+        XCTAssertEqual(loaded.info.datasetDirectory, info.datasetDirectory)
+        XCTAssertEqual(loaded.info.gaussianCount, 2)
+        XCTAssertEqual(loaded.info.optimizerStep, 200)
+        XCTAssertEqual(loaded.info.optimizerFile, FastGSCheckpoint.optimizerFileName)
+        XCTAssertEqual(loaded.info.densificationStateFile, FastGSCheckpoint.densificationStateFileName)
+        XCTAssertEqual(loaded.info.afterTrainingConfig, info.afterTrainingConfig)
         XCTAssertEqual(loaded.parameters.means3D.shape, parameters.means3D.shape)
         XCTAssertEqual(loaded.parameters.dc.shape, parameters.dc.shape)
         XCTAssertEqual(loaded.parameters.sh.shape, parameters.sh.shape)
@@ -158,6 +185,11 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             loaded.parameters.cov3DPrecomputed?.asArray(Float.self) ?? [],
             parameters.cov3DPrecomputed?.asArray(Float.self) ?? []
         )
+        XCTAssertEqual(loadedState.optimizerState?.step, 200)
+        XCTAssertEqual(loadedState.optimizerState?.means3D.firstMoment.shape, parameters.means3D.shape)
+        XCTAssertEqual(loadedState.densificationState?.sceneExtent, 4)
+        XCTAssertEqual(loadedState.densificationState?.maxRadii2D, [1, 2])
+        XCTAssertEqual(loadedState.densificationState?.xyzGradAccum, [3, 4])
     }
 
     func testCloneAfterTrainingAppendsRowsUnderXcode() {

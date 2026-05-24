@@ -568,14 +568,25 @@ or recomputing them from unrelated values.
       `.safetensors`; it does not provide Python-style `.npz` save/load.
     - FastGS checkpoints now save trainable Gaussian arrays to
       `parameters.safetensors` with stable names: `means3D`, `dc`, `sh`,
-      `opacities`, `scales`, `rotations`, and optional `cov3DPrecomputed`.
+      `opacityLogits`, `scales`, `rotations`, and optional
+      `cov3DPrecomputed`.
     - Training/run metadata is saved separately as `training_info.json`,
       including dataset directory, output directory, image size, `maxFrames`,
       training step count, completed step, frame count, and point count.
     - Current Mac App behavior: after training completes, write the checkpoint
-      under `<output directory>/checkpoint/`.
-  - [ ] checkpoint optimizer state
-  - [ ] support densify/prune state migration when Gaussian count changes
+      under `<output directory>/<timestamp>/checkpoint/`.
+  - [x] checkpoint optimizer state
+    - Save Adam moments to `optimizer.safetensors` with stable
+      `<field>.firstMoment` / `<field>.secondMoment` array names.
+    - Record optimizer file presence and optimizer step in `training_info.json`,
+      and restore it for Continue Training when available.
+  - [x] support densify/prune state migration when Gaussian count changes
+    - Save `gaussianCount`, after-training config, and optional
+      `densification_state.json` in checkpoint metadata.
+    - Validate checkpoint Gaussian count and optimizer/densification topology
+      on load.
+    - Continue Training can now resume parameters, Adam state, and
+      densification state from the latest checkpoint.
   - [x] add recorded-data loss and one-step training smoke loop after backward parity
     exists
     - `make test-swift-recorded-training-smoke` regenerates the small recorded
@@ -800,10 +811,10 @@ or recomputing them from unrelated values.
         `scoreHits` in training summaries / Mac App status.
       - Follow-up: compare score distributions and final-prune counts against
         the Python/PyTorch reference on the fixed scanner dataset.
-    - [ ] Extend checkpoint format for topology-changing training.
-      - Save Gaussian count, after-train config, optimizer state, and current
+    - [x] Extend checkpoint format for topology-changing training.
+      - [x] Save Gaussian count, after-train config, optimizer state, and current
         densification state when available.
-      - Ensure Continue Training can resume from saved parameters even when
+      - [x] Ensure Continue Training can resume from saved parameters even when
         Gaussian count changed.
   - [ ] Defer further FPS/performance research until the multi-view and
     after-train task sequence is stable.

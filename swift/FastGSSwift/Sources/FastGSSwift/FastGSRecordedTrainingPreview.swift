@@ -106,6 +106,8 @@ public struct FastGSRecordedTrainingPreviewResult {
     public var height: Int
     public var pointCount: Int
     public var parameters: FastGSTrainableParameters?
+    public var optimizerState: FastGSAdamState?
+    public var densificationState: FastGSDensificationState?
     public var frameIndex: Int?
 
     public init(
@@ -116,6 +118,8 @@ public struct FastGSRecordedTrainingPreviewResult {
         height: Int,
         pointCount: Int,
         parameters: FastGSTrainableParameters? = nil,
+        optimizerState: FastGSAdamState? = nil,
+        densificationState: FastGSDensificationState? = nil,
         frameIndex: Int? = nil
     ) {
         self.step = step
@@ -125,6 +129,8 @@ public struct FastGSRecordedTrainingPreviewResult {
         self.height = height
         self.pointCount = pointCount
         self.parameters = parameters
+        self.optimizerState = optimizerState
+        self.densificationState = densificationState
         self.frameIndex = frameIndex
     }
 }
@@ -262,6 +268,8 @@ public enum FastGSRecordedTrainingPreview {
         scenes: [FastGSRecordedForwardScene],
         config: FastGSRecordedTrainingRunConfig = FastGSRecordedTrainingRunConfig(),
         initialParameters: FastGSTrainableParameters? = nil,
+        initialOptimizerState: FastGSAdamState? = nil,
+        initialDensificationState: FastGSDensificationState? = nil,
         progress: ((Int) -> Void)? = nil,
         pruneSummary: ((FastGSRecordedTrainingPruneSummary) -> Void)? = nil,
         previewScheduler: FastGSRenderPreviewScheduler? = nil,
@@ -274,10 +282,15 @@ public enum FastGSRecordedTrainingPreview {
         let targets = try scenes.map { try $0.targetOutColor() }
         var parameters = try initialParameters ?? scenes[0].initialTrainableParameters()
         var optimizer = FastGSAdamOptimizer(learningRates: config.learningRates)
-        var densificationState = FastGSDensificationState(
+        if let initialOptimizerState {
+            initialOptimizerState.validateTopology(parameters: parameters)
+            optimizer.replaceState(initialOptimizerState)
+        }
+        var densificationState = initialDensificationState ?? FastGSDensificationState(
             count: parameters.gaussianCount,
             sceneExtent: estimatedSceneExtent(parameters: parameters)
         )
+        densificationState.validate(count: parameters.gaussianCount)
         var lastScene = scenes[0]
         var lastTarget = targets[0]
 
@@ -352,6 +365,9 @@ public enum FastGSRecordedTrainingPreview {
                         width: scene.manifest.width,
                         height: scene.manifest.height,
                         pointCount: parameters.gaussianCount,
+                        parameters: parameters,
+                        optimizerState: optimizer.state,
+                        densificationState: densificationState,
                         frameIndex: scene.scannerFrameIndex
                     )
                 )
@@ -375,6 +391,8 @@ public enum FastGSRecordedTrainingPreview {
             height: lastScene.manifest.height,
             pointCount: parameters.gaussianCount,
             parameters: parameters,
+            optimizerState: optimizer.state,
+            densificationState: densificationState,
             frameIndex: lastScene.scannerFrameIndex
         )
     }
