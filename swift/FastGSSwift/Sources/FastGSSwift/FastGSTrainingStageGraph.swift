@@ -46,7 +46,15 @@ public enum FastGSTrainingStageGraph {
                 rotations: arrays[5]
             )
             let outColor = render(context: context, parameters: parameters, stream: stream)
-            return [mean(square(outColor - target), stream: stream)]
+            return [
+                FastGSLoss.fastGSCUDALoss(
+                    predictionCHW: outColor,
+                    targetCHW: target,
+                    width: scene.manifest.width,
+                    height: scene.manifest.height,
+                    stream: stream
+                )
+            ]
         }
         let valueAndGradient = MLX.valueAndGrad(
             lossFunction,
@@ -80,7 +88,15 @@ public enum FastGSTrainingStageGraph {
                 statsCapture: statsCapture,
                 stream: stream
             )
-            return [mean(square(outColor - target), stream: stream)]
+            return [
+                FastGSLoss.fastGSCUDALoss(
+                    predictionCHW: outColor,
+                    targetCHW: target,
+                    width: scene.manifest.width,
+                    height: scene.manifest.height,
+                    stream: stream
+                )
+            ]
         }
         let valueAndGradient = MLX.valueAndGrad(
             lossFunction,
