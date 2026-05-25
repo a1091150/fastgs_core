@@ -87,14 +87,14 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             scannerNormalizationScale: 2
         )
 
-        assertClose(payload.positions, [-3, 0, 7])
+        assertClose(payload.positions, [-3, 0, -7])
         assertClose(payload.scales, [
             Foundation.log(Float(0.1)),
             Foundation.log(Float(0.2)),
             Foundation.log(Float(0.4)),
         ])
         let half = Float(Foundation.sqrt(0.5))
-        assertClose(payload.rotationsXYZW, [0, -half, half, 0])
+        assertClose(payload.rotationsXYZW, [0, half, -half, 0])
     }
 
     func testAdamOptimizerAppliesSyntheticGradientStepUnderXcode() {
@@ -2277,8 +2277,8 @@ private func writeSPZForXcodeDiagnostic(
         sh: payload.sh
     )
     XCTAssertTrue(cloud.checkSizes())
-    try saveSpz(cloud, to: url, options: PackOptions(from: .rdf))
-    let loaded = try loadSpz(from: url, options: UnpackOptions(to: .rdf))
+    try saveSpz(cloud, to: url)
+    let loaded = try loadSpz(from: url)
     return spzExportSummary(payload: payload, savedCloud: loaded)
 }
 
@@ -2297,8 +2297,8 @@ private func spzExportSummary(payload: FastGSSPZExportPayload, savedCloud: Gauss
         "savedNumPoints": Int(savedCloud.numPoints),
         "savedSHDegree": Int(savedCloud.shDegree),
         "savedCheckSizes": savedCloud.checkSizes(),
-        "savedPositionsRDF": floatSummary(savedCloud.positions),
-        "savedRotationNormsRDF": floatSummary(rotationNormsXYZW(savedCloud.rotations)),
+        "savedPositionsRUB": floatSummary(savedCloud.positions),
+        "savedRotationNormsRUB": floatSummary(rotationNormsXYZW(savedCloud.rotations)),
         "savedScalesLog": floatSummary(savedCloud.scales),
     ]
 }

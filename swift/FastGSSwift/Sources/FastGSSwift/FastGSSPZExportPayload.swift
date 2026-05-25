@@ -70,7 +70,7 @@ public extension FastGSTrainableParameters {
         return FastGSSPZExportPayload(
             numPoints: count,
             shDegree: sh.degree,
-            positions: FastGSSPZExportPayload.positionsForScannerPLYRDFViewerRotate180(
+            positions: FastGSSPZExportPayload.positionsForScannerSPZRUBViewerRotate180(
                 fromTrainingPositions: means3D.asArray(Float.self),
                 translation: translation,
                 scale: scale
@@ -79,7 +79,7 @@ public extension FastGSTrainableParameters {
                 fromTrainingLogScales: scales.asArray(Float.self),
                 normalizationScale: scale
             ),
-            rotationsXYZW: FastGSSPZExportPayload.rotationsXYZWForScannerPLYRDFViewerRotate180(
+            rotationsXYZW: FastGSSPZExportPayload.rotationsXYZWForScannerSPZRUBViewerRotate180(
                 fromTrainingWXYZ: rotations.asArray(Float.self)
             ),
             alphas: opacityLogits.asArray(Float.self),
@@ -156,7 +156,7 @@ private extension FastGSSPZExportPayload {
         return result
     }
 
-    static func positionsForScannerPLYRDFViewerRotate180(
+    static func positionsForScannerSPZRUBViewerRotate180(
         fromTrainingPositions positions: [Float],
         translation: [Float],
         scale: Float
@@ -174,8 +174,8 @@ private extension FastGSSPZExportPayload {
             let rawZ = axisY
 
             result.append(-rawX)
-            result.append(-rawY)
-            result.append(rawZ)
+            result.append(rawY)
+            result.append(-rawZ)
         }
         return result
     }
@@ -207,14 +207,16 @@ private extension FastGSSPZExportPayload {
         return result
     }
 
-    static func rotationsXYZWForScannerPLYRDFViewerRotate180(fromTrainingWXYZ rotations: [Float]) -> [Float] {
+    static func rotationsXYZWForScannerSPZRUBViewerRotate180(fromTrainingWXYZ rotations: [Float]) -> [Float] {
         precondition(rotations.count % 4 == 0, "FastGS rotations must be [N, 4] WXYZ quaternions.")
         var result = [Float]()
         result.reserveCapacity(rotations.count)
         let half = Float(Foundation.sqrt(0.5))
-        let rawFromTraining = (w: half, x: -half, y: Float(0), z: Float(0))
-        let viewerFromRaw = (w: Float(0), x: Float(0), y: Float(0), z: Float(1))
-        let conversion = multiplyWXYZ(viewerFromRaw, rawFromTraining)
+        // Scanner training coordinates are raw RDF with y/z permuted by [x, z, -y].
+        // SPZ stores RUB internally, so this conversion directly maps training
+        // coordinates to the same RUB basis used by positions above. The resulting
+        // 180 degree rotation has axis (0, 1, -1) / sqrt(2).
+        let spzRUBFromTraining = (w: Float(0), x: Float(0), y: half, z: -half)
         for offset in stride(from: 0, to: rotations.count, by: 4) {
             let training = (
                 w: rotations[offset + 0],
@@ -222,7 +224,7 @@ private extension FastGSSPZExportPayload {
                 y: rotations[offset + 2],
                 z: rotations[offset + 3]
             )
-            let quaternion = normalizedWXYZ(multiplyWXYZ(conversion, training))
+            let quaternion = normalizedWXYZ(multiplyWXYZ(spzRUBFromTraining, training))
             result.append(quaternion.x)
             result.append(quaternion.y)
             result.append(quaternion.z)

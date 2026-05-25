@@ -757,7 +757,7 @@ private func writeSPZ(
     guard cloud.checkSizes() else {
         throw RenderPreviewError.invalidSPZCloud
     }
-    try saveSpz(cloud, to: url, options: PackOptions(from: .rdf))
+    try saveSpz(cloud, to: url)
 }
 
 private func writeSideBySidePNG(
