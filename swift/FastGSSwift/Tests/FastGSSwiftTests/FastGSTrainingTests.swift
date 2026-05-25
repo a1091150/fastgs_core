@@ -10,6 +10,7 @@ final class FastGSTrainingTests: XCTestCase {
             throw XCTSkip("MLX array payload tests require an Xcode/metallib-ready environment.")
         }
 
+        let half = Float(Foundation.sqrt(0.5))
         let parameters = FastGSTrainableParameters(
             means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
             dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 3]),
@@ -18,7 +19,7 @@ final class FastGSTrainingTests: XCTestCase {
             scales: MLXArray([Float](repeating: Foundation.log(0.01), count: 6), [2, 3]),
             rotations: MLXArray([
                 Float(1), 0, 0, 0,
-                1, 0, 0, 0,
+                half, half, 0, 0,
             ], [2, 4])
         )
 
@@ -26,13 +27,13 @@ final class FastGSTrainingTests: XCTestCase {
 
         XCTAssertEqual(payload.numPoints, 2)
         XCTAssertEqual(payload.shDegree, 3)
-        XCTAssertEqual(payload.positions, [1, -3, 2, 4, -6, 5])
+        XCTAssertEqual(payload.positions, [-1, -2, 3, -4, -5, 6])
         assertTrainingClose(payload.scales, [Float](repeating: Foundation.log(0.01), count: 6))
-        XCTAssertEqual(payload.rotationsXYZW, [0, 0, 0, 1, 0, 0, 0, 1])
+        assertTrainingClose(payload.rotationsXYZW, [0, 0, 1, 0, 0, half, half, 0])
         XCTAssertEqual(payload.alphas, [-2, 3])
         XCTAssertEqual(payload.colors, [0.2, 0.4, 0.6, 0.8, 1.0, 1.2])
         XCTAssertEqual(payload.sh.count, 90)
-        XCTAssertEqual(Array(payload.sh.prefix(3)), [0.03, 0.04, 0.05])
+        XCTAssertEqual(Array(payload.sh.prefix(3)), [-0.03, -0.04, -0.05])
     }
 
     func testAdamOptimizerAppliesSyntheticGradientStep() throws {

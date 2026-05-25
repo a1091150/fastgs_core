@@ -280,7 +280,12 @@ private final class RenderPreviewModel: ObservableObject {
                                     directory: checkpointDirectory
                                 )
                                 let spzURL = runDirectory.appendingPathComponent("trained.spz", isDirectory: false)
-                                try writeSPZ(parameters: parameters, to: spzURL)
+                                try writeSPZ(
+                                    parameters: parameters,
+                                    normalizationTranslation: scannerCache.normalizationTranslation,
+                                    normalizationScale: scannerCache.normalizationScale,
+                                    to: spzURL
+                                )
                                 try writeTrainingRunMetadata(
                                     mode: mode,
                                     info: info,
@@ -724,12 +729,20 @@ private func writeTrainingRunMetadata(
     )
 }
 
-private func writeSPZ(parameters: FastGSTrainableParameters, to url: URL) throws {
+private func writeSPZ(
+    parameters: FastGSTrainableParameters,
+    normalizationTranslation: [Float],
+    normalizationScale: Float,
+    to url: URL
+) throws {
     try FileManager.default.createDirectory(
         at: url.deletingLastPathComponent(),
         withIntermediateDirectories: true
     )
-    let payload = try parameters.spzExportPayload()
+    let payload = try parameters.spzExportPayload(
+        scannerNormalizationTranslation: normalizationTranslation,
+        scannerNormalizationScale: normalizationScale
+    )
     let cloud = GaussianCloud(
         numPoints: Int32(payload.numPoints),
         shDegree: payload.shDegree,
@@ -744,7 +757,7 @@ private func writeSPZ(parameters: FastGSTrainableParameters, to url: URL) throws
     guard cloud.checkSizes() else {
         throw RenderPreviewError.invalidSPZCloud
     }
-    try saveSpz(cloud, to: url)
+    try saveSpz(cloud, to: url, options: PackOptions(from: .rdf))
 }
 
 private func writeSideBySidePNG(

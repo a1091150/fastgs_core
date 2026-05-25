@@ -13,6 +13,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
     private let preprocessBackwardReferenceURL = URL(fileURLWithPath: "/private/tmp/fastgs_preprocess_backward_ref.json")
 
     func testSPZExportPayloadUsesFastGSParameterConventionsUnderXcode() throws {
+        let half = Float(Foundation.sqrt(0.5))
         let parameters = FastGSTrainableParameters(
             means3D: MLXArray([Float(1), 2, 3, 4, 5, 6], [2, 3]),
             dc: MLXArray([Float(0.2), 0.4, 0.6, 0.8, 1.0, 1.2], [2, 3]),
@@ -21,7 +22,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             scales: MLXArray([Float](repeating: Foundation.log(0.01), count: 6), [2, 3]),
             rotations: MLXArray([
                 Float(1), 0, 0, 0,
-                1, 0, 0, 0,
+                half, half, 0, 0,
             ], [2, 4])
         )
 
@@ -29,13 +30,13 @@ final class FastGSSmokeXcodeTests: XCTestCase {
 
         XCTAssertEqual(payload.numPoints, 2)
         XCTAssertEqual(payload.shDegree, 3)
-        XCTAssertEqual(payload.positions, [1, -3, 2, 4, -6, 5])
+        XCTAssertEqual(payload.positions, [-1, -2, 3, -4, -5, 6])
         assertClose(payload.scales, [Float](repeating: Foundation.log(0.01), count: 6))
-        XCTAssertEqual(payload.rotationsXYZW, [0, 0, 0, 1, 0, 0, 0, 1])
+        assertClose(payload.rotationsXYZW, [0, 0, 1, 0, 0, half, half, 0])
         XCTAssertEqual(payload.alphas, [-2, 3])
         XCTAssertEqual(payload.colors, [0.2, 0.4, 0.6, 0.8, 1.0, 1.2])
         XCTAssertEqual(payload.sh.count, 90)
-        XCTAssertEqual(Array(payload.sh.prefix(3)), [0.03, 0.04, 0.05])
+        XCTAssertEqual(Array(payload.sh.prefix(3)), [-0.03, -0.04, -0.05])
     }
 
     func testSPZPackageRoundTripsExportPayloadUnderXcode() throws {
@@ -69,6 +70,31 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         XCTAssertEqual(loaded.numPoints, 1)
         XCTAssertEqual(loaded.shDegree, 0)
         XCTAssertTrue(loaded.checkSizes())
+    }
+
+    func testScannerSPZExportUnnormalizesTrainingCoordinatesUnderXcode() throws {
+        let parameters = FastGSTrainableParameters(
+            means3D: MLXArray([Float(4), 10, -6], [1, 3]),
+            dc: MLXArray([Float(0), 0, 0], [1, 3]),
+            sh: MLXArray.zeros([1, 1, 3], dtype: .float32),
+            opacityLogits: MLXArray([Float(0)], [1]),
+            scales: MLXArray([Foundation.log(Float(0.2)), Foundation.log(Float(0.4)), Foundation.log(Float(0.8))], [1, 3]),
+            rotations: MLXArray([Float(1), 0, 0, 0], [1, 4])
+        )
+
+        let payload = try parameters.spzExportPayload(
+            scannerNormalizationTranslation: [1, 2, 3],
+            scannerNormalizationScale: 2
+        )
+
+        assertClose(payload.positions, [-3, 0, 7])
+        assertClose(payload.scales, [
+            Foundation.log(Float(0.1)),
+            Foundation.log(Float(0.2)),
+            Foundation.log(Float(0.4)),
+        ])
+        let half = Float(Foundation.sqrt(0.5))
+        assertClose(payload.rotationsXYZW, [0, -half, half, 0])
     }
 
     func testAdamOptimizerAppliesSyntheticGradientStepUnderXcode() {
@@ -1773,12 +1799,20 @@ final class FastGSSmokeXcodeTests: XCTestCase {
                 directory: checkpointDirectory
             )
             let spzURL = outputDirectory.appendingPathComponent("trained.spz", isDirectory: false)
-            try writeSPZForXcodeDiagnostic(parameters: parameters, to: spzURL)
+            let spzSummary = try writeSPZForXcodeDiagnostic(
+                parameters: parameters,
+                normalizationTranslation: cache.normalizationTranslation,
+                normalizationScale: cache.normalizationScale,
+                to: spzURL
+            )
+            let spzSummaryURL = outputDirectory.appendingPathComponent("spz_summary.json")
+            try writeJSONObject(spzSummary, to: spzSummaryURL)
             artifactRows.append([
                 "checkpointDirectory": checkpointDirectory.path,
                 "parameterFile": FastGSCheckpoint.parameterURL(in: checkpointDirectory).path,
                 "spzFile": spzURL.path,
                 "spzBytes": (try? FileManager.default.attributesOfItem(atPath: spzURL.path)[.size] as? NSNumber)?.intValue ?? -1,
+                "spzSummaryFile": spzSummaryURL.path,
             ])
         }
         try writeJSONObject([
@@ -2220,9 +2254,17 @@ private func writeJSONObject(_ object: Any, to url: URL) throws {
     try data.write(to: url, options: .atomic)
 }
 
-private func writeSPZForXcodeDiagnostic(parameters: FastGSTrainableParameters, to url: URL) throws {
+private func writeSPZForXcodeDiagnostic(
+    parameters: FastGSTrainableParameters,
+    normalizationTranslation: [Float],
+    normalizationScale: Float,
+    to url: URL
+) throws -> [String: Any] {
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let payload = try parameters.spzExportPayload()
+    let payload = try parameters.spzExportPayload(
+        scannerNormalizationTranslation: normalizationTranslation,
+        scannerNormalizationScale: normalizationScale
+    )
     let cloud = GaussianCloud(
         numPoints: Int32(payload.numPoints),
         shDegree: payload.shDegree,
@@ -2235,7 +2277,88 @@ private func writeSPZForXcodeDiagnostic(parameters: FastGSTrainableParameters, t
         sh: payload.sh
     )
     XCTAssertTrue(cloud.checkSizes())
-    try saveSpz(cloud, to: url)
+    try saveSpz(cloud, to: url, options: PackOptions(from: .rdf))
+    let loaded = try loadSpz(from: url, options: UnpackOptions(to: .rdf))
+    return spzExportSummary(payload: payload, savedCloud: loaded)
+}
+
+private func spzExportSummary(payload: FastGSSPZExportPayload, savedCloud: GaussianCloud) -> [String: Any] {
+    [
+        "numPoints": payload.numPoints,
+        "shDegree": payload.shDegree,
+        "positions": floatSummary(payload.positions),
+        "scalesLog": floatSummary(payload.scales),
+        "scalesExp": floatSummary(payload.scales.map { Foundation.exp(Double($0)) }),
+        "rotationNorms": floatSummary(rotationNormsXYZW(payload.rotationsXYZW)),
+        "alphasLogit": floatSummary(payload.alphas),
+        "colors": floatSummary(payload.colors),
+        "sh": floatSummary(payload.sh),
+        "shExpectedCount": payload.numPoints * shCoefficientsWithoutDCForSummary(payload.shDegree) * 3,
+        "savedNumPoints": Int(savedCloud.numPoints),
+        "savedSHDegree": Int(savedCloud.shDegree),
+        "savedCheckSizes": savedCloud.checkSizes(),
+        "savedPositionsRDF": floatSummary(savedCloud.positions),
+        "savedRotationNormsRDF": floatSummary(rotationNormsXYZW(savedCloud.rotations)),
+        "savedScalesLog": floatSummary(savedCloud.scales),
+    ]
+}
+
+private func shCoefficientsWithoutDCForSummary(_ degree: Int32) -> Int {
+    switch degree {
+    case 0:
+        return 0
+    case 1:
+        return 3
+    case 2:
+        return 8
+    default:
+        return 15
+    }
+}
+
+private func rotationNormsXYZW(_ values: [Float]) -> [Double] {
+    var result = [Double]()
+    result.reserveCapacity(values.count / 4)
+    for offset in stride(from: 0, to: values.count, by: 4) {
+        let x = Double(values[offset + 0])
+        let y = Double(values[offset + 1])
+        let z = Double(values[offset + 2])
+        let w = Double(values[offset + 3])
+        result.append((x * x + y * y + z * z + w * w).squareRoot())
+    }
+    return result
+}
+
+private func floatSummary(_ values: [Float]) -> [String: Any] {
+    floatSummary(values.map(Double.init))
+}
+
+private func floatSummary(_ values: [Double]) -> [String: Any] {
+    guard !values.isEmpty else {
+        return [
+            "count": 0,
+            "finiteCount": 0,
+        ]
+    }
+    let finite = values.filter(\.isFinite)
+    guard !finite.isEmpty else {
+        return [
+            "count": values.count,
+            "finiteCount": 0,
+        ]
+    }
+    let minValue = finite.min() ?? 0
+    let maxValue = finite.max() ?? 0
+    let mean = finite.reduce(0, +) / Double(finite.count)
+    let absMax = finite.map { abs($0) }.max() ?? 0
+    return [
+        "count": values.count,
+        "finiteCount": finite.count,
+        "min": minValue,
+        "max": maxValue,
+        "mean": mean,
+        "absMax": absMax,
+    ]
 }
 
 private func readTrainingDiagnosticConfig(_ url: URL) -> [String: Any] {

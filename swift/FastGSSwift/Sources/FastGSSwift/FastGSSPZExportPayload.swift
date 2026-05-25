@@ -44,12 +44,51 @@ public extension FastGSTrainableParameters {
         return FastGSSPZExportPayload(
             numPoints: count,
             shDegree: sh.degree,
-            positions: FastGSSPZExportPayload.positionsForScaniversePreview(from: means3D.asArray(Float.self)),
+            positions: FastGSSPZExportPayload.positionsForPLYRDFViewerRotate180(from: means3D.asArray(Float.self)),
             scales: scales.asArray(Float.self),
-            rotationsXYZW: FastGSSPZExportPayload.rotationsXYZWForScaniversePreview(fromWXYZ: rotations.asArray(Float.self)),
+            rotationsXYZW: FastGSSPZExportPayload.rotationsXYZWForPLYRDFViewerRotate180(fromWXYZ: rotations.asArray(Float.self)),
             alphas: opacityLogits.asArray(Float.self),
             colors: dc.asArray(Float.self),
-            sh: sh.values
+            sh: FastGSSPZExportPayload.shForPLYRDFViewerRotate180(
+                sh.values,
+                gaussianCount: count,
+                shDegree: sh.degree
+            )
+        )
+    }
+
+    func spzExportPayload(
+        scannerNormalizationTranslation translation: [Float],
+        scannerNormalizationScale scale: Float
+    ) throws -> FastGSSPZExportPayload {
+        validateTopology()
+        precondition(translation.count >= 3, "scanner normalization translation must contain xyz.")
+        precondition(scale != 0, "scanner normalization scale must be non-zero.")
+
+        let count = gaussianCount
+        let sh = try FastGSSPZExportPayload.shPayload(from: self.sh, gaussianCount: count)
+        return FastGSSPZExportPayload(
+            numPoints: count,
+            shDegree: sh.degree,
+            positions: FastGSSPZExportPayload.positionsForScannerPLYRDFViewerRotate180(
+                fromTrainingPositions: means3D.asArray(Float.self),
+                translation: translation,
+                scale: scale
+            ),
+            scales: FastGSSPZExportPayload.scalesForScannerPLYRDFViewer(
+                fromTrainingLogScales: scales.asArray(Float.self),
+                normalizationScale: scale
+            ),
+            rotationsXYZW: FastGSSPZExportPayload.rotationsXYZWForScannerPLYRDFViewerRotate180(
+                fromTrainingWXYZ: rotations.asArray(Float.self)
+            ),
+            alphas: opacityLogits.asArray(Float.self),
+            colors: dc.asArray(Float.self),
+            sh: FastGSSPZExportPayload.shForPLYRDFViewerRotate180(
+                sh.values,
+                gaussianCount: count,
+                shDegree: sh.degree
+            )
         )
     }
 }
@@ -105,37 +144,201 @@ private extension FastGSSPZExportPayload {
         return result
     }
 
-    static func positionsForScaniversePreview(from positions: [Float]) -> [Float] {
+    static func positionsForPLYRDFViewerRotate180(from positions: [Float]) -> [Float] {
         precondition(positions.count % 3 == 0, "FastGS positions must be [N, 3].")
         var result = [Float]()
         result.reserveCapacity(positions.count)
         for offset in stride(from: 0, to: positions.count, by: 3) {
-            result.append(positions[offset + 0])
-            result.append(-positions[offset + 2])
-            result.append(positions[offset + 1])
+            result.append(-positions[offset + 0])
+            result.append(-positions[offset + 1])
+            result.append(positions[offset + 2])
         }
         return result
     }
 
-    static func rotationsXYZWForScaniversePreview(fromWXYZ rotations: [Float]) -> [Float] {
+    static func positionsForScannerPLYRDFViewerRotate180(
+        fromTrainingPositions positions: [Float],
+        translation: [Float],
+        scale: Float
+    ) -> [Float] {
+        precondition(positions.count % 3 == 0, "FastGS positions must be [N, 3].")
+        var result = [Float]()
+        result.reserveCapacity(positions.count)
+        for offset in stride(from: 0, to: positions.count, by: 3) {
+            let axisX = positions[offset + 0] / scale + translation[0]
+            let axisY = positions[offset + 1] / scale + translation[1]
+            let axisZ = positions[offset + 2] / scale + translation[2]
+
+            let rawX = axisX
+            let rawY = -axisZ
+            let rawZ = axisY
+
+            result.append(-rawX)
+            result.append(-rawY)
+            result.append(rawZ)
+        }
+        return result
+    }
+
+    static func scalesForScannerPLYRDFViewer(
+        fromTrainingLogScales scales: [Float],
+        normalizationScale: Float
+    ) -> [Float] {
+        let logScale = logf(normalizationScale)
+        return scales.map { $0 - logScale }
+    }
+
+    static func rotationsXYZWForPLYRDFViewerRotate180(fromWXYZ rotations: [Float]) -> [Float] {
         precondition(rotations.count % 4 == 0, "FastGS rotations must be [N, 4] WXYZ quaternions.")
         var result = [Float]()
         result.reserveCapacity(rotations.count)
         for offset in stride(from: 0, to: rotations.count, by: 4) {
-            let matrix = rotationMatrixFromWXYZ(
+            let quaternion = quaternionWXYZForRotate180AroundZ(
                 w: rotations[offset + 0],
                 x: rotations[offset + 1],
                 y: rotations[offset + 2],
                 z: rotations[offset + 3]
             )
-            let transformed = scaniverseAxisTransform(matrix)
-            let quaternion = quaternionWXYZ(fromRotationMatrix: transformed)
             result.append(quaternion.x)
             result.append(quaternion.y)
             result.append(quaternion.z)
             result.append(quaternion.w)
         }
         return result
+    }
+
+    static func rotationsXYZWForScannerPLYRDFViewerRotate180(fromTrainingWXYZ rotations: [Float]) -> [Float] {
+        precondition(rotations.count % 4 == 0, "FastGS rotations must be [N, 4] WXYZ quaternions.")
+        var result = [Float]()
+        result.reserveCapacity(rotations.count)
+        let half = Float(Foundation.sqrt(0.5))
+        let rawFromTraining = (w: half, x: -half, y: Float(0), z: Float(0))
+        let viewerFromRaw = (w: Float(0), x: Float(0), y: Float(0), z: Float(1))
+        let conversion = multiplyWXYZ(viewerFromRaw, rawFromTraining)
+        for offset in stride(from: 0, to: rotations.count, by: 4) {
+            let training = (
+                w: rotations[offset + 0],
+                x: rotations[offset + 1],
+                y: rotations[offset + 2],
+                z: rotations[offset + 3]
+            )
+            let quaternion = normalizedWXYZ(multiplyWXYZ(conversion, training))
+            result.append(quaternion.x)
+            result.append(quaternion.y)
+            result.append(quaternion.z)
+            result.append(quaternion.w)
+        }
+        return result
+    }
+
+    static func shForPLYRDFViewerRotate180(_ values: [Float], gaussianCount: Int, shDegree: Int32) -> [Float] {
+        guard gaussianCount > 0, shDegree > 0 else {
+            return values
+        }
+        let signs = shAxisFlipSigns(flipX: -1, flipY: -1, flipZ: 1)
+        let coefficientsPerPoint = Int(shCoefficientsWithoutDC(for: shDegree))
+        guard coefficientsPerPoint > 0, values.count == gaussianCount * coefficientsPerPoint * 3 else {
+            return values
+        }
+        var result = values
+        for gaussian in 0..<gaussianCount {
+            let pointStart = gaussian * coefficientsPerPoint * 3
+            for coefficient in 0..<coefficientsPerPoint {
+                let sign = signs[coefficient]
+                let offset = pointStart + coefficient * 3
+                result[offset + 0] *= sign
+                result[offset + 1] *= sign
+                result[offset + 2] *= sign
+            }
+        }
+        return result
+    }
+
+    static func shCoefficientsWithoutDC(for degree: Int32) -> Int32 {
+        switch degree {
+        case 0:
+            return 0
+        case 1:
+            return 3
+        case 2:
+            return 8
+        default:
+            return 15
+        }
+    }
+
+    static func shAxisFlipSigns(flipX x: Float, flipY y: Float, flipZ z: Float) -> [Float] {
+        [
+            y,
+            z,
+            x,
+            x * y,
+            y * z,
+            1,
+            x * z,
+            1,
+            y,
+            x * y * z,
+            y,
+            z,
+            x,
+            z,
+            x,
+        ]
+    }
+
+    static func quaternionWXYZForRotate180AroundZ(
+        w: Float,
+        x: Float,
+        y: Float,
+        z: Float
+    ) -> (w: Float, x: Float, y: Float, z: Float) {
+        // Left-multiply by the 180 degree Z rotation quaternion (0, 0, 0, 1).
+        let quaternion = (
+            w: -z,
+            x: -y,
+            y: x,
+            z: w
+        )
+        let normSquared = quaternion.w * quaternion.w +
+            quaternion.x * quaternion.x +
+            quaternion.y * quaternion.y +
+            quaternion.z * quaternion.z
+        let norm = max(sqrtf(normSquared), 1.0e-8)
+        return (
+            w: quaternion.w / norm,
+            x: quaternion.x / norm,
+            y: quaternion.y / norm,
+            z: quaternion.z / norm
+        )
+    }
+
+    static func multiplyWXYZ(
+        _ lhs: (w: Float, x: Float, y: Float, z: Float),
+        _ rhs: (w: Float, x: Float, y: Float, z: Float)
+    ) -> (w: Float, x: Float, y: Float, z: Float) {
+        (
+            w: lhs.w * rhs.w - lhs.x * rhs.x - lhs.y * rhs.y - lhs.z * rhs.z,
+            x: lhs.w * rhs.x + lhs.x * rhs.w + lhs.y * rhs.z - lhs.z * rhs.y,
+            y: lhs.w * rhs.y - lhs.x * rhs.z + lhs.y * rhs.w + lhs.z * rhs.x,
+            z: lhs.w * rhs.z + lhs.x * rhs.y - lhs.y * rhs.x + lhs.z * rhs.w
+        )
+    }
+
+    static func normalizedWXYZ(
+        _ quaternion: (w: Float, x: Float, y: Float, z: Float)
+    ) -> (w: Float, x: Float, y: Float, z: Float) {
+        let normSquared = quaternion.w * quaternion.w +
+            quaternion.x * quaternion.x +
+            quaternion.y * quaternion.y +
+            quaternion.z * quaternion.z
+        let norm = max(sqrtf(normSquared), 1.0e-8)
+        return (
+            w: quaternion.w / norm,
+            x: quaternion.x / norm,
+            y: quaternion.y / norm,
+            z: quaternion.z / norm
+        )
     }
 
     static func rotationMatrixFromWXYZ(w: Float, x: Float, y: Float, z: Float) -> [Float] {
