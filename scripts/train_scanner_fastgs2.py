@@ -571,23 +571,26 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
     )
     means = np.array(model.means3d, dtype=np.float32)
     means_spz = np.empty_like(means)
-    # Only care about scaniverse app preview.
-    means_spz[:, 0] = means[:, 0]
+    # Export directly in SPZ's internal RUB/Three.js coordinate system. The
+    # scanner training basis is raw RDF with y/z permuted as [x, z, -y]; this
+    # mapping matches the Swift Mac App SPZ export path and avoids asking SPZ to
+    # apply an RDF conversion that cannot represent the y/z permutation.
+    means_spz[:, 0] = -means[:, 0]
     means_spz[:, 1] = -means[:, 2]
-    means_spz[:, 2] = means[:, 1]
+    means_spz[:, 2] = -means[:, 1]
 
     scales = np.array(model.log_scales, dtype=np.float32)
     quats = np.array(model.get_rotations, dtype=np.float32)
     rot_mats = quaternions_wxyz_to_rotation_matrices(quats)
-    axis3 = np.array(
+    spz_rub_from_training = np.array(
         [
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0],
             [0.0, -1.0, 0.0],
         ],
         dtype=np.float32,
     )
-    rot_mats_spz = axis3 @ rot_mats @ axis3.T
+    rot_mats_spz = spz_rub_from_training @ rot_mats
     quats_spz = rotation_matrices_to_quaternions_wxyz(rot_mats_spz)
     opacity_logits = np.array(model.opacity_logits, dtype=np.float32)
     features_dc = np.array(model.features_dc, dtype=np.float32)
@@ -595,7 +598,7 @@ def save_as_spz(filename: Path, model: ScannerTrainModel, sh_degree: int) -> boo
 
     cloud.positions = means_spz.flatten().astype(np.float32)
     cloud.scales = scales.flatten().astype(np.float32)
-    cloud.rotations = quats_spz.flatten().astype(np.float32)
+    cloud.rotations = quats_spz[:, [1, 2, 3, 0]].flatten().astype(np.float32)
     cloud.alphas = opacity_logits.flatten().astype(np.float32)
     cloud.colors = features_dc.flatten().astype(np.float32)
     cloud.sh_degree = int(sh_degree)
