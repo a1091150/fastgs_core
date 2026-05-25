@@ -1672,6 +1672,8 @@ final class FastGSSmokeXcodeTests: XCTestCase {
         let saveArtifacts = diagnosticConfig.bool("saveArtifacts")
             ?? (environment["FASTGS_MAC_APP_TRAINING_SAVE_ARTIFACTS"] == "1")
         let writePreviewImages = diagnosticConfig.bool("writePreviewImages") ?? true
+        let trainingPreset = diagnosticConfig.string("trainingPreset")
+            ?? environment["FASTGS_MAC_APP_TRAINING_PRESET"]
         try? FileManager.default.removeItem(at: outputDirectory)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
@@ -1687,12 +1689,22 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             )
             return FastGSRecordedForwardScene(scannerDataset: dataset, frameIndex: 0)
         }
-        let config = FastGSRecordedTrainingRunConfig(
-            totalSteps: steps,
-            previewInterval: diagnosticConfig.int("previewInterval")
-                ?? Int(environment["FASTGS_MAC_APP_TRAINING_PREVIEW_INTERVAL"] ?? "")
-                ?? 20
-        )
+        let previewInterval = diagnosticConfig.int("previewInterval")
+            ?? Int(environment["FASTGS_MAC_APP_TRAINING_PREVIEW_INTERVAL"] ?? "")
+            ?? 20
+        let config: FastGSRecordedTrainingRunConfig
+        switch trainingPreset {
+        case "scannerFastGS2Base":
+            config = FastGSRecordedTrainingRunConfig.scannerFastGS2Base(
+                totalSteps: steps,
+                previewInterval: previewInterval
+            )
+        default:
+            config = FastGSRecordedTrainingRunConfig(
+                totalSteps: steps,
+                previewInterval: previewInterval
+            )
+        }
         var previewRows = [[String: Any]]()
         var summaries = [FastGSRecordedTrainingPruneSummary]()
         var blackRows = [[String: Any]]()
@@ -1785,6 +1797,7 @@ final class FastGSSmokeXcodeTests: XCTestCase {
             "blackRows": blackRows.count,
             "pruneSummaries": summaries.count,
             "saveArtifacts": saveArtifacts,
+            "trainingPreset": trainingPreset ?? "default",
             "writePreviewImages": writePreviewImages,
         ], to: outputDirectory.appendingPathComponent("training_diagnostic_summary.json"))
         try writeJSONObject(artifactRows, to: outputDirectory.appendingPathComponent("artifacts.json"))

@@ -138,6 +138,7 @@ public enum FastGSAfterTraining {
         pruningScores: [Float]? = nil,
         pruneBudgetFactor: Float = 1,
         minGaussians: Int = 1,
+        pruneBudgetSeed: UInt64 = 42,
         stream: StreamOrDevice = .default
     ) -> FastGSPruneOnlyResult {
         precondition(minOpacity >= 0 && minOpacity <= 1, "minOpacity must be in [0, 1]")
@@ -191,7 +192,12 @@ public enum FastGSAfterTraining {
         var pruneMask = (0..<count).map { index in
             opacityMask[index] || screenMask[index] || worldMask[index]
         }
-        applyPruneBudget(mask: &pruneMask, rankScores: pruningScores, budgetFactor: pruneBudgetFactor)
+        applyPruneBudget(
+            mask: &pruneMask,
+            rankScores: pruningScores,
+            budgetFactor: pruneBudgetFactor,
+            seed: pruneBudgetSeed
+        )
         enforceMinimumGaussians(mask: &pruneMask, opacities: opacities, minGaussians: min(minGaussians, count))
 
         let prunedParameters = parameters.prune(mask: pruneMask, stream: stream)
@@ -622,7 +628,7 @@ private func enforceMinimumGaussians(mask: inout [Bool], opacities: [Float], min
     enforceMinimumGaussians(mask: &mask, rankScores: opacities, minGaussians: minGaussians)
 }
 
-private func applyPruneBudget(mask: inout [Bool], rankScores: [Float]?, budgetFactor: Float) {
+private func applyPruneBudget(mask: inout [Bool], rankScores: [Float]?, budgetFactor: Float, seed: UInt64) {
     let candidateIndices = mask.indices.filter { mask[$0] }
     guard !candidateIndices.isEmpty else {
         return
@@ -638,14 +644,24 @@ private func applyPruneBudget(mask: inout [Bool], rankScores: [Float]?, budgetFa
 
     if let rankScores {
         precondition(rankScores.count == mask.count, "prune budget rank score count mismatch")
-        let selected = candidateIndices.sorted { lhs, rhs in
-            if rankScores[lhs] == rankScores[rhs] {
-                return lhs < rhs
+        var generator = FastGSSeededRandom(seed: seed)
+        let selected = candidateIndices
+            .map { index -> (index: Int, key: Float) in
+                let score = min(max(rankScores[index], 0), 1)
+                let weight = 1 / (1.0e-6 + (1 - score))
+                let draw = generator.nextUnitFloat()
+                let key = Float(-Foundation.log(Double(draw)) / Double(weight))
+                return (index, key)
             }
-            return rankScores[lhs] > rankScores[rhs]
-        }.prefix(budget)
+            .sorted { lhs, rhs in
+                if lhs.key == rhs.key {
+                    return lhs.index < rhs.index
+                }
+                return lhs.key < rhs.key
+            }
+            .prefix(budget)
         for index in selected {
-            mask[index] = true
+            mask[index.index] = true
         }
     } else {
         for index in candidateIndices.prefix(budget) {

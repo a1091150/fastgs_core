@@ -116,6 +116,46 @@ public enum FastGSGaussianScoring {
             Int((Double(index) * Double(sceneCount) / Double(count)).rounded(.down))
         }
     }
+
+    public static func randomSceneIndices(sceneCount: Int, sampleCount: Int, seed: UInt64) -> [Int] {
+        precondition(sceneCount >= 0, "sceneCount must be non-negative")
+        precondition(sampleCount >= 0, "sampleCount must be non-negative")
+        guard sceneCount > 0 && sampleCount > 0 else { return [] }
+        let count = min(sceneCount, sampleCount)
+        var indices = Array(0..<sceneCount)
+        var generator = FastGSSeededRandom(seed: seed)
+        for index in 0..<count {
+            let selected = index + generator.nextInt(upperBound: sceneCount - index)
+            indices.swapAt(index, selected)
+        }
+        return Array(indices.prefix(count))
+    }
+}
+
+struct FastGSSeededRandom {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        self.state = seed == 0 ? 0x9E3779B97F4A7C15 : seed
+    }
+
+    mutating func nextUInt64() -> UInt64 {
+        state &+= 0x9E3779B97F4A7C15
+        var value = state
+        value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+        value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+        return value ^ (value >> 31)
+    }
+
+    mutating func nextUnitFloat() -> Float {
+        let bits = nextUInt64() >> 40
+        return max(Float(bits) / Float(1 << 24), Float.leastNonzeroMagnitude)
+    }
+
+    mutating func nextInt(upperBound: Int) -> Int {
+        precondition(upperBound > 0, "upperBound must be positive")
+        return Int(nextUInt64() % UInt64(upperBound))
+    }
 }
 
 private func metricCountForScene(

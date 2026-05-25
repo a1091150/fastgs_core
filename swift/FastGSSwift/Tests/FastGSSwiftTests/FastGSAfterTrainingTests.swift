@@ -135,7 +135,7 @@ final class FastGSAfterTrainingTests: XCTestCase {
         assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.8, 0.004])
     }
 
-    func testFinalPruneUsesScoresAndKeepsHighestScoredRows() throws {
+    func testFinalPruneUsesFastGSHighScoreMask() throws {
         guard ProcessInfo.processInfo.environment["FASTGS_RUN_METAL_TESTS"] == "1" else {
             throw XCTSkip("MLX after-training tests require an Xcode/metallib-ready environment.")
         }
@@ -158,14 +158,14 @@ final class FastGSAfterTrainingTests: XCTestCase {
             minGaussians: 2
         )
 
-        XCTAssertEqual(result.pruneMask, [true, false, true, false])
-        XCTAssertEqual(result.scoreHits, 3)
-        XCTAssertEqual(result.prunedCount, 2)
-        XCTAssertEqual(result.keptCount, 2)
-        XCTAssertEqual(result.parameters.gaussianCount, 2)
+        XCTAssertEqual(result.pruneMask, [false, true, false, false])
+        XCTAssertEqual(result.scoreHits, 1)
+        XCTAssertEqual(result.prunedCount, 1)
+        XCTAssertEqual(result.keptCount, 3)
+        XCTAssertEqual(result.parameters.gaussianCount, 3)
         XCTAssertEqual(result.optimizerState?.step, 19)
-        XCTAssertEqual(result.densificationState?.xyzGradAccum, [20, 40])
-        assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.3, 0.5])
+        XCTAssertEqual(result.densificationState?.xyzGradAccum, [10, 30, 40])
+        assertAfterTrainingClose(result.parameters.opacityProbabilities().asArray(Float.self), [0.2, 0.4, 0.5])
     }
 
     func testCloneAppendsSmallHighGradientRowsAndResetsState() throws {

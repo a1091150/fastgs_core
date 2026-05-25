@@ -14,6 +14,7 @@ public struct FastGSDensificationConfig: Codable, Equatable, Sendable {
     public var lossThreshold: Float
     public var importanceScoreThreshold: Float
     public var densifyCameraSampleCount: Int
+    public var scoringSeed: UInt64
     public var splitFactor: Int
     public var minOpacity: Float
     public var finalPruneMinOpacity: Float
@@ -27,6 +28,34 @@ public struct FastGSDensificationConfig: Codable, Equatable, Sendable {
     public var pruneBudgetFactor: Float
     public var pruneGaussians: Bool
 
+    enum CodingKeys: String, CodingKey {
+        case densifyFromStep
+        case densifyUntilStep
+        case densificationInterval
+        case opacityResetInterval
+        case opacityResetValue
+        case opacityCapAfterDensify
+        case gradThreshold
+        case gradAbsThreshold
+        case dense
+        case lossThreshold
+        case importanceScoreThreshold
+        case densifyCameraSampleCount
+        case scoringSeed
+        case splitFactor
+        case minOpacity
+        case finalPruneMinOpacity
+        case finalPruneStartStep
+        case finalPruneEndStep
+        case finalPruneInterval
+        case finalPruneScoreThreshold
+        case finalPruneMinGaussians
+        case maxScreenSize
+        case maxWorldScaleFactor
+        case pruneBudgetFactor
+        case pruneGaussians
+    }
+
     public init(
         densifyFromStep: Int = 500,
         densifyUntilStep: Int = 15_000,
@@ -36,10 +65,11 @@ public struct FastGSDensificationConfig: Codable, Equatable, Sendable {
         opacityCapAfterDensify: Float = 0.82,
         gradThreshold: Float = 2.0e-4,
         gradAbsThreshold: Float = 1.2e-3,
-        dense: Float = 0.01,
-        lossThreshold: Float = 0.06,
+        dense: Float = 0.001,
+        lossThreshold: Float = 0.1,
         importanceScoreThreshold: Float = 5.0,
         densifyCameraSampleCount: Int = 10,
+        scoringSeed: UInt64 = 42,
         splitFactor: Int = 2,
         minOpacity: Float = 0.005,
         finalPruneMinOpacity: Float = 0.1,
@@ -65,6 +95,7 @@ public struct FastGSDensificationConfig: Codable, Equatable, Sendable {
         self.lossThreshold = lossThreshold
         self.importanceScoreThreshold = importanceScoreThreshold
         self.densifyCameraSampleCount = densifyCameraSampleCount
+        self.scoringSeed = scoringSeed
         self.splitFactor = splitFactor
         self.minOpacity = minOpacity
         self.finalPruneMinOpacity = finalPruneMinOpacity
@@ -77,6 +108,71 @@ public struct FastGSDensificationConfig: Codable, Equatable, Sendable {
         self.maxWorldScaleFactor = maxWorldScaleFactor
         self.pruneBudgetFactor = pruneBudgetFactor
         self.pruneGaussians = pruneGaussians
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            densifyFromStep: try container.decodeIfPresent(Int.self, forKey: .densifyFromStep) ?? 500,
+            densifyUntilStep: try container.decodeIfPresent(Int.self, forKey: .densifyUntilStep) ?? 15_000,
+            densificationInterval: try container.decodeIfPresent(Int.self, forKey: .densificationInterval) ?? 500,
+            opacityResetInterval: try container.decodeIfPresent(Int.self, forKey: .opacityResetInterval) ?? 3_000,
+            opacityResetValue: try container.decodeIfPresent(Float.self, forKey: .opacityResetValue) ?? 0.82,
+            opacityCapAfterDensify: try container.decodeIfPresent(Float.self, forKey: .opacityCapAfterDensify) ?? 0.82,
+            gradThreshold: try container.decodeIfPresent(Float.self, forKey: .gradThreshold) ?? 2.0e-4,
+            gradAbsThreshold: try container.decodeIfPresent(Float.self, forKey: .gradAbsThreshold) ?? 1.2e-3,
+            dense: try container.decodeIfPresent(Float.self, forKey: .dense) ?? 0.001,
+            lossThreshold: try container.decodeIfPresent(Float.self, forKey: .lossThreshold) ?? 0.1,
+            importanceScoreThreshold: try container.decodeIfPresent(Float.self, forKey: .importanceScoreThreshold) ?? 5.0,
+            densifyCameraSampleCount: try container.decodeIfPresent(Int.self, forKey: .densifyCameraSampleCount) ?? 10,
+            scoringSeed: try container.decodeIfPresent(UInt64.self, forKey: .scoringSeed) ?? 42,
+            splitFactor: try container.decodeIfPresent(Int.self, forKey: .splitFactor) ?? 2,
+            minOpacity: try container.decodeIfPresent(Float.self, forKey: .minOpacity) ?? 0.005,
+            finalPruneMinOpacity: try container.decodeIfPresent(Float.self, forKey: .finalPruneMinOpacity) ?? 0.1,
+            finalPruneStartStep: try container.decodeIfPresent(Int.self, forKey: .finalPruneStartStep) ?? 15_000,
+            finalPruneEndStep: try container.decodeIfPresent(Int.self, forKey: .finalPruneEndStep) ?? 30_000,
+            finalPruneInterval: try container.decodeIfPresent(Int.self, forKey: .finalPruneInterval) ?? 3_000,
+            finalPruneScoreThreshold: try container.decodeIfPresent(Float.self, forKey: .finalPruneScoreThreshold) ?? 0.9,
+            finalPruneMinGaussians: try container.decodeIfPresent(Int.self, forKey: .finalPruneMinGaussians) ?? 64,
+            maxScreenSize: try container.decodeIfPresent(Float.self, forKey: .maxScreenSize) ?? 20,
+            maxWorldScaleFactor: try container.decodeIfPresent(Float.self, forKey: .maxWorldScaleFactor) ?? 0.1,
+            pruneBudgetFactor: try container.decodeIfPresent(Float.self, forKey: .pruneBudgetFactor) ?? 0.5,
+            pruneGaussians: try container.decodeIfPresent(Bool.self, forKey: .pruneGaussians) ?? true
+        )
+    }
+
+    public static func scannerFastGS2Base(scheduleScale: Float = 1) -> FastGSDensificationConfig {
+        precondition(scheduleScale > 0, "scheduleScale must be positive")
+        func scaled(_ value: Int) -> Int {
+            max(1, Int((Float(value) * scheduleScale).rounded()))
+        }
+        return FastGSDensificationConfig(
+            densifyFromStep: scaled(500),
+            densifyUntilStep: scaled(15_000),
+            densificationInterval: scaled(500),
+            opacityResetInterval: scaled(3_000),
+            opacityResetValue: 0.82,
+            opacityCapAfterDensify: 0.82,
+            gradThreshold: 2.0e-4,
+            gradAbsThreshold: 1.2e-3,
+            dense: 0.001,
+            lossThreshold: 0.1,
+            importanceScoreThreshold: 5.0,
+            densifyCameraSampleCount: 10,
+            scoringSeed: 42,
+            splitFactor: 2,
+            minOpacity: 0.005,
+            finalPruneMinOpacity: 0.1,
+            finalPruneStartStep: scaled(15_000),
+            finalPruneEndStep: scaled(30_000),
+            finalPruneInterval: scaled(3_000),
+            finalPruneScoreThreshold: 0.9,
+            finalPruneMinGaussians: 64,
+            maxScreenSize: 20,
+            maxWorldScaleFactor: 0.1,
+            pruneBudgetFactor: 0.5,
+            pruneGaussians: true
+        )
     }
 
     public func shouldAccumulateStats(step: Int) -> Bool {

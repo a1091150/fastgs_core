@@ -21,6 +21,31 @@ final class FastGSDensificationTests: XCTestCase {
         XCTAssertFalse(config.shouldFinalPrune(step: 30_000))
     }
 
+    func testScannerFastGS2BaseScheduleScalesToTenThousandSteps() {
+        let config = FastGSDensificationConfig.scannerFastGS2Base(scheduleScale: Float(10_000) / 30_000)
+
+        XCTAssertEqual(config.densifyFromStep, 167)
+        XCTAssertEqual(config.densifyUntilStep, 5_000)
+        XCTAssertEqual(config.densificationInterval, 167)
+        XCTAssertEqual(config.opacityResetInterval, 1_000)
+        XCTAssertEqual(config.finalPruneStartStep, 5_000)
+        XCTAssertEqual(config.finalPruneEndStep, 10_000)
+        XCTAssertEqual(config.finalPruneInterval, 1_000)
+        XCTAssertEqual(config.dense, 0.001)
+        XCTAssertEqual(config.lossThreshold, 0.1)
+
+        XCTAssertFalse(config.shouldDensifyAndPrune(step: 167))
+        XCTAssertTrue(config.shouldDensifyAndPrune(step: 334))
+        XCTAssertFalse(config.shouldDensifyAndPrune(step: 5_000))
+
+        XCTAssertTrue(config.shouldResetOpacity(step: 1_000))
+        XCTAssertFalse(config.shouldResetOpacity(step: 5_000))
+
+        XCTAssertFalse(config.shouldFinalPrune(step: 5_000))
+        XCTAssertTrue(config.shouldFinalPrune(step: 6_000))
+        XCTAssertFalse(config.shouldFinalPrune(step: 10_000))
+    }
+
     func testDensificationStateInitializesAndResets() {
         var state = FastGSDensificationState(count: 3, sceneExtent: 2.5)
 

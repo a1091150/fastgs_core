@@ -68,6 +68,8 @@ public struct FastGSRecordedTrainingRunConfig {
     public var previewInterval: Int
     public var cacheLimitBytes: Int
     public var learningRates: FastGSAdamLearningRates
+    public var optimizerBeta1: Float
+    public var optimizerBeta2: Float
     public var densification: FastGSDensificationConfig
 
     public init(
@@ -78,13 +80,15 @@ public struct FastGSRecordedTrainingRunConfig {
         previewInterval: Int = 20,
         cacheLimitBytes: Int = 4 * 1024 * 1024 * 1024,
         learningRates: FastGSAdamLearningRates = FastGSAdamLearningRates(
-            means3D: 5e-5,
-            dc: 5e-4,
-            sh: 5e-4,
-            opacityLogits: 5e-4,
-            scales: 5e-5,
-            rotations: 5e-5
+            means3D: 1.6e-4,
+            dc: 2.5e-3,
+            sh: 2.5e-3,
+            opacityLogits: 2.5e-2,
+            scales: 5.0e-3,
+            rotations: 1.0e-3
         ),
+        optimizerBeta1: Float = 0.9,
+        optimizerBeta2: Float = 0.99,
         densification: FastGSDensificationConfig = FastGSDensificationConfig()
     ) {
         self.referenceSet = referenceSet
@@ -92,11 +96,45 @@ public struct FastGSRecordedTrainingRunConfig {
         self.previewInterval = previewInterval
         self.cacheLimitBytes = cacheLimitBytes
         self.learningRates = learningRates
+        self.optimizerBeta1 = optimizerBeta1
+        self.optimizerBeta2 = optimizerBeta2
         self.densification = densification
+    }
+
+    public static func scannerFastGS2Base(
+        totalSteps: Int = 30_000,
+        previewInterval: Int = 20,
+        cacheLimitBytes: Int = 4 * 1024 * 1024 * 1024
+    ) -> FastGSRecordedTrainingRunConfig {
+        let scheduleScale = Float(totalSteps) / 30_000
+        return FastGSRecordedTrainingRunConfig(
+            totalSteps: totalSteps,
+            previewInterval: previewInterval,
+            cacheLimitBytes: cacheLimitBytes,
+            learningRates: FastGSAdamLearningRates(
+                means3D: 1.6e-4,
+                dc: 2.5e-3,
+                sh: 2.5e-3,
+                opacityLogits: 2.5e-2,
+                scales: 5.0e-3,
+                rotations: 1.0e-3
+            ),
+            optimizerBeta1: 0.9,
+            optimizerBeta2: 0.99,
+            densification: FastGSDensificationConfig.scannerFastGS2Base(scheduleScale: scheduleScale)
+        )
     }
 }
 
 public typealias FastGSRecordedTrainingPreviewConfig = FastGSRecordedTrainingRunConfig
+
+private extension FastGSDensificationConfig {
+    func scoringSeed(for step: Int, salt: UInt64) -> UInt64 {
+        scoringSeed
+            &+ UInt64(bitPattern: Int64(step)) &* 0x9E3779B97F4A7C15
+            &+ salt &* 0xBF58476D1CE4E5B9
+    }
+}
 
 public struct FastGSRecordedTrainingPreviewResult {
     public var step: Int
@@ -362,7 +400,11 @@ public enum FastGSRecordedTrainingPreview {
 
         let targets = try scenes.map { try $0.targetOutColor() }
         var parameters = try initialParameters ?? scenes[0].initialTrainableParameters()
-        var optimizer = FastGSAdamOptimizer(learningRates: config.learningRates)
+        var optimizer = FastGSAdamOptimizer(
+            learningRates: config.learningRates,
+            beta1: config.optimizerBeta1,
+            beta2: config.optimizerBeta2
+        )
         if let initialOptimizerState {
             initialOptimizerState.validateTopology(parameters: parameters)
             optimizer.replaceState(initialOptimizerState)
@@ -527,9 +569,10 @@ public enum FastGSRecordedTrainingPreview {
                 gradThreshold: config.gradThreshold,
                 gradAbsThreshold: config.gradAbsThreshold
             )
-            let sampleIndices = FastGSGaussianScoring.evenlySpacedSceneIndices(
+            let sampleIndices = FastGSGaussianScoring.randomSceneIndices(
                 sceneCount: scenes.count,
-                sampleCount: config.densifyCameraSampleCount
+                sampleCount: config.densifyCameraSampleCount,
+                seed: config.scoringSeed(for: step, salt: 0)
             )
             let scoring = try FastGSGaussianScoring.compute(
                 scenes: scenes,
@@ -607,7 +650,8 @@ public enum FastGSRecordedTrainingPreview {
                     sceneExtent: sceneExtent,
                     pruningScores: paddedPruningScores,
                     pruneBudgetFactor: config.pruneBudgetFactor,
-                    minGaussians: 1
+                    minGaussians: 1,
+                    pruneBudgetSeed: config.scoringSeed(for: step, salt: 2)
                 )
                 parameters = pruneResult.parameters
                 optimizer.replaceState(pruneResult.optimizerState)
@@ -697,9 +741,10 @@ public enum FastGSRecordedTrainingPreview {
                 gradThreshold: config.gradThreshold,
                 gradAbsThreshold: config.gradAbsThreshold
             )
-            let sampleIndices = FastGSGaussianScoring.evenlySpacedSceneIndices(
+            let sampleIndices = FastGSGaussianScoring.randomSceneIndices(
                 sceneCount: scenes.count,
-                sampleCount: config.densifyCameraSampleCount
+                sampleCount: config.densifyCameraSampleCount,
+                seed: config.scoringSeed(for: step, salt: 1)
             )
             let scoring = try FastGSGaussianScoring.compute(
                 scenes: scenes,
@@ -721,8 +766,8 @@ public enum FastGSRecordedTrainingPreview {
                 pruningScores: scoring.pruningScores,
                 scoreThreshold: config.finalPruneScoreThreshold,
                 minOpacity: config.finalPruneMinOpacity,
-                maxScreenSize: config.maxScreenSize,
-                maxWorldScaleFactor: config.maxWorldScaleFactor,
+                maxScreenSize: nil,
+                maxWorldScaleFactor: nil,
                 sceneExtent: sceneExtent,
                 minGaussians: config.finalPruneMinGaussians
             )
